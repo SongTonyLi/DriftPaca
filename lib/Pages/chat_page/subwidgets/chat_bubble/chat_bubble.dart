@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:reins/Extensions/markdown_stylesheet_extension.dart';
 import 'package:reins/Models/ollama_message.dart';
-import 'package:reins/Utils/latex_utils.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import 'chat_bubble_actions.dart';
@@ -144,15 +144,20 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 
   Widget _buildMarkdown(BuildContext context, String data) {
-    // Pre-process LaTeX: convert $...$ → \(...\) and $$...$$ → \[...\]
-    // This avoids conflicts between $ and markdown ** bold markers.
-    final processed = preprocessLatex(data);
-
-    return _SafeMarkdown(
-      data: processed,
+    return MarkdownBody(
+      data: data,
+      selectable: true,
+      softLineBreak: true,
       styleSheet: context.markdownStyleSheet.copyWith(
         code: GoogleFonts.sourceCodePro(),
       ),
+      extensionSet: md.ExtensionSet.gitHubFlavored,
+      builders: {
+        'latex': LatexElementBuilder(),
+        'latexBlock': LatexElementBuilder(),
+      },
+      inlineSyntaxes: [LatexInlineSyntax()],
+      blockSyntaxes: [LatexBlockSyntax()],
       onTapLink: (text, href, title) => launchUrlString(href!),
     );
   }
@@ -166,73 +171,4 @@ class _ChatBubbleBody extends StatelessWidget {
   /// Otherwise, the alignment is [Alignment.centerLeft].
   CrossAxisAlignment get bubbleAlignment =>
       isSentFromUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-}
-
-/// Markdown widget wrapped in an error boundary to prevent red ErrorWidget
-/// crashes from LaTeX rendering or markdown parsing issues.
-class _SafeMarkdown extends StatefulWidget {
-  final String data;
-  final MarkdownStyleSheet styleSheet;
-  final MarkdownTapLinkCallback? onTapLink;
-
-  const _SafeMarkdown({
-    required this.data,
-    required this.styleSheet,
-    this.onTapLink,
-  });
-
-  @override
-  State<_SafeMarkdown> createState() => _SafeMarkdownState();
-}
-
-class _SafeMarkdownState extends State<_SafeMarkdown> {
-  bool _hasError = false;
-
-  @override
-  void didUpdateWidget(_SafeMarkdown oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Reset error state when content changes (e.g. during streaming)
-    if (oldWidget.data != widget.data) {
-      _hasError = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_hasError) {
-      // Fallback: plain selectable text, no markdown/latex
-      return SelectableText(widget.data);
-    }
-
-    // Override ErrorWidget.builder locally during this build
-    final originalErrorBuilder = ErrorWidget.builder;
-    ErrorWidget.builder = (details) {
-      // Schedule error state update after current build
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _hasError = true);
-      });
-      // Return empty container instead of red box
-      return const SizedBox.shrink();
-    };
-
-    final result = MarkdownBody(
-      data: widget.data,
-      selectable: true,
-      softLineBreak: true,
-      styleSheet: widget.styleSheet,
-      extensionSet: md.ExtensionSet.gitHubFlavored,
-      builders: {
-        'latex': InlineLatexBuilder(),
-        'latexBlock': BlockLatexBuilder(),
-      },
-      inlineSyntaxes: [SafeLatexInlineSyntax()],
-      blockSyntaxes: [SafeLatexBlockSyntax()],
-      onTapLink: widget.onTapLink,
-    );
-
-    // Restore original error builder
-    ErrorWidget.builder = originalErrorBuilder;
-
-    return result;
-  }
 }

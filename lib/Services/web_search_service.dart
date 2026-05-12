@@ -16,6 +16,7 @@ class WebSearchService {
   static const _baseUrl = 'https://html.duckduckgo.com/html/';
 
   /// Searches DuckDuckGo and returns top results.
+  /// Mirrors open-webui's search_duckduckgo() in retrieval/web/duckduckgo.py
   Future<List<WebSearchResult>> search(String query,
       {int maxResults = 5}) async {
     final response = await http
@@ -23,7 +24,8 @@ class WebSearchService {
           Uri.parse(_baseUrl),
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Reins/1.4.0',
+            'User-Agent':
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
           },
           body: 'q=${Uri.encodeComponent(query)}',
         )
@@ -38,7 +40,7 @@ class WebSearchService {
   List<WebSearchResult> _parseResults(String html, int maxResults) {
     final results = <WebSearchResult>[];
 
-    // DuckDuckGo HTML lite has results in <a class="result__a"> tags
+    // DuckDuckGo HTML has results in <a class="result__a"> tags
     // and snippets in <a class="result__snippet"> tags
     final resultPattern = RegExp(
       r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
@@ -81,32 +83,44 @@ class WebSearchService {
   }
 
   String _extractUrl(String ddgUrl) {
-    // DuckDuckGo lite wraps URLs: //duckduckgo.com/l/?uddg=ENCODED_URL&...
+    // DuckDuckGo wraps URLs: //duckduckgo.com/l/?uddg=ENCODED_URL&...
     final uddgMatch = RegExp(r'uddg=([^&]+)').firstMatch(ddgUrl);
     if (uddgMatch != null) {
       return Uri.decodeComponent(uddgMatch.group(1)!);
     }
-    // If it's already a direct URL
     if (ddgUrl.startsWith('http')) return ddgUrl;
     return '';
   }
 
-  /// Formats search results as context for the LLM prompt.
-  static String formatResultsAsContext(List<WebSearchResult> results) {
+  /// Formats search results as RAG context using open-webui's source tag format.
+  /// Mirrors open-webui's get_source_context() and rag_template() in middleware.py
+  static String formatResultsAsContext(
+      List<WebSearchResult> results, String query) {
     if (results.isEmpty) return '';
 
-    final buffer = StringBuffer();
-    buffer.writeln('Web search results:');
-    buffer.writeln();
+    // Build <source> tags like open-webui's get_source_context()
+    final sourceContext = StringBuffer();
     for (var i = 0; i < results.length; i++) {
       final r = results[i];
-      buffer.writeln('[${i + 1}] ${r.title}');
-      buffer.writeln('URL: ${r.url}');
-      buffer.writeln(r.snippet);
-      buffer.writeln();
+      sourceContext.writeln(
+          '<source id="${i + 1}" name="${r.url}" resource-type="web_search">');
+      sourceContext.writeln('${r.title}\n${r.snippet}');
+      sourceContext.writeln('</source>');
     }
-    buffer.writeln(
-        'Use the above search results to help answer the user\'s question. Cite sources when relevant.');
-    return buffer.toString();
+
+    // Apply open-webui's DEFAULT_RAG_TEMPLATE format
+    return '''### Task:
+Respond to the user query using the provided context, incorporating inline citations in the format [id] **only when the <source> tag includes an explicit id attribute** (e.g., <source id="1">).
+
+### Guidelines:
+- If you don't know the answer, clearly state that.
+- If uncertain, ask the user for clarification.
+- Respond in the same language as the user's query.
+- **Only include inline citations using [id] when the <source> tag includes an id attribute.**
+
+<context>
+${sourceContext.toString().trim()}
+</context>
+''';
   }
 }

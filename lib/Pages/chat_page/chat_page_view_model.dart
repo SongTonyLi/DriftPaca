@@ -296,7 +296,7 @@ class ChatPageViewModel extends ChangeNotifier {
         try {
           final searchService = WebSearchService();
           final searchResults = await searchService.search(prompt);
-          searchContext = WebSearchService.formatResultsAsContext(searchResults);
+          searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
         } catch (_) {
           // Search failure shouldn't block sending the message
         }
@@ -321,7 +321,7 @@ class ChatPageViewModel extends ChangeNotifier {
         try {
           final searchService = WebSearchService();
           final searchResults = await searchService.search(prompt);
-          searchContext = WebSearchService.formatResultsAsContext(searchResults);
+          searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
         } catch (_) {
           // Search failure shouldn't block sending the message
         }

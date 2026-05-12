@@ -439,6 +439,7 @@ class ChatProvider extends ChangeNotifier {
       systemPrompt: GenerateTitleConstants.systemPrompt,
     );
 
+    try {
     // Generate a title for the message
     final stream = _ollamaService.generateStream(
       GenerateTitleConstants.prompt + message.content,
@@ -469,5 +470,8 @@ class ChatProvider extends ChangeNotifier {
 
     // Save the title as the chat title
     await updateChat(associatedChat, newTitle: title.trim());
+    } catch (_) {
+      // Silently ignore title generation failures (e.g., cloud model errors)
+    }
   }
 }

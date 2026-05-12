@@ -272,7 +272,9 @@ class OllamaService {
   Future<ApiTagsResponse> _fetchTags() async {
     final url = constructUrl("/api/tags");
 
-    final response = await http.get(url, headers: headers);
+    final response = await http.get(url, headers: headers).timeout(
+          Duration(seconds: _isCloudMode ? 10 : 2),
+        );
 
     if (response.statusCode == 200) {
       final jsonBody = json.decode(response.body);
@@ -294,18 +296,20 @@ class OllamaService {
     try {
       final url = constructUrl("/api/show");
 
-      final response = await http.post(
-        url,
-        headers: headers,
-        body: json.encode({"model": name}),
-      );
+      final response = await http
+          .post(
+            url,
+            headers: headers,
+            body: json.encode({"model": name}),
+          )
+          .timeout(Duration(seconds: _isCloudMode ? 10 : 5));
 
       if (response.statusCode == 200) {
         final jsonBody = json.decode(response.body);
         return ApiShowResponse.fromJson(jsonBody);
       }
     } catch (_) {
-      // Silently ignore - endpoint may not exist on older Ollama versions
+      // Silently ignore - endpoint may not exist on cloud or older Ollama versions
     }
 
     return null;

@@ -107,6 +107,22 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 
   Widget _buildMessageContent(BuildContext context) {
+    // Use dedicated thinking field if available (from Ollama API's message.thinking)
+    if (message.thinking != null && message.thinking!.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ThinkBlockWidget(
+            content: message.thinking!,
+            isComplete: message.content.isNotEmpty,
+          ),
+          if (message.content.isNotEmpty)
+            _buildMarkdown(context, message.content),
+        ],
+      );
+    }
+
+    // Fallback: parse inline <think> tags from content (for models that embed thinking inline)
     final parsed = ThinkBlockParser.tryParse(message.content);
 
     if (parsed != null) {

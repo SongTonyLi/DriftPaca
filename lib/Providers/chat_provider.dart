@@ -279,8 +279,10 @@ class ChatProvider extends ChangeNotifier {
         return streamingMessage;
       }
 
-      // Ignore empty initial messages, preventing disruption of the thinking indicator
-      if (receivedMessage.content.isEmpty && streamingMessage == null) {
+      // Ignore completely empty initial messages (no content AND no thinking)
+      final hasContent = receivedMessage.content.isNotEmpty;
+      final hasThinking = receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty;
+      if (!hasContent && !hasThinking && streamingMessage == null) {
         continue;
       }
 
@@ -299,6 +301,10 @@ class ChatProvider extends ChangeNotifier {
         }
       } else {
         streamingMessage.content += receivedMessage.content;
+        // Accumulate thinking tokens alongside content
+        if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
+          streamingMessage.thinking = (streamingMessage.thinking ?? '') + receivedMessage.thinking!;
+        }
       }
 
       notifyListeners();

@@ -12,6 +12,9 @@ class OllamaMessage {
   /// The text content of the message.
   String content;
 
+  /// The thinking/reasoning content of the message (from models with thinking capability).
+  String? thinking;
+
   /// The image content of the message.
   List<File>? images;
 
@@ -39,6 +42,7 @@ class OllamaMessage {
     this.content, {
     String? id,
     required this.role,
+    this.thinking,
     this.images,
     DateTime? createdAt,
     this.model,
@@ -61,6 +65,7 @@ class OllamaMessage {
         role: json["message"] != null
             ? OllamaMessageRole.fromString(json["message"]["role"])
             : OllamaMessageRole.assistant, // For generated messages (default)
+        thinking: json["message"]?["thinking"], // Thinking/reasoning content
         images: null, // TODO: Implement image support
         createdAt: DateTime.parse(json["created_at"]),
         model: json["model"],
@@ -83,6 +88,7 @@ class OllamaMessage {
       map['content'],
       id: map['message_id'],
       role: OllamaMessageRole.fromString(map['role']),
+      thinking: map['thinking'],
       images: _constructImages(map['images']),
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
       model: map['model'],
@@ -112,18 +118,21 @@ class OllamaMessage {
   Future<Map<String, dynamic>> toChatJson() async => {
         "role": role.name,
         "content": content,
+        if (thinking != null) "thinking": thinking,
         "images": await _base64EncodeImages(),
       };
 
   Map<String, dynamic> toDatabaseMap() => {
         'message_id': id,
         'content': content,
+        'thinking': thinking,
         'images': _breakImages(images),
         'role': role.name,
         'timestamp': createdAt.millisecondsSinceEpoch,
       };
 
   void updateMetadataFrom(OllamaMessage message) {
+    if (message.thinking != null) thinking = message.thinking;
     done = message.done;
     doneReason = message.doneReason;
     context = message.context;

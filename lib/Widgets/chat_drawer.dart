@@ -117,24 +117,41 @@ class ChatNavigationDrawer extends StatelessWidget {
     OllamaChat chat,
     Offset position,
   ) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-
-    final result = await showMenu<String>(
+    final result = await showGeneralDialog<String>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        overlay.size.width - position.dx,
-        overlay.size.height - position.dy,
-      ),
-      items: [
-        const PopupMenuItem(
-            value: 'rename', child: Text('Rename')),
-        const PopupMenuItem(
-            value: 'delete',
-            child: Text('Delete', style: TextStyle(color: Colors.red))),
-      ],
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss',
+      barrierColor: Colors.black26,
+      transitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (_, __, ___) => const SizedBox.shrink(),
+      transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
+        final curvedAnimation = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutBack,
+          reverseCurve: Curves.easeIn,
+        );
+
+        return Stack(
+          children: [
+            Positioned(
+              left: position.dx.clamp(16.0, MediaQuery.of(dialogContext).size.width - 196),
+              top: position.dy.clamp(60.0, MediaQuery.of(dialogContext).size.height - 160),
+              child: ScaleTransition(
+                scale: curvedAnimation,
+                alignment: Alignment.topLeft,
+                child: FadeTransition(
+                  opacity: animation,
+                  child: _GlassContextMenu(
+                    onRename: () => Navigator.pop(dialogContext, 'rename'),
+                    onDelete: () => Navigator.pop(dialogContext, 'delete'),
+                    chatTitle: chat.title,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
 
     if (result == null || !context.mounted) return;
@@ -218,6 +235,121 @@ class ChatNavigationDrawer extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _GlassContextMenu extends StatelessWidget {
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+  final String chatTitle;
+
+  const _GlassContextMenu({
+    required this.onRename,
+    required this.onDelete,
+    required this.chatTitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16.0),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        child: Container(
+          width: 180,
+          decoration: BoxDecoration(
+            color: colorScheme.surface.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(16.0),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.15),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Text(
+                  chatTitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Divider(height: 1, indent: 12, endIndent: 12),
+              _GlassMenuItem(
+                icon: Icons.edit_outlined,
+                label: 'Rename',
+                onTap: onRename,
+              ),
+              _GlassMenuItem(
+                icon: Icons.delete_outline,
+                label: 'Delete',
+                onTap: onDelete,
+                isDestructive: true,
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassMenuItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool isDestructive;
+
+  const _GlassMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isDestructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isDestructive
+        ? Colors.red
+        : Theme.of(context).colorScheme.onSurface;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 15,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

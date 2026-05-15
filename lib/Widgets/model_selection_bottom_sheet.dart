@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:async/async.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -309,8 +311,26 @@ Future<OllamaModel?> showModelSelectionBottomSheet({
 }) async {
   return await showModalBottomSheet<OllamaModel?>(
     context: context,
+    backgroundColor: Colors.transparent,
     builder: (context) {
-      return ModelSelectionBottomSheet(title: title, currentModelName: currentModelName);
+      return ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context)
+                  .colorScheme
+                  .surface
+                  .withValues(alpha: 0.75),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: ModelSelectionBottomSheet(
+                title: title, currentModelName: currentModelName),
+          ),
+        ),
+      );
     },
     isDismissible: false,
     enableDrag: false,

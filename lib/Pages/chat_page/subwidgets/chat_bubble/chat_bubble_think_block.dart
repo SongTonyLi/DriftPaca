@@ -81,7 +81,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
   }
 
   void _startTimer() {
-    Future.doWhile((_) async {
+    Future.doWhile(() async {
       await Future.delayed(const Duration(seconds: 1));
       if (!mounted || !_stopwatch.isRunning) return false;
       setState(() {

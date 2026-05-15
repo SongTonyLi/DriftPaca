@@ -94,40 +94,39 @@ class _ChatListViewState extends State<ChatListView> {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 20.0, vertical: 8.0),
-                  child: Row(
-                    children: [
-                      Shimmer.fromColors(
-                        baseColor: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.3),
-                        highlightColor: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.7),
-                        period: const Duration(milliseconds: 1500),
-                        child: Row(
-                          children: List.generate(
-                            3,
-                            (i) => Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 2.0),
-                              child: Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface,
-                                ),
-                              ),
-                            ),
-                          ),
+                      horizontal: 20.0, vertical: 12.0),
+                  child: Shimmer.fromColors(
+                    baseColor: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.2),
+                    highlightColor: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.5),
+                    period: const Duration(milliseconds: 1200),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 7, height: 7,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle, color: Colors.white),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 5),
+                        Container(
+                          width: 7, height: 7,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle, color: Colors.white),
+                        ),
+                        const SizedBox(width: 5),
+                        Container(
+                          width: 7, height: 7,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle, color: Colors.white),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

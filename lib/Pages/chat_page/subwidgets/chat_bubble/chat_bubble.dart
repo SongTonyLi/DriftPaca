@@ -130,27 +130,21 @@ class _UserBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.primaryContainer;
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 8.0),
-      child: CustomPaint(
-        painter: _BubbleTailPainter(color: color),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.75,
-          ),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20.0),
-              topRight: Radius.circular(20.0),
-              bottomLeft: Radius.circular(20.0),
-              bottomRight: Radius.circular(6.0),
-            ),
-          ),
-          child: buildMarkdown(context, message.content),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.75,
+      ),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(20.0),
+          topRight: Radius.circular(20.0),
+          bottomLeft: Radius.circular(20.0),
+          bottomRight: Radius.circular(4.0),
         ),
       ),
+      child: buildMarkdown(context, message.content),
     );
   }
 }
@@ -287,33 +281,3 @@ class _ActionChip extends StatelessWidget {
   }
 }
 
-/// Paints an organic, curved speech-bubble tail at the bottom-right.
-class _BubbleTailPainter extends CustomPainter {
-  final Color color;
-
-  _BubbleTailPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-
-    final path = Path();
-    path.moveTo(size.width - 6, size.height);
-    path.quadraticBezierTo(
-      size.width + 4, size.height + 2,
-      size.width + 8, size.height + 10,
-    );
-    path.quadraticBezierTo(
-      size.width + 2, size.height + 4,
-      size.width - 12, size.height,
-    );
-    path.close();
-
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}

@@ -62,88 +62,46 @@ class ChatBubble extends StatelessWidget {
 class _ChatBubbleBody extends StatelessWidget {
   final OllamaMessage message;
 
-  const _ChatBubbleBody({super.key, required this.message});
+  const _ChatBubbleBody({required this.message});
+
+  bool get isSentFromUser => message.role == OllamaMessageRole.user;
+
+  CrossAxisAlignment get bubbleAlignment =>
+      isSentFromUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 25.0, vertical: 15.0),
+      padding: EdgeInsets.only(
+        left: isSentFromUser ? 60.0 : 16.0,
+        right: isSentFromUser ? 16.0 : 60.0,
+        top: 4.0,
+        bottom: 4.0,
+      ),
       child: Column(
-        spacing: 8,
         crossAxisAlignment: bubbleAlignment,
         children: [
-          // If the message has an image attachment, display it
           if (message.images != null && message.images!.isNotEmpty)
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: message.images!
-                  .map((imageFile) => ChatBubbleImage(imageFile: imageFile))
-                  .toList(),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4.0),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: message.images!
+                    .map((imageFile) => ChatBubbleImage(imageFile: imageFile))
+                    .toList(),
+              ),
             ),
-          Container(
-            padding: isSentFromUser ? const EdgeInsets.all(10.0) : null,
-            constraints: BoxConstraints(
-              maxWidth: isSentFromUser
-                  ? MediaQuery.of(context).size.width * 0.8
-                  : double.infinity,
-            ),
-            decoration: BoxDecoration(
-              color: isSentFromUser
-                  ? Theme.of(context).colorScheme.primaryContainer
-                  : Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(10.0),
-            ),
-            child: _buildMessageContent(context),
-          ),
-          Text(
-            TimeOfDay.fromDateTime(message.createdAt.toLocal()).format(context),
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
+          if (isSentFromUser)
+            _UserBubble(message: message, buildMarkdown: _buildMarkdown)
+          else
+            _AssistantBubble(message: message, buildMarkdown: _buildMarkdown),
         ],
       ),
     );
   }
 
-  Widget _buildMessageContent(BuildContext context) {
-    // Use dedicated thinking field if available (from Ollama API's message.thinking)
-    if (message.thinking != null && message.thinking!.isNotEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ThinkBlockWidget(
-            content: message.thinking!,
-            isComplete: message.content.isNotEmpty,
-          ),
-          if (message.content.isNotEmpty)
-            _buildMarkdown(context, message.content),
-        ],
-      );
-    }
-
-    // Fallback: parse inline <think> tags from content (for models that embed thinking inline)
-    final parsed = ThinkBlockParser.tryParse(message.content);
-
-    if (parsed != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ThinkBlockWidget(
-            content: parsed.thinkContent,
-            isComplete: parsed.isThinkingComplete,
-          ),
-          if (parsed.responseContent.isNotEmpty)
-            _buildMarkdown(context, parsed.responseContent),
-        ],
-      );
-    }
-
-    return _buildMarkdown(context, message.content);
-  }
-
-  Widget _buildMarkdown(BuildContext context, String data) {
+  static Widget _buildMarkdown(BuildContext context, String data) {
     return MarkdownBody(
       data: data,
       selectable: true,
@@ -161,14 +119,108 @@ class _ChatBubbleBody extends StatelessWidget {
       onTapLink: (text, href, title) => launchUrlString(href!),
     );
   }
+}
 
-  /// Returns true if the message is sent from the user.
-  bool get isSentFromUser => message.role == OllamaMessageRole.user;
+class _UserBubble extends StatelessWidget {
+  final OllamaMessage message;
+  final Widget Function(BuildContext, String) buildMarkdown;
 
-  /// Returns the alignment of the bubble.
-  ///
-  /// If the message is sent from the user, the alignment is [Alignment.centerRight].
-  /// Otherwise, the alignment is [Alignment.centerLeft].
-  CrossAxisAlignment get bubbleAlignment =>
-      isSentFromUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+  const _UserBubble({required this.message, required this.buildMarkdown});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primaryContainer;
+
+    return CustomPaint(
+      painter: _BubbleTailPainter(color: color),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(18.0),
+            topRight: Radius.circular(18.0),
+            bottomLeft: Radius.circular(18.0),
+            bottomRight: Radius.circular(4.0),
+          ),
+        ),
+        child: buildMarkdown(context, message.content),
+      ),
+    );
+  }
+}
+
+class _AssistantBubble extends StatelessWidget {
+  final OllamaMessage message;
+  final Widget Function(BuildContext, String) buildMarkdown;
+
+  const _AssistantBubble({required this.message, required this.buildMarkdown});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 6.0),
+      child: _buildMessageContent(context),
+    );
+  }
+
+  Widget _buildMessageContent(BuildContext context) {
+    if (message.thinking != null && message.thinking!.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ThinkBlockWidget(
+            content: message.thinking!,
+            isComplete: message.content.isNotEmpty,
+          ),
+          if (message.content.isNotEmpty)
+            buildMarkdown(context, message.content),
+        ],
+      );
+    }
+
+    final parsed = ThinkBlockParser.tryParse(message.content);
+
+    if (parsed != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ThinkBlockWidget(
+            content: parsed.thinkContent,
+            isComplete: parsed.isThinkingComplete,
+          ),
+          if (parsed.responseContent.isNotEmpty)
+            buildMarkdown(context, parsed.responseContent),
+        ],
+      );
+    }
+
+    return buildMarkdown(context, message.content);
+  }
+}
+
+class _BubbleTailPainter extends CustomPainter {
+  final Color color;
+
+  _BubbleTailPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final path = Path();
+
+    // Small tail at bottom-right
+    path.moveTo(size.width - 4, size.height - 2);
+    path.lineTo(size.width + 6, size.height + 4);
+    path.lineTo(size.width - 10, size.height - 2);
+    path.close();
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

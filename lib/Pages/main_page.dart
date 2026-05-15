@@ -6,8 +6,8 @@ import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Widgets/chat_drawer.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
-class ReinsMainPage extends StatelessWidget {
-  const ReinsMainPage({super.key});
+class LlamaSeekMainPage extends StatelessWidget {
+  const LlamaSeekMainPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -24,17 +24,17 @@ class ReinsMainPage extends StatelessWidget {
         }
 
         if (ResponsiveBreakpoints.of(context).isMobile) {
-          return const _ReinsMobileMainPage();
+          return const _LlamaSeekMobileMainPage();
         } else {
-          return const _ReinsLargeMainPage();
+          return const _LlamaSeekLargeMainPage();
         }
       },
     );
   }
 }
 
-class _ReinsMobileMainPage extends StatelessWidget {
-  const _ReinsMobileMainPage();
+class _LlamaSeekMobileMainPage extends StatelessWidget {
+  const _LlamaSeekMobileMainPage();
 
   @override
   Widget build(BuildContext context) {
@@ -46,8 +46,8 @@ class _ReinsMobileMainPage extends StatelessWidget {
   }
 }
 
-class _ReinsLargeMainPage extends StatelessWidget {
-  const _ReinsLargeMainPage();
+class _LlamaSeekLargeMainPage extends StatelessWidget {
+  const _LlamaSeekLargeMainPage();
 
   @override
   Widget build(BuildContext context) {

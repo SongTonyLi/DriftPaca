@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Widgets/chat_configure_bottom_sheet.dart';
 import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
 import 'package:provider/provider.dart';
@@ -20,7 +21,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       title: Column(
         children: [
           Text(
-            chatProvider.currentChat?.title ?? 'Reins',
+            chatProvider.currentChat?.title ?? AppConstants.appName,
             style: const TextStyle(
               fontWeight: FontWeight.w600,
               fontSize: 16,

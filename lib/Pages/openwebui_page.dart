@@ -48,7 +48,7 @@ class _OpenWebuiPageState extends State<OpenWebuiPage> {
                   mixedContentMode:
                       MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
                   allowsBackForwardNavigationGestures: true,
-                  userAgent: 'Reins/1.4.0 (iOS; Flutter)',
+                  userAgent: 'LlamaSeek/1.4.0 (iOS; Flutter)',
                   transparentBackground: true,
                 ),
                 onWebViewCreated: (controller) {

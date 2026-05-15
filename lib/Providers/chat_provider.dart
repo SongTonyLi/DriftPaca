@@ -228,6 +228,9 @@ class ChatProvider extends ChangeNotifier {
     );
     _messages.add(prompt);
 
+    // Set thinking state immediately so UI shows user message + thinking together
+    _activeChatStreams[associatedChat.id] = null;
+
     notifyListeners();
 
     // Save the user prompt to the database

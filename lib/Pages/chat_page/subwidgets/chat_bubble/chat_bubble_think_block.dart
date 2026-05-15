@@ -22,7 +22,6 @@ class ThinkBlockParser {
     final closeIndex = content.indexOf(closeTag);
 
     if (closeIndex == -1) {
-      // Still thinking — no closing tag yet
       final thinkContent = content.substring(openIndex + openTag.length).trim();
       return ThinkBlockParser._(
         thinkContent: thinkContent,
@@ -30,7 +29,6 @@ class ThinkBlockParser {
         isThinkingComplete: false,
       );
     } else {
-      // Thinking is complete
       final thinkContent =
           content.substring(openIndex + openTag.length, closeIndex).trim();
       final responseContent =
@@ -44,7 +42,7 @@ class ThinkBlockParser {
   }
 }
 
-/// Collapsible thinking block widget with duration tracking.
+/// Collapsible thinking block with tinted pill, sparkle icon, and duration.
 class ThinkBlockWidget extends StatefulWidget {
   final String content;
   final bool isComplete;
@@ -59,11 +57,13 @@ class ThinkBlockWidget extends StatefulWidget {
   State<ThinkBlockWidget> createState() => _ThinkBlockWidgetState();
 }
 
-class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
+class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
+    with SingleTickerProviderStateMixin {
   bool? _userToggle;
   final Stopwatch _stopwatch = Stopwatch();
   late final bool _wasAlreadyComplete;
   int _elapsedSeconds = 0;
+  late final AnimationController _pulseController;
 
   bool get _isExpanded {
     if (_userToggle != null) return _userToggle!;
@@ -74,9 +74,14 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
   void initState() {
     super.initState();
     _wasAlreadyComplete = widget.isComplete;
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
     if (!widget.isComplete) {
       _stopwatch.start();
       _startTimer();
+      _pulseController.repeat(reverse: true);
     }
   }
 
@@ -97,6 +102,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
     if (!oldWidget.isComplete && widget.isComplete) {
       _stopwatch.stop();
       _elapsedSeconds = _stopwatch.elapsed.inSeconds;
+      _pulseController.stop();
       _userToggle ??= false;
     }
   }
@@ -104,6 +110,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
   @override
   void dispose() {
     _stopwatch.stop();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -123,48 +130,77 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.secondary;
+    final colorScheme = Theme.of(context).colorScheme;
+    final thinkColor = colorScheme.secondary;
+    final bgColor = colorScheme.secondaryContainer.withValues(alpha: 0.35);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () {
-            setState(() => _userToggle = !_isExpanded);
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4.0),
+        GestureDetector(
+          onTap: () => setState(() => _userToggle = !_isExpanded),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(12.0),
+            ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (!widget.isComplete)
+                  FadeTransition(
+                    opacity: Tween(begin: 0.4, end: 1.0)
+                        .animate(_pulseController),
+                    child: Icon(Icons.auto_awesome, color: thinkColor, size: 16),
+                  )
+                else
+                  Icon(Icons.auto_awesome, color: thinkColor, size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  _label,
+                  style: TextStyle(
+                    color: thinkColor,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(width: 4),
                 Icon(
                   _isExpanded
                       ? Icons.keyboard_arrow_down
                       : Icons.keyboard_arrow_right,
-                  color: color,
-                  size: 20,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  _label,
-                  style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w500,
-                  ),
+                  color: thinkColor,
+                  size: 18,
                 ),
               ],
             ),
           ),
         ),
-        if (_isExpanded)
-          Padding(
-            padding: const EdgeInsets.only(left: 24.0, top: 4.0, bottom: 8.0),
+        AnimatedCrossFade(
+          duration: const Duration(milliseconds: 200),
+          crossFadeState:
+              _isExpanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+          firstChild: Container(
+            margin: const EdgeInsets.only(top: 6.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(12.0),
+            ),
             child: SelectableText(
               widget.content,
-              style: TextStyle(color: color, fontSize: 13, height: 1.4),
+              style: TextStyle(
+                color: thinkColor.withValues(alpha: 0.85),
+                fontSize: 13,
+                height: 1.5,
+              ),
             ),
           ),
+          secondChild: const SizedBox.shrink(),
+        ),
       ],
     );
   }

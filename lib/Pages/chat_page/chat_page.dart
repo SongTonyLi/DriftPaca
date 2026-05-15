@@ -189,16 +189,28 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget? _buildTextFieldSuffixIcon() {
     if (_viewModel.isStreaming) {
-      return IconButton(
-        icon: const Icon(Icons.stop_rounded),
-        color: Theme.of(context).colorScheme.onSurface,
-        onPressed: _viewModel.cancelStreaming,
+      return Padding(
+        padding: const EdgeInsets.only(right: 6.0),
+        child: IconButton(
+          icon: const Icon(Icons.stop_rounded, size: 20),
+          style: IconButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
+            foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+          ),
+          onPressed: _viewModel.cancelStreaming,
+        ),
       );
     } else if (_viewModel.hasText) {
-      return IconButton(
-        icon: const Icon(Icons.arrow_upward_rounded),
-        color: Theme.of(context).colorScheme.onSurface,
-        onPressed: _sendMessage,
+      return Padding(
+        padding: const EdgeInsets.only(right: 6.0),
+        child: IconButton(
+          icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+          style: IconButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+          ),
+          onPressed: _sendMessage,
+        ),
       );
     } else {
       return null;

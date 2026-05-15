@@ -92,16 +92,42 @@ class _ChatListViewState extends State<ChatListView> {
               ),
             if (widget.isAwaitingReply)
               SliverToBoxAdapter(
-                child: Shimmer.fromColors(
-                  // TODO: Play with the colors to make it look better
-                  baseColor: Theme.of(context).colorScheme.onPrimary,
-                  highlightColor: Theme.of(context).colorScheme.onSurface,
-                  period: const Duration(milliseconds: 2500),
-                  child: const ListTile(
-                    title: Padding(
-                      padding: EdgeInsets.all(10.0),
-                      child: Text("Thinking"),
-                    ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20.0, vertical: 8.0),
+                  child: Row(
+                    children: [
+                      Shimmer.fromColors(
+                        baseColor: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.3),
+                        highlightColor: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.7),
+                        period: const Duration(milliseconds: 1500),
+                        child: Row(
+                          children: List.generate(
+                            3,
+                            (i) => Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 2.0),
+                              child: Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -125,11 +151,31 @@ class _ChatListViewState extends State<ChatListView> {
           ],
         ),
         if (_isScrollToBottomButtonVisible)
-          IconButton(
-            onPressed: _scrollToBottom,
-            icon: const Icon(Icons.arrow_downward_rounded),
-            style: IconButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.onInverseSurface,
+          Padding(
+            padding: const EdgeInsets.only(bottom: 76),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Theme.of(context).shadowColor.withValues(alpha: 0.12),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton.filled(
+                onPressed: _scrollToBottom,
+                icon: const Icon(Icons.keyboard_arrow_down, size: 22),
+                style: IconButton.styleFrom(
+                  backgroundColor:
+                      Theme.of(context).colorScheme.surfaceContainerHigh,
+                  foregroundColor:
+                      Theme.of(context).colorScheme.onSurface,
+                  minimumSize: const Size(40, 40),
+                  maximumSize: const Size(40, 40),
+                ),
+              ),
             ),
           ),
       ],

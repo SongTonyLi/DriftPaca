@@ -32,8 +32,16 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                 _handleModelSelectionButton(context);
               },
               customBorder: StadiumBorder(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10.0, vertical: 3.0),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .secondaryContainer
+                      .withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12.0),
+                ),
                 child: ValueListenableBuilder(
                   valueListenable:
                       Hive.box('settings').listenable(keys: ['isCloudMode']),
@@ -47,18 +55,23 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                           isCloud
                               ? Icons.cloud_outlined
                               : Icons.dns_outlined,
-                          size: 14,
+                          size: 12,
                           color: Theme.of(context)
-                              .textTheme
-                              .labelSmall
-                              ?.color,
+                              .colorScheme
+                              .onSecondaryContainer,
                         ),
                         const SizedBox(width: 4),
                         Text(
                           chatProvider.currentChat!.model,
                           style: GoogleFonts.kodeMono(
-                            textStyle:
-                                Theme.of(context).textTheme.labelSmall,
+                            textStyle: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSecondaryContainer,
+                                ),
                           ),
                         ),
                       ],

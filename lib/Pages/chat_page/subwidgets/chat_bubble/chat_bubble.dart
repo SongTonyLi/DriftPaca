@@ -73,10 +73,10 @@ class _ChatBubbleBody extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: isSentFromUser ? 60.0 : 16.0,
-        right: 16.0,
-        top: 4.0,
-        bottom: 4.0,
+        left: isSentFromUser ? 64.0 : 16.0,
+        right: isSentFromUser ? 8.0 : 16.0,
+        top: 3.0,
+        bottom: 3.0,
       ),
       child: Column(
         crossAxisAlignment: bubbleAlignment,
@@ -131,23 +131,26 @@ class _UserBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.primaryContainer;
 
-    return CustomPaint(
-      painter: _BubbleTailPainter(color: color),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(18.0),
-            topRight: Radius.circular(18.0),
-            bottomLeft: Radius.circular(18.0),
-            bottomRight: Radius.circular(4.0),
+    return Padding(
+      padding: const EdgeInsets.only(right: 8.0),
+      child: CustomPaint(
+        painter: _BubbleTailPainter(color: color),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75,
           ),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20.0),
+              topRight: Radius.circular(20.0),
+              bottomLeft: Radius.circular(20.0),
+              bottomRight: Radius.circular(6.0),
+            ),
+          ),
+          child: buildMarkdown(context, message.content),
         ),
-        child: buildMarkdown(context, message.content),
       ),
     );
   }
@@ -162,7 +165,7 @@ class _AssistantBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: _buildMessageContent(context),
     );
   }
@@ -176,8 +179,10 @@ class _AssistantBubble extends StatelessWidget {
             content: message.thinking!,
             isComplete: message.content.isNotEmpty,
           ),
-          if (message.content.isNotEmpty)
+          if (message.content.isNotEmpty) ...[
+            const SizedBox(height: 4),
             buildMarkdown(context, message.content),
+          ],
         ],
       );
     }
@@ -192,8 +197,10 @@ class _AssistantBubble extends StatelessWidget {
             content: parsed.thinkContent,
             isComplete: parsed.isThinkingComplete,
           ),
-          if (parsed.responseContent.isNotEmpty)
+          if (parsed.responseContent.isNotEmpty) ...[
+            const SizedBox(height: 4),
             buildMarkdown(context, parsed.responseContent),
+          ],
         ],
       );
     }
@@ -202,6 +209,7 @@ class _AssistantBubble extends StatelessWidget {
   }
 }
 
+/// Paints an organic, curved speech-bubble tail at the bottom-right.
 class _BubbleTailPainter extends CustomPainter {
   final Color color;
 
@@ -209,13 +217,23 @@ class _BubbleTailPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
-    final path = Path();
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
 
-    // Small tail at bottom-right
-    path.moveTo(size.width - 4, size.height - 2);
-    path.lineTo(size.width + 6, size.height + 4);
-    path.lineTo(size.width - 10, size.height - 2);
+    final path = Path();
+    // Start at the bottom-right of the bubble
+    path.moveTo(size.width - 6, size.height);
+    // Curve outward and down
+    path.quadraticBezierTo(
+      size.width + 4, size.height + 2,
+      size.width + 8, size.height + 10,
+    );
+    // Curve back to the bubble
+    path.quadraticBezierTo(
+      size.width + 2, size.height + 4,
+      size.width - 12, size.height,
+    );
     path.close();
 
     canvas.drawPath(path, paint);

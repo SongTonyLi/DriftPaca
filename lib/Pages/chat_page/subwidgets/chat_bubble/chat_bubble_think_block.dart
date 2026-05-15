@@ -44,7 +44,7 @@ class ThinkBlockParser {
   }
 }
 
-/// Collapsible thinking block widget.
+/// Collapsible thinking block widget with duration tracking.
 class ThinkBlockWidget extends StatefulWidget {
   final String content;
   final bool isComplete;
@@ -61,20 +61,64 @@ class ThinkBlockWidget extends StatefulWidget {
 
 class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
   bool? _userToggle;
+  final Stopwatch _stopwatch = Stopwatch();
+  late final bool _wasAlreadyComplete;
+  int _elapsedSeconds = 0;
 
   bool get _isExpanded {
     if (_userToggle != null) return _userToggle!;
-    // Auto: expanded while streaming, collapsed when complete
     return !widget.isComplete;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _wasAlreadyComplete = widget.isComplete;
+    if (!widget.isComplete) {
+      _stopwatch.start();
+      _startTimer();
+    }
+  }
+
+  void _startTimer() {
+    Future.doWhile((_) async {
+      await Future.delayed(const Duration(seconds: 1));
+      if (!mounted || !_stopwatch.isRunning) return false;
+      setState(() {
+        _elapsedSeconds = _stopwatch.elapsed.inSeconds;
+      });
+      return true;
+    });
   }
 
   @override
   void didUpdateWidget(ThinkBlockWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Auto-collapse when thinking completes (only if user hasn't toggled)
-    if (!oldWidget.isComplete && widget.isComplete && _userToggle == null) {
-      _userToggle = false;
+    if (!oldWidget.isComplete && widget.isComplete) {
+      _stopwatch.stop();
+      _elapsedSeconds = _stopwatch.elapsed.inSeconds;
+      _userToggle ??= false;
     }
+  }
+
+  @override
+  void dispose() {
+    _stopwatch.stop();
+    super.dispose();
+  }
+
+  String get _label {
+    if (!widget.isComplete) {
+      return _elapsedSeconds > 0
+          ? 'Thinking... ${_elapsedSeconds}s'
+          : 'Thinking...';
+    }
+    if (_wasAlreadyComplete) {
+      return 'Thought';
+    }
+    return _elapsedSeconds > 0
+        ? 'Thought for $_elapsedSeconds seconds'
+        : 'Thought';
   }
 
   @override
@@ -103,7 +147,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  widget.isComplete ? 'Thought' : 'Thinking...',
+                  _label,
                   style: TextStyle(
                     color: color,
                     fontWeight: FontWeight.w500,

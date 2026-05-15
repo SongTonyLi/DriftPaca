@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -37,51 +39,77 @@ class _ChatPageState extends State<ChatPage> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
-        if (!ResponsiveBreakpoints.of(context).isMobile) ChatAppBar(), // If the screen is large, show the app bar
+        if (!ResponsiveBreakpoints.of(context).isMobile) ChatAppBar(),
         Expanded(
           child: Stack(
-            alignment: Alignment.bottomLeft,
             children: [
               _buildChatBody(),
-              _buildChatFooter(),
-            ],
-          ),
-        ),
-        // TODO: Wrap with ConstrainedBox to limit the height
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: ChatTextField(
-            key: ValueKey(_viewModel.currentChat?.id),
-            controller: _viewModel.textFieldController,
-            onEditingComplete: _sendMessage,
-            prefixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.add),
-                  onPressed: _handleAttachmentButton,
-                ),
-                IconButton(
-                  icon: Icon(
-                    _viewModel.webSearchEnabled
-                        ? Icons.travel_explore
-                        : Icons.travel_explore_outlined,
-                    color: _viewModel.webSearchEnabled
-                        ? Theme.of(context).colorScheme.onPrimary
-                        : null,
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _buildChatFooter(),
+              ),
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: _viewModel.hasImageAttachments ? 80 : 8,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(28.0),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surface
+                            .withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(28.0),
+                        border: Border.all(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .outlineVariant
+                              .withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: ChatTextField(
+                        key: ValueKey(_viewModel.currentChat?.id),
+                        controller: _viewModel.textFieldController,
+                        onEditingComplete: _sendMessage,
+                        prefixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.add),
+                              onPressed: _handleAttachmentButton,
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                _viewModel.webSearchEnabled
+                                    ? Icons.travel_explore
+                                    : Icons.travel_explore_outlined,
+                                color: _viewModel.webSearchEnabled
+                                    ? Theme.of(context).colorScheme.onPrimary
+                                    : null,
+                              ),
+                              style: _viewModel.webSearchEnabled
+                                  ? IconButton.styleFrom(
+                                      backgroundColor:
+                                          Theme.of(context).colorScheme.primary,
+                                    )
+                                  : null,
+                              onPressed: () => _viewModel.toggleWebSearch(),
+                              tooltip: 'Web Search',
+                            ),
+                          ],
+                        ),
+                        suffixIcon: _buildTextFieldSuffixIcon(),
+                      ),
+                    ),
                   ),
-                  style: _viewModel.webSearchEnabled
-                      ? IconButton.styleFrom(
-                          backgroundColor:
-                              Theme.of(context).colorScheme.primary,
-                        )
-                      : null,
-                  onPressed: () => _viewModel.toggleWebSearch(),
-                  tooltip: 'Web Search',
                 ),
-              ],
-            ),
-            suffixIcon: _buildTextFieldSuffixIcon(),
+              ),
+            ],
           ),
         ),
       ],
@@ -124,9 +152,7 @@ class _ChatPageState extends State<ChatPage> {
                 onRetry: () => _viewModel.retryLastPrompt(),
               )
             : null,
-        bottomPadding: _viewModel.hasImageAttachments
-            ? MediaQuery.of(context).size.height * 0.15
-            : null, // TODO: Calculate the height of attachments row
+        bottomPadding: _viewModel.hasImageAttachments ? 140 : 70,
       );
     }
   }

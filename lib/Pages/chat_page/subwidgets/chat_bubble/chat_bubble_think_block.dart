@@ -12,7 +12,6 @@ class ThinkBlockParser {
     required this.isThinkingComplete,
   });
 
-  /// Returns null if content has no <think> block.
   static ThinkBlockParser? tryParse(String content) {
     if (!content.trimLeft().startsWith('<think>')) return null;
 
@@ -42,7 +41,7 @@ class ThinkBlockParser {
   }
 }
 
-/// Collapsible thinking block with tinted pill, sparkle icon, and duration.
+/// Collapsible thinking block widget with duration tracking.
 class ThinkBlockWidget extends StatefulWidget {
   final String content;
   final bool isComplete;
@@ -57,15 +56,11 @@ class ThinkBlockWidget extends StatefulWidget {
   State<ThinkBlockWidget> createState() => _ThinkBlockWidgetState();
 }
 
-class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
-    with TickerProviderStateMixin {
+class _ThinkBlockWidgetState extends State<ThinkBlockWidget> {
   bool? _userToggle;
   final Stopwatch _stopwatch = Stopwatch();
   late final bool _wasAlreadyComplete;
   int _elapsedSeconds = 0;
-  late final AnimationController _pulseController;
-  late final AnimationController _expandController;
-  late final Animation<double> _expandAnimation;
 
   bool get _isExpanded {
     if (_userToggle != null) return _userToggle!;
@@ -76,23 +71,9 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   void initState() {
     super.initState();
     _wasAlreadyComplete = widget.isComplete;
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-    _expandController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-      value: _wasAlreadyComplete ? 0.0 : 1.0,
-    );
-    _expandAnimation = CurvedAnimation(
-      parent: _expandController,
-      curve: Curves.easeOutCubic,
-    );
     if (!widget.isComplete) {
       _stopwatch.start();
       _startTimer();
-      _pulseController.repeat(reverse: true);
     }
   }
 
@@ -113,28 +94,13 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
     if (!oldWidget.isComplete && widget.isComplete) {
       _stopwatch.stop();
       _elapsedSeconds = _stopwatch.elapsed.inSeconds;
-      _pulseController.stop();
-      if (_userToggle == null) {
-        _userToggle = false;
-        _expandController.reverse();
-      }
-    }
-  }
-
-  void _toggleExpand() {
-    setState(() => _userToggle = !_isExpanded);
-    if (_isExpanded) {
-      _expandController.forward();
-    } else {
-      _expandController.reverse();
+      _userToggle ??= false;
     }
   }
 
   @override
   void dispose() {
     _stopwatch.stop();
-    _pulseController.dispose();
-    _expandController.dispose();
     super.dispose();
   }
 
@@ -154,72 +120,48 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final thinkColor = colorScheme.secondary;
+    final color = Theme.of(context).colorScheme.secondary;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header row — tap to toggle
-        GestureDetector(
-          onTap: _toggleExpand,
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() => _userToggle = !_isExpanded);
+          },
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6.0),
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!widget.isComplete)
-                  FadeTransition(
-                    opacity: Tween(begin: 0.4, end: 1.0)
-                        .animate(_pulseController),
-                    child: Icon(Icons.auto_awesome,
-                        color: thinkColor, size: 16),
-                  )
-                else
-                  Icon(Icons.auto_awesome, color: thinkColor, size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  _label,
-                  style: TextStyle(
-                    color: thinkColor,
-                    fontWeight: FontWeight.w500,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(width: 2),
                 Icon(
                   _isExpanded
                       ? Icons.keyboard_arrow_down
                       : Icons.keyboard_arrow_right,
-                  color: thinkColor,
-                  size: 18,
+                  color: color,
+                  size: 20,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _label,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
           ),
         ),
-        // Expandable content — no background, just indented text
-        ClipRect(
-          child: SizeTransition(
-            sizeFactor: _expandAnimation,
-            axisAlignment: -1.0,
-            child: FadeTransition(
-              opacity: _expandAnimation,
-              child: Padding(
-                padding: const EdgeInsets.only(
-                    left: 22.0, top: 2.0, bottom: 8.0),
-                child: SelectableText(
-                  widget.content,
-                  style: TextStyle(
-                    color: thinkColor.withValues(alpha: 0.7),
-                    fontSize: 13,
-                    height: 1.5,
-                  ),
-                ),
-              ),
+        if (_isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 24.0, top: 4.0, bottom: 8.0),
+            child: SelectableText(
+              widget.content,
+              style: TextStyle(color: color, fontSize: 13, height: 1.4),
             ),
           ),
-        ),
       ],
     );
   }

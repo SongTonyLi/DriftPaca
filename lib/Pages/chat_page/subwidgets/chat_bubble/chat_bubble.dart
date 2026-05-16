@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
@@ -114,9 +113,7 @@ class _ChatBubbleBody extends StatelessWidget {
       data: data,
       selectable: true,
       softLineBreak: true,
-      styleSheet: context.markdownStyleSheet.copyWith(
-        code: GoogleFonts.sourceCodePro(),
-      ),
+      styleSheet: context.markdownStyleSheet,
       extensionSet: md.ExtensionSet.gitHubFlavored,
       builders: {
         'latex': LatexElementBuilder(),

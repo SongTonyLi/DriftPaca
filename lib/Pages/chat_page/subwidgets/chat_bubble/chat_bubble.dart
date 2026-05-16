@@ -123,10 +123,10 @@ class _ChatBubbleBody extends StatelessWidget {
       extensionSet: md.ExtensionSet.gitHubFlavored,
       builders: {
         'latex': LatexElementBuilder(),
-        'latexBlock': _CenteredLatexBuilder(),
+        'latexDisplay': _CenteredLatexDisplayBuilder(),
       },
       inlineSyntaxes: [LatexInlineSyntax()],
-      blockSyntaxes: [LatexBlockSyntax()],
+      blockSyntaxes: [_CenteredLatexBlockSyntax()],
       onTapLink: (text, href, title) => launchUrlString(href!),
     );
   }
@@ -147,10 +147,18 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 
   static String _replaceLatexDelimiters(String text) {
+    // Convert \[...\] to block $$...$$ on separate lines
     text = text.replaceAllMapped(
       RegExp(r'\\\[([\s\S]*?)\\\]'),
-      (m) => '\$\$${m[1]}\$\$',
+      (m) => '\n\$\$\n${m[1]!.trim()}\n\$\$\n',
     );
+    // Convert inline $$...$$ to block format (separate lines)
+    // so LatexBlockSyntax matches them for centered rendering
+    text = text.replaceAllMapped(
+      RegExp(r'\$\$(.+?)\$\$'),
+      (m) => '\n\$\$\n${m[1]!.trim()}\n\$\$\n',
+    );
+    // Convert \(...\) to inline $...$
     text = text.replaceAllMapped(
       RegExp(r'\\\((.+?)\\\)'),
       (m) => '\$${m[1]}\$',
@@ -384,8 +392,39 @@ class _ActionChip extends StatelessWidget {
   }
 }
 
+/// Block syntax that matches $$ on its own line and produces 'latexDisplay' tag.
+class _CenteredLatexBlockSyntax extends md.BlockSyntax {
+  @override
+  RegExp get pattern => RegExp(r'^\$\$\s*$');
+
+  @override
+  List<md.Line> parseChildLines(md.BlockParser parser) {
+    final childLines = <md.Line>[];
+    parser.advance();
+    while (!parser.isDone) {
+      if (pattern.hasMatch(parser.current.content)) {
+        parser.advance();
+        break;
+      }
+      childLines.add(parser.current);
+      parser.advance();
+    }
+    return childLines;
+  }
+
+  @override
+  md.Node parse(md.BlockParser parser) {
+    final lines = parseChildLines(parser);
+    final content = lines.map((e) => e.content).join('\n').trim();
+    return md.Element.text('latexDisplay', content);
+  }
+}
+
 /// Renders block LaTeX ($$...$$) centered with display math style.
-class _CenteredLatexBuilder extends MarkdownElementBuilder {
+class _CenteredLatexDisplayBuilder extends MarkdownElementBuilder {
+  @override
+  bool isBlockElement() => true;
+
   @override
   Widget? visitElementAfterWithContext(
     BuildContext context,
@@ -398,17 +437,12 @@ class _CenteredLatexBuilder extends MarkdownElementBuilder {
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SizedBox(
-        width: double.infinity,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Center(
-            child: Math.tex(
-              text,
-              mathStyle: MathStyle.display,
-              textStyle: preferredStyle,
-            ),
-          ),
+      child: Align(
+        alignment: Alignment.center,
+        child: Math.tex(
+          text,
+          mathStyle: MathStyle.display,
+          textStyle: preferredStyle,
         ),
       ),
     );

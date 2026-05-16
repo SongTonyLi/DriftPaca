@@ -258,23 +258,25 @@ class _GlassContextMenu extends StatelessWidget {
       borderRadius: BorderRadius.circular(16.0),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-        child: Container(
-          width: 180,
-          decoration: BoxDecoration(
-            color: colorScheme.surface.withValues(alpha: 0.82),
-            borderRadius: BorderRadius.circular(16.0),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.15),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
+        child: Material(
+          color: colorScheme.surface.withValues(alpha: 0.82),
+          borderRadius: BorderRadius.circular(16.0),
+          child: Container(
+            width: 180,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16.0),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.3),
               ),
-            ],
-          ),
-          child: Column(
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
@@ -304,6 +306,7 @@ class _GlassContextMenu extends StatelessWidget {
               ),
               const SizedBox(height: 4),
             ],
+          ),
           ),
         ),
       ),

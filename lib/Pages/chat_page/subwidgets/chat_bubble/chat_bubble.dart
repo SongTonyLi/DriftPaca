@@ -11,6 +11,7 @@ import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
 import 'chat_bubble_menu.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
+import 'streaming_llama.dart';
 import 'streaming_text_renderer.dart';
 
 class ChatBubble extends StatelessWidget {
@@ -157,7 +158,7 @@ class _UserBubble extends StatelessWidget {
   }
 }
 
-class _AssistantBubble extends StatelessWidget {
+class _AssistantBubble extends StatefulWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final Widget Function(BuildContext, String) buildMarkdown;
@@ -169,6 +170,46 @@ class _AssistantBubble extends StatelessWidget {
   });
 
   @override
+  State<_AssistantBubble> createState() => _AssistantBubbleState();
+}
+
+class _AssistantBubbleState extends State<_AssistantBubble>
+    with SingleTickerProviderStateMixin {
+  bool _showRestingLlama = false;
+  late final AnimationController _llamaFade;
+
+  @override
+  void initState() {
+    super.initState();
+    _llamaFade = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_AssistantBubble old) {
+    super.didUpdateWidget(old);
+    if (old.isStreaming && !widget.isStreaming) {
+      setState(() => _showRestingLlama = true);
+      _llamaFade.value = 1.0;
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          _llamaFade.reverse().then((_) {
+            if (mounted) setState(() => _showRestingLlama = false);
+          });
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _llamaFade.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -176,16 +217,25 @@ class _AssistantBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildMessageContent(context),
+          // Resting llama after streaming ends
+          if (_showRestingLlama)
+            FadeTransition(
+              opacity: _llamaFade,
+              child: const Padding(
+                padding: EdgeInsets.only(top: 4, left: 2),
+                child: StreamingLlama(isRunning: false),
+              ),
+            ),
           // Smoothly reveal action buttons when streaming ends
           AnimatedSize(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOutCubic,
             alignment: Alignment.topLeft,
-            child: isStreaming
+            child: widget.isStreaming
                 ? const SizedBox(width: double.infinity, height: 0)
                 : Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: _AssistantActionButtons(message: message),
+                    child: _AssistantActionButtons(message: widget.message),
                   ),
           ),
         ],
@@ -195,33 +245,34 @@ class _AssistantBubble extends StatelessWidget {
 
   /// Chooses between animated streaming text or full markdown.
   Widget _buildContent(BuildContext context, String data) {
-    if (isStreaming && data.isNotEmpty) {
+    if (widget.isStreaming && data.isNotEmpty) {
       return StreamingTextRenderer(
         content: data,
         baseStyle: Theme.of(context).textTheme.bodyLarge,
       );
     }
-    return buildMarkdown(context, data);
+    return widget.buildMarkdown(context, data);
   }
 
   Widget _buildMessageContent(BuildContext context) {
-    if (message.thinking != null && message.thinking!.isNotEmpty) {
+    if (widget.message.thinking != null &&
+        widget.message.thinking!.isNotEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ThinkBlockWidget(
-            content: message.thinking!,
-            isComplete: message.content.isNotEmpty,
+            content: widget.message.thinking!,
+            isComplete: widget.message.content.isNotEmpty,
           ),
-          if (message.content.isNotEmpty) ...[
+          if (widget.message.content.isNotEmpty) ...[
             const SizedBox(height: 4),
-            _buildContent(context, message.content),
+            _buildContent(context, widget.message.content),
           ],
         ],
       );
     }
 
-    final parsed = ThinkBlockParser.tryParse(message.content);
+    final parsed = ThinkBlockParser.tryParse(widget.message.content);
 
     if (parsed != null) {
       return Column(
@@ -239,7 +290,7 @@ class _AssistantBubble extends StatelessWidget {
       );
     }
 
-    return _buildContent(context, message.content);
+    return _buildContent(context, widget.message.content);
   }
 }
 

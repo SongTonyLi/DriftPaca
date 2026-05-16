@@ -11,13 +11,16 @@ import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
 import 'chat_bubble_menu.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
+import 'streaming_text_renderer.dart';
 
 class ChatBubble extends StatelessWidget {
   final OllamaMessage message;
+  final bool isStreaming;
 
   const ChatBubble({
     super.key,
     required this.message,
+    this.isStreaming = false,
   });
 
   @override
@@ -53,15 +56,16 @@ class ChatBubble extends StatelessWidget {
           child: const Text('Delete'),
         ),
       ],
-      child: _ChatBubbleBody(message: message),
+      child: _ChatBubbleBody(message: message, isStreaming: isStreaming),
     );
   }
 }
 
 class _ChatBubbleBody extends StatelessWidget {
   final OllamaMessage message;
+  final bool isStreaming;
 
-  const _ChatBubbleBody({required this.message});
+  const _ChatBubbleBody({required this.message, required this.isStreaming});
 
   bool get isSentFromUser => message.role == OllamaMessageRole.user;
 
@@ -94,7 +98,11 @@ class _ChatBubbleBody extends StatelessWidget {
           if (isSentFromUser)
             _UserBubble(message: message, buildMarkdown: _buildMarkdown)
           else
-            _AssistantBubble(message: message, buildMarkdown: _buildMarkdown),
+            _AssistantBubble(
+              message: message,
+              isStreaming: isStreaming,
+              buildMarkdown: _buildMarkdown,
+            ),
         ],
       ),
     );
@@ -151,9 +159,14 @@ class _UserBubble extends StatelessWidget {
 
 class _AssistantBubble extends StatelessWidget {
   final OllamaMessage message;
+  final bool isStreaming;
   final Widget Function(BuildContext, String) buildMarkdown;
 
-  const _AssistantBubble({required this.message, required this.buildMarkdown});
+  const _AssistantBubble({
+    required this.message,
+    required this.isStreaming,
+    required this.buildMarkdown,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -163,11 +176,32 @@ class _AssistantBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildMessageContent(context),
-          const SizedBox(height: 6),
-          _AssistantActionButtons(message: message),
+          // Smoothly reveal action buttons when streaming ends
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topLeft,
+            child: isStreaming
+                ? const SizedBox(width: double.infinity, height: 0)
+                : Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _AssistantActionButtons(message: message),
+                  ),
+          ),
         ],
       ),
     );
+  }
+
+  /// Chooses between animated streaming text or full markdown.
+  Widget _buildContent(BuildContext context, String data) {
+    if (isStreaming && data.isNotEmpty) {
+      return StreamingTextRenderer(
+        content: data,
+        baseStyle: Theme.of(context).textTheme.bodyLarge,
+      );
+    }
+    return buildMarkdown(context, data);
   }
 
   Widget _buildMessageContent(BuildContext context) {
@@ -181,7 +215,7 @@ class _AssistantBubble extends StatelessWidget {
           ),
           if (message.content.isNotEmpty) ...[
             const SizedBox(height: 4),
-            buildMarkdown(context, message.content),
+            _buildContent(context, message.content),
           ],
         ],
       );
@@ -199,13 +233,13 @@ class _AssistantBubble extends StatelessWidget {
           ),
           if (parsed.responseContent.isNotEmpty) ...[
             const SizedBox(height: 4),
-            buildMarkdown(context, parsed.responseContent),
+            _buildContent(context, parsed.responseContent),
           ],
         ],
       );
     }
 
-    return buildMarkdown(context, message.content);
+    return _buildContent(context, message.content);
   }
 }
 
@@ -280,4 +314,3 @@ class _ActionChip extends StatelessWidget {
     );
   }
 }
-

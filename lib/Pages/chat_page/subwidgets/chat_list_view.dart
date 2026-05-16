@@ -11,6 +11,7 @@ import 'package:llamaseek/Utils/retained_position_scroll_physics.dart';
 class ChatListView extends StatefulWidget {
   final List<OllamaMessage> messages;
   final bool isAwaitingReply;
+  final bool isStreaming;
   final Widget? error;
   final double? bottomPadding;
 
@@ -18,6 +19,7 @@ class ChatListView extends StatefulWidget {
     super.key,
     required this.messages,
     required this.isAwaitingReply,
+    this.isStreaming = false,
     this.error,
     this.bottomPadding,
   });
@@ -92,55 +94,23 @@ class _ChatListViewState extends State<ChatListView> {
               ),
             if (widget.isAwaitingReply)
               SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20.0, vertical: 12.0),
-                  child: Shimmer.fromColors(
-                    baseColor: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.2),
-                    highlightColor: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.5),
-                    period: const Duration(milliseconds: 1200),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 7, height: 7,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle, color: Colors.white),
-                        ),
-                        const SizedBox(width: 5),
-                        Container(
-                          width: 7, height: 7,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle, color: Colors.white),
-                        ),
-                        const SizedBox(width: 5),
-                        Container(
-                          width: 7, height: 7,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                child: _buildSkeletonLoader(context),
               ),
             SliverList.builder(
               key: widget.key,
               itemCount: widget.messages.length,
               itemBuilder: (context, index) {
                 final message = widget.messages[widget.messages.length - index - 1];
+                final isStreamingMessage = index == 0 && widget.isStreaming;
 
                 if (index == 0) {
                   return ObserveSize(
                     key: Key(message.id),
                     onSizeChanged: _onMessageSizeChanged,
-                    child: ChatBubble(message: message),
+                    child: ChatBubble(
+                      message: message,
+                      isStreaming: isStreamingMessage,
+                    ),
                   );
                 }
 
@@ -178,6 +148,41 @@ class _ChatListViewState extends State<ChatListView> {
             ),
           ),
       ],
+    );
+  }
+
+  /// Skeleton loading indicator with animated text placeholder lines.
+  Widget _buildSkeletonLoader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+      child: Shimmer.fromColors(
+        baseColor:
+            Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
+        highlightColor:
+            Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.14),
+        period: const Duration(milliseconds: 1500),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _skeletonLine(width: 220),
+            const SizedBox(height: 10),
+            _skeletonLine(width: 180),
+            const SizedBox(height: 10),
+            _skeletonLine(width: 140),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _skeletonLine({required double width}) {
+    return Container(
+      width: width,
+      height: 12,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        color: Colors.white,
+      ),
     );
   }
 

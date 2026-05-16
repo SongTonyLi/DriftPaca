@@ -79,8 +79,8 @@ class _ChatBubbleBody extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: isSentFromUser ? 64.0 : 16.0,
-        right: isSentFromUser ? 8.0 : 16.0,
+        left: isSentFromUser ? 48.0 : 8.0,
+        right: isSentFromUser ? 8.0 : 8.0,
         top: 3.0,
         bottom: 3.0,
       ),
@@ -111,10 +111,11 @@ class _ChatBubbleBody extends StatelessWidget {
     );
   }
 
-  static Widget _buildMarkdown(BuildContext context, String data) {
+  static Widget _buildMarkdown(BuildContext context, String data,
+      {bool selectable = true}) {
     return MarkdownBody(
       data: _preprocessLatex(data),
-      selectable: true,
+      selectable: selectable,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
       syntaxHighlighter: CodeSyntaxHighlighter(
@@ -162,7 +163,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
 class _UserBubble extends StatelessWidget {
   final OllamaMessage message;
-  final Widget Function(BuildContext, String) buildMarkdown;
+  final Widget Function(BuildContext, String, {bool selectable}) buildMarkdown;
 
   const _UserBubble({required this.message, required this.buildMarkdown});
 
@@ -192,7 +193,7 @@ class _UserBubble extends StatelessWidget {
 class _AssistantBubble extends StatefulWidget {
   final OllamaMessage message;
   final bool isStreaming;
-  final Widget Function(BuildContext, String) buildMarkdown;
+  final Widget Function(BuildContext, String, {bool selectable}) buildMarkdown;
 
   const _AssistantBubble({
     required this.message,
@@ -268,7 +269,8 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
   }
 
   Widget _buildContent(BuildContext context, String data) {
-    return widget.buildMarkdown(context, data);
+    return widget.buildMarkdown(context, data,
+        selectable: !widget.isStreaming);
   }
 
   Widget _buildMessageContent(BuildContext context) {

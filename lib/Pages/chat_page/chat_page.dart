@@ -238,6 +238,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _sendMessage() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     await _viewModel.sendMessage(
       onModelSelectionRequired: _showModelSelectionBottomSheet,
       onServerNotConfigured: _onServerNotConfigured,

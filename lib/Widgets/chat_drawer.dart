@@ -18,7 +18,7 @@ class ChatDrawer extends StatelessWidget {
 
     return Drawer(
       backgroundColor: Colors.transparent,
-      width: 350,
+      width: 400,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(8.0),

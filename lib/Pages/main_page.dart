@@ -43,7 +43,7 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
       appBar: const ChatAppBar(),
       body: const SafeArea(top: false, child: ChatPage()),
       drawer: const ChatDrawer(),
-      drawerScrimColor: Colors.black.withValues(alpha: 0.15),
+      drawerScrimColor: Colors.transparent,
     );
   }
 }

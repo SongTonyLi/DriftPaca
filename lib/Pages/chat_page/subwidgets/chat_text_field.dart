@@ -61,7 +61,7 @@ class _ChatTextFieldState extends State<ChatTextField> {
           hintText: 'Message',
           prefixIcon: widget.prefixIcon,
           suffixIcon: widget.suffixIcon,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 18),
+          contentPadding: const EdgeInsets.only(left: 4, right: 4, top: 14, bottom: 8),
           isDense: true,
         ),
         minLines: 1,

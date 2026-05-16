@@ -80,53 +80,74 @@ class _ChatPageState extends State<ChatPage> {
                           ),
                         ],
                       ),
-                      child: Row(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            icon: const Icon(Icons.add, size: 22),
-                            padding: const EdgeInsets.only(left: 8),
-                            constraints: const BoxConstraints(),
-                            onPressed: _handleAttachmentButton,
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              _viewModel.webSearchEnabled
-                                  ? Icons.travel_explore
-                                  : Icons.travel_explore_outlined,
-                              size: 22,
-                              color: _viewModel.webSearchEnabled
-                                  ? Theme.of(context).colorScheme.onPrimary
-                                  : null,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            style: _viewModel.webSearchEnabled
-                                ? IconButton.styleFrom(
-                                    backgroundColor:
-                                        Theme.of(context).colorScheme.primary,
-                                  )
-                                : null,
-                            onPressed: () => _viewModel.toggleWebSearch(),
-                            tooltip: 'Web Search',
-                          ),
-                          Expanded(
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                             child: ChatTextField(
                               key: ValueKey(_viewModel.currentChat?.id),
                               controller: _viewModel.textFieldController,
                               onEditingComplete: _sendMessage,
                             ),
                           ),
-                          if (_viewModel.isStreaming)
-                            IconButton(
-                              icon: const Icon(Icons.stop_rounded, size: 20),
-                              style: IconButton.styleFrom(
-                                backgroundColor: Theme.of(context).colorScheme.errorContainer,
-                                foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
-                              ),
-                              onPressed: _viewModel.cancelStreaming,
-                            )
-                          else
-                            const SizedBox(width: 8),
+                          Padding(
+                            padding: const EdgeInsets.only(
+                                left: 4, right: 4, bottom: 6),
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.add, size: 20),
+                                  padding: const EdgeInsets.all(6),
+                                  constraints: const BoxConstraints(),
+                                  onPressed: _handleAttachmentButton,
+                                ),
+                                const SizedBox(width: 2),
+                                IconButton(
+                                  icon: Icon(
+                                    _viewModel.webSearchEnabled
+                                        ? Icons.travel_explore
+                                        : Icons.travel_explore_outlined,
+                                    size: 20,
+                                    color: _viewModel.webSearchEnabled
+                                        ? Theme.of(context)
+                                            .colorScheme
+                                            .onPrimary
+                                        : null,
+                                  ),
+                                  padding: const EdgeInsets.all(6),
+                                  constraints: const BoxConstraints(),
+                                  style: _viewModel.webSearchEnabled
+                                      ? IconButton.styleFrom(
+                                          backgroundColor: Theme.of(context)
+                                              .colorScheme
+                                              .primary,
+                                        )
+                                      : null,
+                                  onPressed: () =>
+                                      _viewModel.toggleWebSearch(),
+                                  tooltip: 'Web Search',
+                                ),
+                                const Spacer(),
+                                if (_viewModel.isStreaming)
+                                  IconButton(
+                                    icon: const Icon(
+                                        Icons.stop_rounded, size: 20),
+                                    padding: const EdgeInsets.all(6),
+                                    constraints: const BoxConstraints(),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .errorContainer,
+                                      foregroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .onErrorContainer,
+                                    ),
+                                    onPressed: _viewModel.cancelStreaming,
+                                  ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),

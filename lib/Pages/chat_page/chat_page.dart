@@ -53,7 +53,7 @@ class _ChatPageState extends State<ChatPage> {
               Positioned(
                 left: 12,
                 right: 12,
-                bottom: _viewModel.hasImageAttachments ? 80 : 2,
+                bottom: _viewModel.hasImageAttachments ? 80 : 0,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(24.0),
                   child: BackdropFilter(

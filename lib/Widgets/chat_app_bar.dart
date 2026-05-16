@@ -87,12 +87,6 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       ),
       actions: [
         IconButton(
-          icon: const Icon(Icons.tune),
-          onPressed: () {
-            _handleConfigureButton(context);
-          },
-        ),
-        IconButton(
           icon: const Icon(Icons.add_circle_outline),
           onPressed: () {
             chatProvider.destinationChatSelected(0);

@@ -18,6 +18,7 @@ class ChatDrawer extends StatelessWidget {
 
     return Drawer(
       backgroundColor: Colors.transparent,
+      width: 350,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(8.0),
@@ -27,7 +28,7 @@ class ChatDrawer extends StatelessWidget {
               filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
               child: Container(
                 decoration: BoxDecoration(
-                  color: colorScheme.surface.withValues(alpha: 0.60),
+                  color: colorScheme.surface.withValues(alpha: 0.78),
                   borderRadius: BorderRadius.circular(20.0),
                   border: Border.all(
                     color: colorScheme.outline.withValues(alpha: 0.15),

@@ -84,7 +84,7 @@ class _ChatPageState extends State<ChatPage> {
                         children: [
                           IconButton(
                             icon: const Icon(Icons.add, size: 22),
-                            padding: const EdgeInsets.only(left: 8, right: 2),
+                            padding: const EdgeInsets.only(left: 8),
                             constraints: const BoxConstraints(),
                             onPressed: _handleAttachmentButton,
                           ),
@@ -98,7 +98,7 @@ class _ChatPageState extends State<ChatPage> {
                                   ? Theme.of(context).colorScheme.onPrimary
                                   : null,
                             ),
-                            padding: const EdgeInsets.only(left: 2, right: 4),
+                            padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                             style: _viewModel.webSearchEnabled
                                 ? IconButton.styleFrom(

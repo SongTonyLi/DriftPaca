@@ -11,13 +11,13 @@ extension MarkdownStyleSheetExtension on BuildContext {
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
 
-    // Code block colors — dark in light mode, slightly lighter in dark mode
+    // Code block colors — soft gray, readable in both themes
     final codeBlockBg = isDark
         ? colorScheme.surfaceContainerHighest
-        : const Color(0xFF1E1E2E);
+        : const Color(0xFFF3F4F6);
     final codeTextColor = isDark
         ? colorScheme.onSurface
-        : const Color(0xFFCDD6F4);
+        : const Color(0xFF374151);
 
     // Inline code colors — subtle background
     final inlineCodeBg = colorScheme.onSurface.withValues(alpha: 0.07);

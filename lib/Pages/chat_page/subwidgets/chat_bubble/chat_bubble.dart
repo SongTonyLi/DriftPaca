@@ -122,11 +122,10 @@ class _ChatBubbleBody extends StatelessWidget {
       ),
       extensionSet: md.ExtensionSet.gitHubFlavored,
       builders: {
-        'latex': LatexElementBuilder(),
-        'latexDisplay': _CenteredLatexDisplayBuilder(),
+        'latex': _SmartLatexBuilder(),
       },
       inlineSyntaxes: [LatexInlineSyntax()],
-      blockSyntaxes: [_CenteredLatexBlockSyntax()],
+      blockSyntaxes: [LatexBlockSyntax()],
       onTapLink: (text, href, title) => launchUrlString(href!),
     );
   }
@@ -147,18 +146,12 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 
   static String _replaceLatexDelimiters(String text) {
-    // Convert \[...\] to block $$...$$ on separate lines
+    // Convert \[...\] to $$...$$ (only when both delimiters present)
     text = text.replaceAllMapped(
       RegExp(r'\\\[([\s\S]*?)\\\]'),
-      (m) => '\n\$\$\n${m[1]!.trim()}\n\$\$\n',
+      (m) => '\$\$${m[1]}\$\$',
     );
-    // Convert inline $$...$$ to block format (separate lines)
-    // so LatexBlockSyntax matches them for centered rendering
-    text = text.replaceAllMapped(
-      RegExp(r'\$\$(.+?)\$\$'),
-      (m) => '\n\$\$\n${m[1]!.trim()}\n\$\$\n',
-    );
-    // Convert \(...\) to inline $...$
+    // Convert \(...\) to $...$
     text = text.replaceAllMapped(
       RegExp(r'\\\((.+?)\\\)'),
       (m) => '\$${m[1]}\$',
@@ -392,39 +385,8 @@ class _ActionChip extends StatelessWidget {
   }
 }
 
-/// Block syntax that matches $$ on its own line and produces 'latexDisplay' tag.
-class _CenteredLatexBlockSyntax extends md.BlockSyntax {
-  @override
-  RegExp get pattern => RegExp(r'^\$\$\s*$');
-
-  @override
-  List<md.Line> parseChildLines(md.BlockParser parser) {
-    final childLines = <md.Line>[];
-    parser.advance();
-    while (!parser.isDone) {
-      if (pattern.hasMatch(parser.current.content)) {
-        parser.advance();
-        break;
-      }
-      childLines.add(parser.current);
-      parser.advance();
-    }
-    return childLines;
-  }
-
-  @override
-  md.Node parse(md.BlockParser parser) {
-    final lines = parseChildLines(parser);
-    final content = lines.map((e) => e.content).join('\n').trim();
-    return md.Element.text('latexDisplay', content);
-  }
-}
-
-/// Renders block LaTeX ($$...$$) centered with display math style.
-class _CenteredLatexDisplayBuilder extends MarkdownElementBuilder {
-  @override
-  bool isBlockElement() => true;
-
+/// Renders LaTeX: inline ($...$) normally, display ($$...$$) centered.
+class _SmartLatexBuilder extends MarkdownElementBuilder {
   @override
   Widget? visitElementAfterWithContext(
     BuildContext context,
@@ -435,16 +397,28 @@ class _CenteredLatexDisplayBuilder extends MarkdownElementBuilder {
     final text = element.textContent;
     if (text.isEmpty) return const SizedBox();
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Align(
-        alignment: Alignment.center,
-        child: Math.tex(
-          text,
-          mathStyle: MathStyle.display,
-          textStyle: preferredStyle,
+    final isDisplay = element.attributes['MathStyle'] == 'display';
+
+    final mathWidget = Math.tex(
+      text,
+      mathStyle: isDisplay ? MathStyle.display : MathStyle.text,
+      textStyle: preferredStyle,
+    );
+
+    if (isDisplay) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: SizedBox(
+          width: double.infinity,
+          child: Center(child: mathWidget),
         ),
-      ),
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.antiAlias,
+      child: mathWidget,
     );
   }
 }

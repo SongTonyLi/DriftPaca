@@ -1,5 +1,9 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:provider/provider.dart';
+import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
@@ -333,19 +337,14 @@ class _UserActionButtons extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _ActionChip(
-          icon: Icons.copy_outlined,
-          label: 'Copy',
-          color: colorScheme.onSurfaceVariant,
-          onTap: actions.handleCopy,
-        ),
+        _CopyChip(onCopy: actions.handleCopy),
         const SizedBox(width: 8),
         _ActionChip(
           icon: Icons.edit_outlined,
           label: 'Edit',
           color: colorScheme.onSurfaceVariant,
           onTap: () async {
-            final result = await actions.handleEdit(context);
+            final result = await _showEditPopup(context, message);
             if (result != null && context.mounted) {
               actions.handleRegenerate(context);
             }
@@ -370,12 +369,7 @@ class _AssistantActionButtons extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _ActionChip(
-          icon: Icons.copy_outlined,
-          label: 'Copy',
-          color: colorScheme.onSurfaceVariant,
-          onTap: actions.handleCopy,
-        ),
+        _CopyChip(onCopy: actions.handleCopy),
         const SizedBox(width: 8),
         _ActionChip(
           icon: Icons.refresh_outlined,
@@ -422,6 +416,221 @@ class _ActionChip extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Copy chip that shows "Copied" feedback with checkmark for 3 seconds.
+class _CopyChip extends StatefulWidget {
+  final VoidCallback onCopy;
+
+  const _CopyChip({required this.onCopy});
+
+  @override
+  State<_CopyChip> createState() => _CopyChipState();
+}
+
+class _CopyChipState extends State<_CopyChip>
+    with SingleTickerProviderStateMixin {
+  bool _copied = false;
+
+  void _handleTap() {
+    widget.onCopy();
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final color =
+        _copied ? colorScheme.primary : colorScheme.onSurfaceVariant;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 200),
+      child: InkWell(
+        key: ValueKey(_copied),
+        onTap: _handleTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 4.0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _copied ? Icons.check_rounded : Icons.copy_outlined,
+                size: 15,
+                color: color,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                _copied ? 'Copied' : 'Copy',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: _copied ? FontWeight.w600 : FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shows an animated edit popup that expands from the chat bubble.
+Future<String?> _showEditPopup(
+    BuildContext context, OllamaMessage message) async {
+  final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+
+  return showGeneralDialog<String>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black38,
+    transitionDuration: const Duration(milliseconds: 300),
+    pageBuilder: (_, __, ___) => const SizedBox.shrink(),
+    transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+
+      return ScaleTransition(
+        scale: Tween<double>(begin: 0.85, end: 1.0).animate(curved),
+        alignment: Alignment.bottomRight,
+        child: FadeTransition(
+          opacity: curved,
+          child: _EditPopupContent(
+            message: message,
+            chatProvider: chatProvider,
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _EditPopupContent extends StatefulWidget {
+  final OllamaMessage message;
+  final ChatProvider chatProvider;
+
+  const _EditPopupContent({
+    required this.message,
+    required this.chatProvider,
+  });
+
+  @override
+  State<_EditPopupContent> createState() => _EditPopupContentState();
+}
+
+class _EditPopupContentState extends State<_EditPopupContent> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.message.content);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 60),
+        child: Material(
+          color: Colors.transparent,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+              child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.6,
+                ),
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: colorScheme.outline.withValues(alpha: 0.15),
+                    width: 0.5,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Text field
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                        child: TextField(
+                          controller: _controller,
+                          autofocus: true,
+                          maxLines: null,
+                          textCapitalization: TextCapitalization.sentences,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            hintText: 'Edit message...',
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Action buttons
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: Text(
+                              'Cancel',
+                              style: TextStyle(
+                                color: colorScheme.onPrimaryContainer
+                                    .withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            onPressed: () async {
+                              final text = _controller.text.trim();
+                              if (text.isNotEmpty) {
+                                await widget.chatProvider.updateMessage(
+                                  widget.message,
+                                  newContent: text,
+                                );
+                                if (context.mounted) {
+                                  Navigator.pop(context, text);
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.send_rounded, size: 16),
+                            label: const Text('Save & Resend'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );

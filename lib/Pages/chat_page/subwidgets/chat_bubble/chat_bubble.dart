@@ -93,7 +93,7 @@ class _ChatBubbleBody extends StatelessWidget {
     );
   }
 
-  static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = true}) {
+  static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
     return MarkdownBody(
       data: _preprocessLatex(data),
       selectable: selectable,
@@ -248,7 +248,7 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
   }
 
   Widget _buildContent(BuildContext context, String data) {
-    return widget.buildMarkdown(context, data, selectable: !widget.isStreaming);
+    return widget.buildMarkdown(context, data);
   }
 
   Widget _buildMessageContent(BuildContext context) {

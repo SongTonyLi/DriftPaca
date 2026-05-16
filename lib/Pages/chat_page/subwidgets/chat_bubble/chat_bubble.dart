@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:llamaseek/Extensions/code_syntax_highlighter.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
@@ -112,7 +113,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
   static Widget _buildMarkdown(BuildContext context, String data) {
     return MarkdownBody(
-      data: data,
+      data: _preprocessLatex(data),
       selectable: true,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
@@ -122,12 +123,39 @@ class _ChatBubbleBody extends StatelessWidget {
       extensionSet: md.ExtensionSet.gitHubFlavored,
       builders: {
         'latex': LatexElementBuilder(),
-        'latexBlock': LatexElementBuilder(),
+        'latexBlock': _CenteredLatexBuilder(),
       },
       inlineSyntaxes: [LatexInlineSyntax()],
       blockSyntaxes: [LatexBlockSyntax()],
       onTapLink: (text, href, title) => launchUrlString(href!),
     );
+  }
+
+  /// Converts \(...\) to $...$ and \[...\] to $$...$$ for LaTeX parsing,
+  /// skipping content inside code fences and inline code.
+  static String _preprocessLatex(String content) {
+    final buffer = StringBuffer();
+    int pos = 0;
+    final codePattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
+    for (final match in codePattern.allMatches(content)) {
+      buffer.write(_replaceLatexDelimiters(content.substring(pos, match.start)));
+      buffer.write(match.group(0));
+      pos = match.end;
+    }
+    buffer.write(_replaceLatexDelimiters(content.substring(pos)));
+    return buffer.toString();
+  }
+
+  static String _replaceLatexDelimiters(String text) {
+    text = text.replaceAllMapped(
+      RegExp(r'\\\[([\s\S]*?)\\\]'),
+      (m) => '\$\$${m[1]}\$\$',
+    );
+    text = text.replaceAllMapped(
+      RegExp(r'\\\((.+?)\\\)'),
+      (m) => '\$${m[1]}\$',
+    );
+    return text;
   }
 }
 
@@ -350,6 +378,37 @@ class _ActionChip extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Renders block LaTeX ($$...$$) centered with display math style.
+class _CenteredLatexBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final text = element.textContent;
+    if (text.isEmpty) return const SizedBox();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SizedBox(
+        width: double.infinity,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Center(
+            child: Math.tex(
+              text,
+              mathStyle: MathStyle.display,
+              textStyle: preferredStyle,
+            ),
+          ),
         ),
       ),
     );

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:llamaseek/Widgets/chat_image.dart';
 
 class ChatAttachmentImage extends StatelessWidget {
+  static const double previewHeightFactor = 0.15;
+
   final File imageFile;
   final Function(File) onRemove;
 
@@ -19,7 +21,7 @@ class ChatAttachmentImage extends StatelessWidget {
       children: [
         ChatImage(
           image: FileImage(imageFile),
-          height: MediaQuery.of(context).size.height * 0.15,
+          height: MediaQuery.of(context).size.height * previewHeightFactor,
         ),
         Positioned(
           top: 2,

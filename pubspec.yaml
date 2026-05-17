@@ -145,15 +145,15 @@ flutter:
   # see https://flutter.dev/to/font-from-package
 
 flutter_launcher_icons:
-  image_path: "assets/images/icons/reins.png"
+  image_path: "assets/images/icons/LlamaSeek_Logo.png"
   android: true
   ios: true
   macos:
     generate: true
-    image_path: "assets/images/icons/reins-macos.png"
+    image_path: "assets/images/icons/LlamaSeek_Logo.png"
   windows:
     generate: true
-    image_path: "assets/images/icons/reins-windows.png"
+    image_path: "assets/images/icons/LlamaSeek_Logo.png"
     icon_size: 256
 
 flutter_native_splash:

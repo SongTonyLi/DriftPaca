@@ -18,6 +18,11 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  static const double _composerHorizontalInset = 6.0;
+  static const double _footerSpacing = 12.0;
+  static const double _collapsedComposerPadding = 80.0;
+  static const double _expandedComposerPadding = 110.0;
+
   // ViewModel reference
   late final ChatPageViewModel _viewModel;
 
@@ -46,9 +51,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _onInputFocusChange() {
-    if (!_inputFocusNode.hasFocus &&
-        _viewModel.textFieldController.text.isEmpty &&
-        !_viewModel.isStreaming) {
+    if (!_inputFocusNode.hasFocus && _viewModel.textFieldController.text.isEmpty && !_viewModel.isStreaming) {
       setState(() => _isInputExpanded = false);
     }
   }
@@ -76,128 +79,8 @@ class _ChatPageState extends State<ChatPage> {
               Positioned(
                 left: 0,
                 right: 0,
-                bottom: 120,
-                child: _buildChatFooter(),
-              ),
-              Positioned(
-                left: 6,
-                right: 6,
-                bottom: _viewModel.hasImageAttachments ? 80 : 0,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24.0),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(24.0),
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
-                          width: 0.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 12,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // TextField — always mounted, slides in/out via height + opacity
-                          ClipRect(
-                            child: AnimatedAlign(
-                              duration: const Duration(milliseconds: 400),
-                              curve: Curves.easeInOutCubic,
-                              alignment: Alignment.bottomCenter,
-                              heightFactor: _shouldShowExpanded ? 1.0 : 0.0,
-                              child: AnimatedOpacity(
-                                opacity: _shouldShowExpanded ? 1.0 : 0.0,
-                                duration: const Duration(milliseconds: 350),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  child: ChatTextField(
-                                    key: ValueKey(_viewModel.currentChat?.id),
-                                    controller: _viewModel.textFieldController,
-                                    onEditingComplete: _sendMessage,
-                                    focusNode: _inputFocusNode,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          // Button row — always present, "Message" fades in/out
-                          Padding(
-                            padding: const EdgeInsets.only(left: 4, right: 4, bottom: 6, top: 4),
-                            child: Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.add, size: 20),
-                                  padding: const EdgeInsets.all(6),
-                                  constraints: const BoxConstraints(),
-                                  onPressed: _handleAttachmentButton,
-                                ),
-                                const SizedBox(width: 2),
-                                IconButton(
-                                  icon: Icon(
-                                    _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
-                                    size: 20,
-                                    color: _viewModel.webSearchEnabled ? Theme.of(context).colorScheme.onPrimary : null,
-                                  ),
-                                  padding: const EdgeInsets.all(6),
-                                  constraints: const BoxConstraints(),
-                                  style: _viewModel.webSearchEnabled
-                                      ? IconButton.styleFrom(
-                                          backgroundColor: Theme.of(context).colorScheme.primary,
-                                        )
-                                      : null,
-                                  onPressed: () => _viewModel.toggleWebSearch(),
-                                  tooltip: 'Web Search',
-                                ),
-                                Expanded(
-                                  child: IgnorePointer(
-                                    ignoring: _shouldShowExpanded,
-                                    child: GestureDetector(
-                                      onTap: _expandInput,
-                                      behavior: HitTestBehavior.opaque,
-                                      child: AnimatedOpacity(
-                                        opacity: _shouldShowExpanded ? 0.0 : 1.0,
-                                        duration: const Duration(milliseconds: 300),
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                          child: Text(
-                                            'Message',
-                                            style: TextStyle(
-                                              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (_viewModel.isStreaming)
-                                  IconButton(
-                                    icon: const Icon(Icons.stop_rounded, size: 20),
-                                    padding: const EdgeInsets.all(6),
-                                    constraints: const BoxConstraints(),
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: Theme.of(context).colorScheme.errorContainer,
-                                      foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
-                                    ),
-                                    onPressed: _viewModel.cancelStreaming,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+                bottom: 0,
+                child: _buildBottomOverlay(),
               ),
             ],
           ),
@@ -244,13 +127,148 @@ class _ChatPageState extends State<ChatPage> {
                 onRetry: () => _viewModel.retryLastPrompt(),
               )
             : null,
-        bottomPadding: _viewModel.hasImageAttachments ? 160 : (_shouldShowExpanded ? 110 : 80),
+        bottomPadding: _chatBodyBottomPadding(context),
         topPadding: isMobile ? MediaQuery.of(context).padding.top + ChatAppBar.mobileOverlayHeight : null,
       );
     }
   }
 
-  Widget _buildChatFooter() {
+  Widget _buildBottomOverlay() {
+    final footer = _buildChatFooter();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: _composerHorizontalInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (footer != null) ...[
+            footer,
+            const SizedBox(height: _footerSpacing),
+          ],
+          _buildComposer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildComposer() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24.0),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(24.0),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
+              width: 0.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRect(
+                child: AnimatedAlign(
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeInOutCubic,
+                  alignment: Alignment.bottomCenter,
+                  heightFactor: _shouldShowExpanded ? 1.0 : 0.0,
+                  child: AnimatedOpacity(
+                    opacity: _shouldShowExpanded ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 350),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: ChatTextField(
+                        key: ValueKey(_viewModel.currentChat?.id),
+                        controller: _viewModel.textFieldController,
+                        onEditingComplete: _sendMessage,
+                        focusNode: _inputFocusNode,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 4, right: 4, bottom: 6, top: 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.add, size: 20),
+                      padding: const EdgeInsets.all(6),
+                      constraints: const BoxConstraints(),
+                      onPressed: _handleAttachmentButton,
+                    ),
+                    const SizedBox(width: 2),
+                    IconButton(
+                      icon: Icon(
+                        _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
+                        size: 20,
+                        color: _viewModel.webSearchEnabled ? Theme.of(context).colorScheme.onPrimary : null,
+                      ),
+                      padding: const EdgeInsets.all(6),
+                      constraints: const BoxConstraints(),
+                      style: _viewModel.webSearchEnabled
+                          ? IconButton.styleFrom(
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                            )
+                          : null,
+                      onPressed: () => _viewModel.toggleWebSearch(),
+                      tooltip: 'Web Search',
+                    ),
+                    Expanded(
+                      child: IgnorePointer(
+                        ignoring: _shouldShowExpanded,
+                        child: GestureDetector(
+                          onTap: _expandInput,
+                          behavior: HitTestBehavior.opaque,
+                          child: AnimatedOpacity(
+                            opacity: _shouldShowExpanded ? 0.0 : 1.0,
+                            duration: const Duration(milliseconds: 300),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                              child: Text(
+                                'Message',
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_viewModel.isStreaming)
+                      IconButton(
+                        icon: const Icon(Icons.stop_rounded, size: 20),
+                        padding: const EdgeInsets.all(6),
+                        constraints: const BoxConstraints(),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(context).colorScheme.errorContainer,
+                          foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                        onPressed: _viewModel.cancelStreaming,
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildChatFooter() {
     if (_viewModel.hasImageAttachments) {
       return ChatAttachmentRow(
         itemCount: _viewModel.imageFiles.length,
@@ -261,7 +279,7 @@ class _ChatPageState extends State<ChatPage> {
           );
         },
       );
-    } else if (_viewModel.messages.isEmpty) {
+    } else if (_viewModel.messages.isEmpty && _viewModel.presets.isNotEmpty) {
       return ChatAttachmentRow(
         itemCount: _viewModel.presets.length,
         itemBuilder: (context, index) {
@@ -275,9 +293,20 @@ class _ChatPageState extends State<ChatPage> {
           );
         },
       );
-    } else {
-      return const SizedBox();
     }
+
+    return null;
+  }
+
+  double _chatBodyBottomPadding(BuildContext context) {
+    final composerPadding = _shouldShowExpanded ? _expandedComposerPadding : _collapsedComposerPadding;
+    if (!_viewModel.hasImageAttachments) return composerPadding;
+
+    return composerPadding + _attachmentPreviewHeight(context) + _footerSpacing;
+  }
+
+  double _attachmentPreviewHeight(BuildContext context) {
+    return MediaQuery.of(context).size.height * ChatAttachmentImage.previewHeightFactor;
   }
 
   Future<void> _sendMessage() async {

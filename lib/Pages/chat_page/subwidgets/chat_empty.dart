@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:llamaseek/Constants/constants.dart';
 
 class ChatEmpty extends StatelessWidget {
@@ -15,14 +14,7 @@ class ChatEmpty extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            SvgPicture.asset(
-              AppConstants.appIconSvg,
-              height: 48,
-              colorFilter: ColorFilter.mode(
-                Theme.of(context).colorScheme.onSurface,
-                BlendMode.srcIn,
-              ),
-            ),
+            Image.asset(AppConstants.appIconPng, height: 48),
             child,
           ],
         ),

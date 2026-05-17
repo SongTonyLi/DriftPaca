@@ -622,8 +622,7 @@ class _EditPopupContentState extends State<_EditPopupContent> {
 class _InlineLatexSyntax extends md.InlineSyntax {
   // Match $$...$$ (display) or $...$ (inline).
   // No restrictive lookahead — allows LaTeX inside bold, before dashes, etc.
-  _InlineLatexSyntax()
-      : super(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$', startCharacter: 0x24);
+  _InlineLatexSyntax() : super(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$', startCharacter: 0x24);
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {
@@ -663,11 +662,33 @@ class _SmartLatexBuilder extends MarkdownElementBuilder {
 
     // Ensure text color is explicit — flutter_math_fork can render
     // invisible text when preferredStyle has no color (e.g. in tables).
-    final effectiveColor = preferredStyle?.color ??
-        Theme.of(context).textTheme.bodyMedium?.color;
-    final mathTextStyle = (preferredStyle ?? const TextStyle())
-        .copyWith(color: effectiveColor);
+    final effectiveColor = preferredStyle?.color ?? Theme.of(context).textTheme.bodyMedium?.color;
+    final mathTextStyle = (preferredStyle ?? const TextStyle()).copyWith(color: effectiveColor);
 
+    return _SmartLatexWidget(
+      text: text,
+      isDisplay: isDisplay,
+      rawSource: rawSource,
+      mathTextStyle: mathTextStyle,
+    );
+  }
+}
+
+class _SmartLatexWidget extends StatelessWidget {
+  final String text;
+  final bool isDisplay;
+  final String rawSource;
+  final TextStyle mathTextStyle;
+
+  const _SmartLatexWidget({
+    required this.text,
+    required this.isDisplay,
+    required this.rawSource,
+    required this.mathTextStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final mathWidget = Math.tex(
       text,
       mathStyle: isDisplay ? MathStyle.display : MathStyle.text,
@@ -679,19 +700,49 @@ class _SmartLatexBuilder extends MarkdownElementBuilder {
       ),
     );
 
+    final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
+    final renderedMath = inTableCell ? _buildScrollableTableMath(mathWidget) : mathWidget;
+
     if (isDisplay) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
-        child: SizedBox(
-          width: double.infinity,
-          child: Center(child: mathWidget),
-        ),
+        child: inTableCell
+            ? Align(
+                alignment: Alignment.center,
+                child: renderedMath,
+              )
+            : SizedBox(
+                width: double.infinity,
+                child: Center(child: renderedMath),
+              ),
       );
     }
 
-    // Return inline math directly — SingleChildScrollView breaks
-    // IntrinsicColumnWidth in tables (reports zero width → invisible cells).
-    return mathWidget;
+    return renderedMath;
+  }
+
+  Widget _buildScrollableTableMath(Math mathWidget) {
+    final breakResult = mathWidget.texBreak();
+    final wrappedParts = breakResult.parts
+        .map(
+          (part) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.antiAlias,
+            child: part,
+          ),
+        )
+        .toList(growable: false);
+
+    if (wrappedParts.length == 1) {
+      return wrappedParts.single;
+    }
+
+    return Wrap(
+      alignment: isDisplay ? WrapAlignment.center : WrapAlignment.start,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: isDisplay ? 4 : 2,
+      children: wrappedParts,
+    );
   }
 }
 

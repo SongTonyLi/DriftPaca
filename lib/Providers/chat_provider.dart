@@ -212,15 +212,9 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sendPrompt(String text, {
-    List<File>? images,
-    String? searchContext,
-    Map<int, String>? sourceUrls,
-  }) async {
-    // Save the chat where the prompt was sent
-    final associatedChat = currentChat!;
-
-    // Create a user prompt message and add it to the chat
+  /// Adds a user message to the chat immediately and notifies listeners.
+  /// Call this as early as possible so the chat bubble appears instantly.
+  OllamaMessage displayUserMessage(String text, {List<File>? images}) {
     final prompt = OllamaMessage(
       text.trim(),
       images: images,
@@ -229,9 +223,19 @@ class ChatProvider extends ChangeNotifier {
     _messages.add(prompt);
 
     // Set thinking state immediately so UI shows user message + thinking together
-    _activeChatStreams[associatedChat.id] = null;
+    _activeChatStreams[currentChat!.id] = null;
 
     notifyListeners();
+    return prompt;
+  }
+
+  /// Persists the user message and starts the AI response stream.
+  /// Call [displayUserMessage] first to show the bubble immediately.
+  Future<void> sendPrompt(OllamaMessage prompt, {
+    String? searchContext,
+    Map<int, String>? sourceUrls,
+  }) async {
+    final associatedChat = currentChat!;
 
     // Save the user prompt to the database
     await _databaseService.addMessage(prompt, chat: associatedChat);

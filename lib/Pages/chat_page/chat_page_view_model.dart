@@ -271,6 +271,7 @@ class ChatPageViewModel extends ChangeNotifier {
     }
 
     // If no current chat, need to create one
+    bool isNewChat = false;
     if (_chatProvider.currentChat == null) {
       // If no model selected, request selection
       if (_selectedModel == null) {
@@ -284,66 +285,40 @@ class ChatPageViewModel extends ChangeNotifier {
 
       // Create a new chat with the selected model
       await _chatProvider.createNewChat(_selectedModel!);
-
-      // Take the prompt and images and refresh the presets
-      final prompt = _takeTextFieldValue();
-      final images = _takeImages();
       _presets = ChatPresets.randomPresets;
+      isNewChat = true;
+    }
 
-      // Perform web search if enabled
-      String? searchContext;
-      Map<int, String>? sourceUrls;
-      if (_webSearchEnabled) {
-        try {
-          final searchService = WebSearchService();
-          final searchResults = await searchService.searchAndFetch(prompt);
-          if (searchResults.isNotEmpty) {
-            searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
-            sourceUrls = {
-              for (var i = 0; i < searchResults.length; i++)
-                i + 1: searchResults[i].url,
-            };
-          }
-        } catch (_) {
+    // Take the prompt and images, then display the bubble immediately
+    final prompt = _takeTextFieldValue();
+    final images = _takeImages();
+    final message = _chatProvider.displayUserMessage(prompt, images: images);
+    notifyListeners();
+
+    // Perform web search if enabled (user already sees their message)
+    String? searchContext;
+    Map<int, String>? sourceUrls;
+    if (_webSearchEnabled) {
+      try {
+        final searchService = WebSearchService();
+        final searchResults = await searchService.searchAndFetch(prompt);
+        if (searchResults.isNotEmpty) {
+          searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
+          sourceUrls = {
+            for (var i = 0; i < searchResults.length; i++)
+              i + 1: searchResults[i].url,
+          };
         }
+      } catch (_) {
       }
+    }
 
-      // Notify listeners
-      notifyListeners();
+    // Persist message and start the AI response stream
+    await _chatProvider.sendPrompt(message, searchContext: searchContext, sourceUrls: sourceUrls);
 
-      // Send the prompt
-      await _chatProvider.sendPrompt(prompt, images: images, searchContext: searchContext, sourceUrls: sourceUrls);
-
-      // Generate title for the new chat
+    // Generate title for new chats
+    if (isNewChat) {
       await _chatProvider.generateTitleForCurrentChat();
-    } else {
-      // Get and clear the prompt and images
-      final prompt = _takeTextFieldValue();
-      final images = _takeImages();
-
-      // Perform web search if enabled
-      String? searchContext;
-      Map<int, String>? sourceUrls;
-      if (_webSearchEnabled) {
-        try {
-          final searchService = WebSearchService();
-          final searchResults = await searchService.searchAndFetch(prompt);
-          if (searchResults.isNotEmpty) {
-            searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
-            sourceUrls = {
-              for (var i = 0; i < searchResults.length; i++)
-                i + 1: searchResults[i].url,
-            };
-          }
-        } catch (_) {
-        }
-      }
-
-      // Notify listeners (text field is cleared)
-      notifyListeners();
-
-      // Send the prompt
-      await _chatProvider.sendPrompt(prompt, images: images, searchContext: searchContext, sourceUrls: sourceUrls);
     }
 
     return true;

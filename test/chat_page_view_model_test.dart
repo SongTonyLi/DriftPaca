@@ -363,6 +363,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   bool cancelStreamingCalled = false;
   bool retryLastPromptCalled = false;
   bool createNewChatCalled = false;
+  bool displayUserMessageCalled = false;
   bool sendPromptCalled = false;
   bool generateTitleCalled = false;
   String? lastSentPrompt;
@@ -433,10 +434,18 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   }
 
   @override
-  Future<void> sendPrompt(String prompt, {List<File>? images}) async {
-    sendPromptCalled = true;
-    lastSentPrompt = prompt;
+  OllamaMessage displayUserMessage(String text, {List<File>? images}) {
+    displayUserMessageCalled = true;
+    lastSentPrompt = text;
     lastSentImages = images;
+    final message = OllamaMessage(text.trim(), images: images, role: OllamaMessageRole.user);
+    _messages.add(message);
+    return message;
+  }
+
+  @override
+  Future<void> sendPrompt(OllamaMessage prompt, {String? searchContext, Map<int, String>? sourceUrls}) async {
+    sendPromptCalled = true;
   }
 
   @override

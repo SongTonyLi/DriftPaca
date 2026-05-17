@@ -722,26 +722,10 @@ class _SmartLatexWidget extends StatelessWidget {
   }
 
   Widget _buildScrollableTableMath(Math mathWidget) {
-    final breakResult = mathWidget.texBreak();
-    final wrappedParts = breakResult.parts
-        .map(
-          (part) => SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            clipBehavior: Clip.antiAlias,
-            child: part,
-          ),
-        )
-        .toList(growable: false);
-
-    if (wrappedParts.length == 1) {
-      return wrappedParts.single;
-    }
-
-    return Wrap(
-      alignment: isDisplay ? WrapAlignment.center : WrapAlignment.start,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      runSpacing: isDisplay ? 4 : 2,
-      children: wrappedParts,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.antiAlias,
+      child: mathWidget,
     );
   }
 }

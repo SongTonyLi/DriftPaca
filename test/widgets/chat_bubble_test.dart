@@ -109,6 +109,7 @@ void main() {
     );
 
     expect(overflowErrors(errors), isEmpty);
+    expect(find.byType(Math), findsOneWidget);
   });
 
   testWidgets('does not overflow display latex inside markdown tables', (tester) async {
@@ -122,5 +123,6 @@ void main() {
     );
 
     expect(overflowErrors(errors), isEmpty);
+    expect(find.byType(Math), findsOneWidget);
   });
 }

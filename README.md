@@ -1,5 +1,10 @@
 # LlamaSeek
 
+Demo:
+
+https://github.com/user-attachments/assets/f3e96b36-12ca-4aac-8e4a-7b1f0285a692
+
+
 A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a modern glass-inspired UI.
 
 ## Features
@@ -18,7 +23,7 @@ A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a 
 ### Prerequisites
 
 - [Flutter](https://flutter.dev/docs/get-started/install) 3.x+
-- [Ollama](https://ollama.com) running locally, or an Ollama Cloud API key
+- [Ollama](https://ollama.com) Ollama Cloud API key
 
 ### Run
 

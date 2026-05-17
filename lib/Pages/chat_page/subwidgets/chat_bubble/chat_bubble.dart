@@ -603,24 +603,28 @@ class _EditPopupContentState extends State<_EditPopupContent> {
 }
 
 class _InlineLatexSyntax extends md.InlineSyntax {
-  static final RegExp _pattern = RegExp(
-    r"""(?<!\\)(\$\$?)\s*((?:\\.|[^\\\n])+?)\s*(?<!\\)\1(?=[\s?!.,:;)\]}>"']|$)""",
-  );
-
-  _InlineLatexSyntax() : super(_pattern.pattern);
+  // Match $$...$$ (display) or $...$ (inline).
+  // No restrictive lookahead — allows LaTeX inside bold, before dashes, etc.
+  _InlineLatexSyntax()
+      : super(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$', startCharacter: 0x24);
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {
-    final delimiter = match.group(1);
-    final equation = match.group(2);
-    if (delimiter == null || equation == null || equation.trim().isEmpty) {
-      return false;
+    final displayContent = match.group(1);
+    final inlineContent = match.group(2);
+    final equation = (displayContent ?? inlineContent)?.trim();
+
+    // MUST always return true when regex matched — returning false
+    // without consuming causes InlineParser to loop infinitely.
+    if (equation == null || equation.isEmpty) {
+      parser.addNode(md.Text(match.group(0)!));
+      return true;
     }
 
-    final element = md.Element.text('latex', equation.trim());
-    element.attributes['MathStyle'] = delimiter.length == 2 ? 'display' : 'text';
+    final isDisplay = displayContent != null;
+    final element = md.Element.text('latex', equation);
+    element.attributes['MathStyle'] = isDisplay ? 'display' : 'text';
     parser.addNode(element);
-
     return true;
   }
 }

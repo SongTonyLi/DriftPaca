@@ -29,7 +29,7 @@ class _ChatPageState extends State<ChatPage> {
   final _inputFocusNode = FocusNode();
   bool _isInputExpanded = false;
 
-  bool get _shouldShowExpanded => _isInputExpanded || _viewModel.isStreaming;
+  bool get _shouldShowExpanded => _isInputExpanded;
 
   @override
   void initState() {
@@ -282,6 +282,7 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _sendMessage() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _isInputExpanded = false);
     await _viewModel.sendMessage(
       onModelSelectionRequired: _showModelSelectionBottomSheet,
       onServerNotConfigured: _onServerNotConfigured,

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:llamaseek/Constants/constants.dart';
 
 class ChatEmpty extends StatelessWidget {
   final Widget child;
@@ -14,7 +13,8 @@ class ChatEmpty extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(AppConstants.appIconPng, height: 48),
+            Image.asset('assets/images/llama.png', height: 120),
+            const SizedBox(height: 12),
             child,
           ],
         ),

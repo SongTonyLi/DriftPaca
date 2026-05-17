@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/streaming_llama.dart';
 import 'package:llamaseek/Widgets/flexible_text.dart';
 
 class OllamaBottomSheetHeader extends StatelessWidget {
@@ -13,10 +13,7 @@ class OllamaBottomSheetHeader extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.all(16.0),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8.0),
-            child: Image.asset(AppConstants.appIconPng, height: 48),
-          ),
+          child: StreamingLlama(isRunning: false),
         ),
         FlexibleText(
           title,

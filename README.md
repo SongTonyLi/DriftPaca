@@ -37,8 +37,15 @@ flutter run
 ### iOS
 
 ```bash
+# List connected devices to find your device ID
+flutter devices
+
+# Simulator
 flutter run -d <simulator-id>
-# or open ios/Runner.xcworkspace in Xcode
+
+# Physical device (release build required)
+flutter build ios --release
+flutter install -d <device-id>
 ```
 
 ## Architecture

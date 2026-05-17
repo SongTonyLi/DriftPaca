@@ -20,8 +20,8 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   static const double _composerHorizontalInset = 6.0;
   static const double _footerSpacing = 12.0;
-  static const double _collapsedComposerPadding = 80.0;
-  static const double _expandedComposerPadding = 110.0;
+  static const double _collapsedComposerPadding = 56.0;
+  static const double _expandedComposerPadding = 86.0;
 
   // ViewModel reference
   late final ChatPageViewModel _viewModel;
@@ -135,20 +135,48 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildBottomOverlay() {
     final footer = _buildChatFooter();
+    final bgColor = Theme.of(context).colorScheme.surface;
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _composerHorizontalInset),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (footer != null) ...[
-            footer,
-            const SizedBox(height: _footerSpacing),
-          ],
-          _buildComposer(),
-        ],
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Composer
+        Padding(
+          padding: EdgeInsets.only(
+            left: _composerHorizontalInset,
+            right: _composerHorizontalInset,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (footer != null) ...[
+                footer,
+                const SizedBox(height: _footerSpacing),
+              ],
+              _buildComposer(),
+            ],
+          ),
+        ),
+        // Gradient fade below the input bar — content fades out in safe area
+        if (bottomSafeArea > 0)
+          IgnorePointer(
+            child: Container(
+              height: bottomSafeArea,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    bgColor.withValues(alpha: 0.5),
+                    bgColor.withValues(alpha: 0.95),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -299,10 +327,12 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   double _chatBodyBottomPadding(BuildContext context) {
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
     final composerPadding = _shouldShowExpanded ? _expandedComposerPadding : _collapsedComposerPadding;
-    if (!_viewModel.hasImageAttachments) return composerPadding;
+    final base = composerPadding + bottomSafeArea;
+    if (!_viewModel.hasImageAttachments) return base;
 
-    return composerPadding + _attachmentPreviewHeight(context) + _footerSpacing;
+    return base + _attachmentPreviewHeight(context) + _footerSpacing;
   }
 
   double _attachmentPreviewHeight(BuildContext context) {

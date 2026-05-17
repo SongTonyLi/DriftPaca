@@ -459,23 +459,35 @@ Future<String?> _showEditPopup(BuildContext context, OllamaMessage message) asyn
     barrierDismissible: true,
     barrierLabel: 'Dismiss',
     barrierColor: Colors.black38,
-    transitionDuration: const Duration(milliseconds: 300),
+    transitionDuration: const Duration(milliseconds: 400),
     pageBuilder: (_, __, ___) => const SizedBox.shrink(),
     transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
-      final curved = CurvedAnimation(
+      // iOS-like smooth deceleration for movement and scale
+      final moveCurve = CurvedAnimation(
         parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
+        curve: const Cubic(0.16, 1.0, 0.3, 1.0),
+        reverseCurve: Curves.easeInQuart,
+      );
+      // Fade completes faster so content is visible while still settling
+      final fadeCurve = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOut,
+        reverseCurve: Curves.easeIn,
       );
 
-      return ScaleTransition(
-        scale: Tween<double>(begin: 0.85, end: 1.0).animate(curved),
-        alignment: Alignment.bottomRight,
-        child: FadeTransition(
-          opacity: curved,
-          child: _EditPopupContent(
-            message: message,
-            chatProvider: chatProvider,
+      return FadeTransition(
+        opacity: fadeCurve,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.04),
+            end: Offset.zero,
+          ).animate(moveCurve),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.94, end: 1.0).animate(moveCurve),
+            child: _EditPopupContent(
+              message: message,
+              chatProvider: chatProvider,
+            ),
           ),
         ),
       );
@@ -515,10 +527,14 @@ class _EditPopupContentState extends State<_EditPopupContent> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 60),
-        child: Material(
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: Material(
           color: Colors.transparent,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(24),
@@ -597,6 +613,7 @@ class _EditPopupContentState extends State<_EditPopupContent> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

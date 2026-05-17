@@ -46,11 +46,13 @@ class ThinkBlockParser {
 class ThinkBlockWidget extends StatefulWidget {
   final String content;
   final bool isComplete;
+  final bool isStreaming;
 
   const ThinkBlockWidget({
     super.key,
     required this.content,
     required this.isComplete,
+    this.isStreaming = false,
   });
 
   @override
@@ -116,7 +118,9 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   @override
   void didUpdateWidget(ThinkBlockWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!oldWidget.isComplete && widget.isComplete) {
+    final shouldStop = (!oldWidget.isComplete && widget.isComplete) ||
+        (oldWidget.isStreaming && !widget.isStreaming && !widget.isComplete);
+    if (shouldStop && _stopwatch.isRunning) {
       _stopwatch.stop();
       _elapsedSeconds = _stopwatch.elapsed.inSeconds;
       _pulseController.stop();
@@ -148,7 +152,8 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   }
 
   String get _label {
-    if (!widget.isComplete) {
+    final stopped = !_stopwatch.isRunning;
+    if (!widget.isComplete && !stopped) {
       return _elapsedSeconds > 0
           ? 'Thinking... ${_elapsedSeconds}s'
           : 'Thinking...';

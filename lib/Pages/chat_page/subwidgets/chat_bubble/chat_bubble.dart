@@ -80,7 +80,20 @@ class _ChatBubbleBody extends StatelessWidget {
             _UserBubble(message: message, buildMarkdown: _buildMarkdown),
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: _UserActionButtons(message: message),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _UserActionButtons(message: message),
+                  const SizedBox(width: 8),
+                  Text(
+                    TimeOfDay.fromDateTime(message.createdAt).format(context),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ] else
             _AssistantBubble(
@@ -251,6 +264,24 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
     return widget.buildMarkdown(context, data);
   }
 
+  Widget _buildModelLabel(BuildContext context) {
+    final model = widget.message.model;
+    if (model == null || model.isEmpty) return const SizedBox.shrink();
+    // Strip tag suffix (e.g. "llama3:latest" → "llama3")
+    final displayName = model.contains(':') ? model.split(':').first : model;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        displayName,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
   Widget _buildMessageContent(BuildContext context) {
     final content = widget.isStreaming ? _throttledContent : widget.message.content;
 
@@ -258,9 +289,11 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildModelLabel(context),
           ThinkBlockWidget(
             content: widget.message.thinking!,
             isComplete: content.isNotEmpty,
+            isStreaming: widget.isStreaming,
           ),
           if (content.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -276,9 +309,11 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildModelLabel(context),
           ThinkBlockWidget(
             content: parsed.thinkContent,
             isComplete: parsed.isThinkingComplete,
+            isStreaming: widget.isStreaming,
           ),
           if (parsed.responseContent.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -288,7 +323,13 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
       );
     }
 
-    return _buildContent(context, content);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildModelLabel(context),
+        _buildContent(context, content),
+      ],
+    );
   }
 }
 

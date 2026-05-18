@@ -7,6 +7,7 @@ class OllamaChat {
   final String title;
   final String? systemPrompt;
   final OllamaChatOptions options;
+  final DateTime? lastUpdate;
 
   OllamaChat({
     String? id,
@@ -14,6 +15,7 @@ class OllamaChat {
     String? title,
     this.systemPrompt,
     OllamaChatOptions? options,
+    this.lastUpdate,
   })  : id = id ?? Uuid().v4(),
         title = title ?? 'New Chat',
         options = options ?? OllamaChatOptions();
@@ -25,6 +27,9 @@ class OllamaChat {
       title: map['chat_title'],
       systemPrompt: map['system_prompt'],
       options: map['options'] != null ? OllamaChatOptions.fromJson(map['options']) : null,
+      lastUpdate: map['last_update'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['last_update'])
+          : null,
     );
   }
 }

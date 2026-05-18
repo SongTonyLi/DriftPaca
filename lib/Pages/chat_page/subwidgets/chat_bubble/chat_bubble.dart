@@ -81,9 +81,8 @@ class _ChatBubbleBody extends StatelessWidget {
               ),
             ),
           if (isSentFromUser) ...[
-            _UserBubble(message: message, buildMarkdown: _buildMarkdown),
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.only(bottom: 4),
               child: Text(
                 TimeOfDay.fromDateTime(message.createdAt).format(context),
                 style: TextStyle(
@@ -92,6 +91,7 @@ class _ChatBubbleBody extends StatelessWidget {
                 ),
               ),
             ),
+            _UserBubble(message: message, buildMarkdown: _buildMarkdown),
             _UserActionButtons(message: message),
           ] else
             _AssistantBubble(

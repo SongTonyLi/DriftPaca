@@ -22,10 +22,13 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 2,
+      version: 3,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
+        }
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE messages ADD COLUMN model TEXT');
         }
       },
       onCreate: (Database db, int version) async {
@@ -44,6 +47,7 @@ content TEXT NOT NULL,
 thinking TEXT,
 images TEXT,
 role TEXT CHECK(role IN ('user', 'assistant', 'system')) NOT NULL,
+model TEXT,
 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 FOREIGN KEY (chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE
 ) WITHOUT ROWID;''');

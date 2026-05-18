@@ -128,11 +128,13 @@ class OllamaMessage {
         'thinking': thinking,
         'images': _breakImages(images),
         'role': role.name,
+        'model': model,
         'timestamp': createdAt.millisecondsSinceEpoch,
       };
 
   void updateMetadataFrom(OllamaMessage message) {
     if (message.thinking != null) thinking = message.thinking;
+    if (message.model != null) model = message.model;
     done = message.done;
     doneReason = message.doneReason;
     context = message.context;

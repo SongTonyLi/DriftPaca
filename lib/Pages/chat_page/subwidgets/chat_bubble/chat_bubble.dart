@@ -84,21 +84,15 @@ class _ChatBubbleBody extends StatelessWidget {
             _UserBubble(message: message, buildMarkdown: _buildMarkdown),
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _UserActionButtons(message: message),
-                  const SizedBox(width: 8),
-                  Text(
-                    TimeOfDay.fromDateTime(message.createdAt).format(context),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
+              child: Text(
+                TimeOfDay.fromDateTime(message.createdAt).format(context),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                  fontSize: 11,
+                ),
               ),
             ),
+            _UserActionButtons(message: message),
           ] else
             _AssistantBubble(
               message: message,
@@ -271,12 +265,10 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
   Widget _buildModelLabel(BuildContext context) {
     final model = widget.message.model;
     if (model == null || model.isEmpty) return const SizedBox.shrink();
-    // Strip tag suffix (e.g. "llama3:latest" → "llama3")
-    final displayName = model.contains(':') ? model.split(':').first : model;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Text(
-        displayName,
+        model,
         style: TextStyle(
           color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
           fontSize: 11,

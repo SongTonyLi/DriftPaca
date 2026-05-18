@@ -235,11 +235,25 @@ class OllamaService {
   }
 
   // Serializes chat messages with a system prompt.
+  // Annotates assistant messages with the model that generated them
+  // so the receiving model understands multi-model conversation context.
   Future<List<Map<String, dynamic>>> _prepareMessagesWithSystemPrompt(
     List<OllamaMessage> messages,
     String? systemPrompt,
   ) async {
-    final jsonMessages = await Future.wait(messages.map((m) async => await m.toChatJson()));
+    final jsonMessages = <Map<String, dynamic>>[];
+
+    for (final m in messages) {
+      final json = await m.toChatJson();
+      if (m.role == OllamaMessageRole.assistant &&
+          m.model != null &&
+          m.model!.isNotEmpty) {
+        final displayName =
+            m.model!.contains(':') ? m.model!.split(':').first : m.model!;
+        json['content'] = '[$displayName]\n${json['content']}';
+      }
+      jsonMessages.add(json);
+    }
 
     if (systemPrompt != null && systemPrompt.isNotEmpty) {
       final sp = OllamaMessage(systemPrompt, role: OllamaMessageRole.system);

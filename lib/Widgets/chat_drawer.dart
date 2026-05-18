@@ -66,10 +66,33 @@ class ChatDrawer extends StatelessWidget {
 class ChatNavigationDrawer extends StatelessWidget {
   const ChatNavigationDrawer({super.key});
 
+  static String _dateGroupLabel(DateTime? date) {
+    if (date == null) return 'Older';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final chatDay = DateTime(date.year, date.month, date.day);
+    final diff = today.difference(chatDay).inDays;
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Yesterday';
+    if (diff <= 7) return 'Previous 7 Days';
+    if (diff <= 30) return 'Previous 30 Days';
+    return 'Older';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, _) {
+        // Group chats by date
+        final groups = <String, List<MapEntry<int, OllamaChat>>>{};
+        for (final entry in chatProvider.chats.asMap().entries) {
+          final label = _dateGroupLabel(entry.value.lastUpdate);
+          groups.putIfAbsent(label, () => []).add(entry);
+        }
+
+        // Preserve display order
+        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+
         return ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -92,31 +115,36 @@ class ChatNavigationDrawer extends StatelessWidget {
                 }
               },
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(28, 16, 28, 10),
-              child: TitleDivider(title: "Chats"),
-            ),
-            ...chatProvider.chats.asMap().entries.map((entry) {
-              final index = entry.key;
-              final chat = entry.value;
-              final isSelected = chatProvider.currentChat?.id == chat.id;
+            for (final groupName in groupOrder)
+              if (groups.containsKey(groupName)) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(28, 16, 28, 10),
+                  child: TitleDivider(title: groupName),
+                ),
+                for (final entry in groups[groupName]!) ...[
+                  Builder(builder: (context) {
+                    final index = entry.key;
+                    final chat = entry.value;
+                    final isSelected = chatProvider.currentChat?.id == chat.id;
 
-              return _ChatDrawerTile(
-                icon: Icons.chat_outlined,
-                selectedIcon: Icons.chat,
-                title: chat.title,
-                isSelected: isSelected,
-                onTap: () {
-                  chatProvider.destinationChatSelected(index + 1);
-                  if (ResponsiveBreakpoints.of(context).isMobile) {
-                    Navigator.pop(context);
-                  }
-                },
-                onLongPress: (position) {
-                  _showChatContextMenu(context, chat, position);
-                },
-              );
-            }),
+                    return _ChatDrawerTile(
+                      icon: Icons.chat_outlined,
+                      selectedIcon: Icons.chat,
+                      title: chat.title,
+                      isSelected: isSelected,
+                      onTap: () {
+                        chatProvider.destinationChatSelected(index + 1);
+                        if (ResponsiveBreakpoints.of(context).isMobile) {
+                          Navigator.pop(context);
+                        }
+                      },
+                      onLongPress: (position) {
+                        _showChatContextMenu(context, chat, position);
+                      },
+                    );
+                  }),
+                ],
+              ],
           ],
         );
       },

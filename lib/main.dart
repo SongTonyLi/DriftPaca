@@ -36,6 +36,7 @@ void main() async {
   Hive.registerAdapter(MaterialColorAdapter());
 
   await Hive.openBox('settings');
+  await Hive.openBox('model_readmes');
 
   // Initialize RequestReviewHelper and request review if needed
   final reviewHelper = await RequestReviewHelper.initialize();

@@ -15,6 +15,7 @@ import 'package:llamaseek/Services/ollama_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
+  OllamaService get ollamaService => _ollamaService;
   final DatabaseService _databaseService;
 
   List<OllamaMessage> _messages = [];

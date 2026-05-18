@@ -11,6 +11,11 @@ class OllamaModel {
   final int size;
   final String digest;
   final String parameterSize;
+  final String family;
+  final String quantizationLevel;
+  final String format;
+  final String description;
+  final int? contextLength;
   final ModelCapabilities? capabilities;
 
   OllamaModel({
@@ -20,18 +25,33 @@ class OllamaModel {
     required this.size,
     required this.digest,
     required this.parameterSize,
+    this.family = '',
+    this.quantizationLevel = '',
+    this.format = '',
+    this.description = '',
+    this.contextLength,
     this.capabilities,
   });
 
   /// Creates an OllamaModel from /api/tags and optional /api/show response
   factory OllamaModel.from(ApiTagsModel tagsModel, ApiShowResponse? showResponse) {
+    final show = showResponse?.details;
+    final tags = tagsModel.details;
     return OllamaModel(
       name: tagsModel.name,
       model: tagsModel.model,
       modifiedAt: tagsModel.modifiedAt,
       size: tagsModel.size,
       digest: tagsModel.digest,
-      parameterSize: tagsModel.details.parameterSize,
+      parameterSize: _pickFormatted(show?.parameterSize, tags.parameterSize),
+      family: (show?.family ?? '').isNotEmpty
+          ? show!.family : tags.family,
+      quantizationLevel: (show?.quantizationLevel ?? '').isNotEmpty
+          ? show!.quantizationLevel : tags.quantizationLevel,
+      format: (show?.format ?? '').isNotEmpty
+          ? show!.format : tags.format,
+      description: showResponse?.description ?? '',
+      contextLength: showResponse?.contextLength,
       capabilities: showResponse != null ? ModelCapabilities.fromList(showResponse.capabilities) : null,
     );
   }
@@ -43,7 +63,12 @@ class OllamaModel {
         modifiedAt: DateTime.parse(json["modified_at"]),
         size: json["size"],
         digest: json["digest"],
-        parameterSize: json["details"]["parameter_size"] ?? '',
+        parameterSize: json["details"]?["parameter_size"] ?? json["parameter_size"] ?? '',
+        family: json["family"] ?? json["details"]?["family"] ?? '',
+        quantizationLevel: json["quantization_level"] ?? json["details"]?["quantization_level"] ?? '',
+        format: json["format"] ?? json["details"]?["format"] ?? '',
+        description: json["description"] ?? '',
+        contextLength: json["context_length"],
         capabilities: null,
       );
 
@@ -54,7 +79,29 @@ class OllamaModel {
         "size": size,
         "digest": digest,
         "parameter_size": parameterSize,
+        "family": family,
+        "quantization_level": quantizationLevel,
+        "format": format,
+        "description": description,
+        if (contextLength != null) "context_length": contextLength,
       };
+
+  /// Picks the human-readable value (e.g. "7B") over a raw numeric string.
+  /// If both are raw numbers, formats to B/M units.
+  static String _pickFormatted(String? a, String b) {
+    // Prefer whichever already has a letter suffix (e.g. "7B")
+    if (a != null && a.isNotEmpty && a.contains(RegExp(r'[a-zA-Z]'))) return a;
+    if (b.isNotEmpty && b.contains(RegExp(r'[a-zA-Z]'))) return b;
+    // Both are numeric — format the first available
+    final raw = a ?? b;
+    if (raw.isEmpty) return '';
+    final n = num.tryParse(raw);
+    if (n == null) return raw;
+    if (n >= 1e12) return '${(n / 1e12).toStringAsFixed(1)}T';
+    if (n >= 1e9) return '${(n / 1e9).toStringAsFixed(n % 1e9 == 0 ? 0 : 1)}B';
+    if (n >= 1e6) return '${(n / 1e6).toStringAsFixed(n % 1e6 == 0 ? 0 : 1)}M';
+    return raw;
+  }
 
   @override
   String toString() {

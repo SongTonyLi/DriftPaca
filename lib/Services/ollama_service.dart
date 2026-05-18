@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:llamaseek/Utils/http_error_formatter.dart';
 import 'package:llamaseek/Models/api/tags_response.dart';
@@ -368,5 +369,135 @@ class OllamaService {
     } else {
       throw OllamaException(HttpErrorFormatter.formatHttpError(response.statusCode, body: response.body));
     }
+  }
+
+  // ── Model readme fetching from ollama.com ──
+
+  /// Readme parser version. Bump to invalidate cached readmes
+  /// when the parsing logic changes.
+  static const _readmeVersion = 2;
+  static const _readmeVersionKey = '__readme_version__';
+
+  /// Returns a cached readme for [modelName] from persistent storage,
+  /// or null if not yet fetched.
+  String? getCachedReadme(String modelName) {
+    final box = Hive.box('model_readmes');
+    if (box.get(_readmeVersionKey) != _readmeVersion) return null;
+    return box.get(modelName);
+  }
+
+  /// Fetches the readme for a model from ollama.com/library/{name}.
+  /// Returns the extracted text, or null on failure.
+  /// Results are persisted to Hive for offline access.
+  Future<String?> fetchModelReadme(String modelName) async {
+    final box = Hive.box('model_readmes');
+    // Invalidate old cache when parser version changes
+    if (box.get(_readmeVersionKey) != _readmeVersion) {
+      await box.clear();
+      await box.put(_readmeVersionKey, _readmeVersion);
+    }
+    final cached = box.get(modelName) as String?;
+    if (cached != null) return cached;
+
+    final baseName = modelName.contains(':')
+        ? modelName.split(':').first
+        : modelName;
+
+    try {
+      final url = Uri.parse('https://ollama.com/library/$baseName');
+      final response = await http.get(url).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) return null;
+
+      final readme = _parseReadmeFromHtml(response.body);
+      if (readme != null && readme.isNotEmpty) {
+        await box.put(modelName, readme);
+      }
+      return readme;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Parses the readme text from the Ollama library HTML page.
+  /// Extracts the core model description, stripping boilerplate.
+  static String? _parseReadmeFromHtml(String html) {
+    // Find the display div content inside the readme section
+    final displayStart = html.indexOf('id="display"');
+    if (displayStart == -1) return null;
+
+    final contentStart = html.indexOf('>', displayStart);
+    if (contentStart == -1) return null;
+
+    // End at the next major section or end of content
+    var endIndex = html.length;
+    for (final marker in ['</section>', '<footer', '<div class="flex flex-1 flex-col py-8" id="']) {
+      final idx = html.indexOf(marker, contentStart + 1);
+      if (idx != -1 && idx < endIndex && idx > contentStart + 100) {
+        endIndex = idx;
+      }
+    }
+
+    var rawContent = html.substring(contentStart + 1, endIndex);
+
+    // Remove images, tables, code blocks, and blockquotes (boilerplate)
+    rawContent = rawContent
+        .replaceAll(RegExp(r'<img[^>]*>'), '')
+        .replaceAll(RegExp(r'<table[\s\S]*?</table>'), '')
+        .replaceAll(RegExp(r'<pre[\s\S]*?</pre>'), '')
+        .replaceAll(RegExp(r'<blockquote[\s\S]*?</blockquote>'), '');
+
+    // Convert to text
+    var text = rawContent
+        .replaceAll(RegExp(r'<br\s*/?>'), '\n')
+        .replaceAll(RegExp(r'</p>|</li>|</h[1-6]>'), '\n')
+        .replaceAll(RegExp(r'<li[^>]*>'), '- ')
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&nbsp;', ' ');
+
+    // Collapse whitespace and split into lines
+    final lines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+
+    // Filter out boilerplate lines
+    final boilerplatePatterns = [
+      RegExp(r'^(This model )?requires? Ollama', caseSensitive: false),
+      RegExp(r'^Download Ollama', caseSensitive: false),
+      RegExp(r'^ollama (run|pull|serve)', caseSensitive: false),
+      RegExp(r'^\d+[BKMG] parameter model', caseSensitive: false),
+      RegExp(r'^\d+[BKMG] ?parameter', caseSensitive: false),
+      RegExp(r'^Models$', caseSensitive: false),
+      RegExp(r'^Text$', caseSensitive: false),
+      RegExp(r'^\d+[kmKM] context window', caseSensitive: false),
+      RegExp(r'^Note:', caseSensitive: false),
+    ];
+
+    final filtered = lines.where((line) {
+      return !boilerplatePatterns.any((p) => p.hasMatch(line));
+    }).toList();
+
+    text = filtered.join('\n');
+
+    // Limit to ~500 chars — cut at a sentence boundary
+    if (text.length > 500) {
+      // Try to cut at a period followed by space or newline
+      final cutoff = text.indexOf(RegExp(r'\.\s'), 350);
+      if (cutoff > 0 && cutoff < 500) {
+        text = text.substring(0, cutoff + 1);
+      } else {
+        final nlCutoff = text.lastIndexOf('\n', 500);
+        text = '${text.substring(0, nlCutoff > 300 ? nlCutoff : 500)}...';
+      }
+    }
+
+    return text.trim().isEmpty ? null : text.trim();
   }
 }

@@ -73,7 +73,11 @@ class _ChatBubbleBody extends StatelessWidget {
               child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: message.images!.map((imageFile) => ChatBubbleImage(imageFile: imageFile)).toList(),
+                children: message.images!.asMap().entries.map((entry) => ChatBubbleImage(
+                  imageFile: entry.value,
+                  allImages: message.images!,
+                  index: entry.key,
+                )).toList(),
               ),
             ),
           if (isSentFromUser) ...[

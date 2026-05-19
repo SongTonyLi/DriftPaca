@@ -2,6 +2,9 @@ import 'dart:convert';
 
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:llamaseek/Constants/memory_constants.dart';
+import 'package:llamaseek/Models/conversation_memory.dart';
+import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Utils/http_error_formatter.dart';
 import 'package:llamaseek/Models/api/tags_response.dart';
 import 'package:llamaseek/Models/api/show_response.dart';
@@ -155,6 +158,8 @@ class OllamaService {
   Future<OllamaMessage> chat(
     List<OllamaMessage> messages, {
     required OllamaChat chat,
+    ConversationMemory? conversationMemory,
+    AgentMemory? agentMemory,
   }) async {
     final url = constructUrl("/api/chat");
 
@@ -163,7 +168,11 @@ class OllamaService {
       headers: headers,
       body: json.encode({
         "model": chat.model,
-        "messages": await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt),
+        "messages": await _prepareMessagesWithSystemPrompt(
+          messages, chat.systemPrompt,
+          conversationMemory: conversationMemory,
+          agentMemory: agentMemory,
+        ),
         if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
         "stream": false,
       }),
@@ -182,6 +191,8 @@ class OllamaService {
   Stream<OllamaMessage> chatStream(
     List<OllamaMessage> messages, {
     required OllamaChat chat,
+    ConversationMemory? conversationMemory,
+    AgentMemory? agentMemory,
   }) async* {
     final url = constructUrl('/api/chat');
 
@@ -189,7 +200,11 @@ class OllamaService {
     request.headers.addAll(headers);
     request.body = json.encode({
       "model": chat.model,
-      "messages": await _prepareMessagesWithSystemPrompt(messages, chat.systemPrompt),
+      "messages": await _prepareMessagesWithSystemPrompt(
+        messages, chat.systemPrompt,
+        conversationMemory: conversationMemory,
+        agentMemory: agentMemory,
+      ),
       if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
       "stream": true,
     });
@@ -238,13 +253,23 @@ class OllamaService {
   // Serializes chat messages with a system prompt.
   // Annotates assistant messages with the model that generated them
   // so the receiving model understands multi-model conversation context.
+  // When memory is available and the conversation is long, only the most
+  // recent messages are kept (the memory summary covers older context).
   Future<List<Map<String, dynamic>>> _prepareMessagesWithSystemPrompt(
     List<OllamaMessage> messages,
-    String? systemPrompt,
-  ) async {
+    String? systemPrompt, {
+    ConversationMemory? conversationMemory,
+    AgentMemory? agentMemory,
+  }) async {
+    // Determine which messages to send
+    final hasMemory = conversationMemory != null && !conversationMemory.isEmpty;
+    final messagesToProcess = hasMemory && messages.length > MemoryConstants.recentMessagesToKeep
+        ? messages.sublist(messages.length - MemoryConstants.recentMessagesToKeep)
+        : messages;
+
     final jsonMessages = <Map<String, dynamic>>[];
 
-    for (final m in messages) {
+    for (final m in messagesToProcess) {
       final json = await m.toChatJson();
       if (m.role == OllamaMessageRole.assistant &&
           m.model != null &&
@@ -256,8 +281,26 @@ class OllamaService {
       jsonMessages.add(json);
     }
 
+    // Build the system prompt with memory injection
+    final systemParts = <String>[];
+
     if (systemPrompt != null && systemPrompt.isNotEmpty) {
-      final sp = OllamaMessage(systemPrompt, role: OllamaMessageRole.system);
+      systemParts.add(systemPrompt);
+    }
+
+    // Inject memories if available
+    final convBlock = conversationMemory?.toPromptBlock() ?? '';
+    final agentBlock = agentMemory?.toPromptBlock() ?? '';
+    if (convBlock.isNotEmpty || agentBlock.isNotEmpty) {
+      systemParts.add(MemoryConstants.buildMemoryInjection(
+        conversationMemoryBlock: convBlock,
+        agentMemoryBlock: agentBlock,
+      ));
+    }
+
+    if (systemParts.isNotEmpty) {
+      final combinedSystem = systemParts.join('\n\n');
+      final sp = OllamaMessage(combinedSystem, role: OllamaMessageRole.system);
       jsonMessages.insert(0, await sp.toChatJson());
     }
 

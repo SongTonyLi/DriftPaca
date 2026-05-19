@@ -11,12 +11,14 @@ import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Services/database_service.dart';
+import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
   OllamaService get ollamaService => _ollamaService;
   final DatabaseService _databaseService;
+  final MemoryService _memoryService;
 
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
@@ -67,8 +69,10 @@ class ChatProvider extends ChangeNotifier {
   ChatProvider({
     required OllamaService ollamaService,
     required DatabaseService databaseService,
+    required MemoryService memoryService,
   })  : _ollamaService = ollamaService,
-        _databaseService = databaseService {
+        _databaseService = databaseService,
+        _memoryService = memoryService {
     _initialize();
   }
 
@@ -193,6 +197,7 @@ class ChatProvider extends ChangeNotifier {
     _chats.remove(chat);
     _activeChatStreams.remove(chat.id);
 
+    _memoryService.invalidateConversationMemoryCache(chat.id);
     await _databaseService.deleteChat(chat.id);
   }
 
@@ -209,6 +214,7 @@ class ChatProvider extends ChangeNotifier {
     _chats.removeAt(chatIndex);
     _activeChatStreams.remove(chat.id);
 
+    _memoryService.invalidateConversationMemoryCache(chat.id);
     await _databaseService.deleteChat(chat.id);
     notifyListeners();
   }
@@ -293,6 +299,12 @@ class ChatProvider extends ChangeNotifier {
     // Save the Ollama message to the database
     if (ollamaMessage != null) {
       await _databaseService.addMessage(ollamaMessage, chat: associatedChat);
+
+      // Trigger async memory update (fire-and-forget)
+      _memoryService.triggerMemoryUpdate(
+        chatId: associatedChat.id,
+        messages: _messages,
+      );
     }
   }
 
@@ -308,7 +320,16 @@ class ChatProvider extends ChangeNotifier {
       ];
     }
 
-    final stream = _ollamaService.chatStream(messagesToSend, chat: associatedChat);
+    // Fetch current memories for injection
+    final conversationMemory = await _memoryService.getConversationMemory(associatedChat.id);
+    final agentMemory = await _memoryService.getAgentMemory();
+
+    final stream = _ollamaService.chatStream(
+      messagesToSend,
+      chat: associatedChat,
+      conversationMemory: conversationMemory,
+      agentMemory: agentMemory,
+    );
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;

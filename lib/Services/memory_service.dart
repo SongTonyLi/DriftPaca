@@ -73,13 +73,16 @@ class MemoryService extends ChangeNotifier {
     required String chatId,
     required List<OllamaMessage> messages,
   }) {
-    debugPrint('MemoryService.triggerMemoryUpdate: enabled=$isEnabled, updating=$_isUpdating, apiKey=${_apiKey != null ? '***' : 'null'}, messages=${messages.length}');
+    // ignore: avoid_print
+    print('[MemoryService] triggerMemoryUpdate: enabled=$isEnabled, updating=$_isUpdating, apiKey=${_apiKey != null ? "set(${_apiKey!.length}chars)" : "null"}, messages=${messages.length}');
     if (!isEnabled) {
-      debugPrint('MemoryService: skipped — no API key configured');
+      // ignore: avoid_print
+      print('[MemoryService] SKIPPED — no API key configured');
       return;
     }
     if (_isUpdating) {
-      debugPrint('MemoryService: skipped — already updating');
+      // ignore: avoid_print
+      print('[MemoryService] SKIPPED — already updating');
       return;
     }
 
@@ -112,16 +115,19 @@ class MemoryService extends ChangeNotifier {
             : null,
       );
 
-      debugPrint('MemoryService: sending summarization request for chat $chatId');
+      // ignore: avoid_print
+      print('[MemoryService] sending to model=$_model, prompt length=${prompt.length}');
 
       // Call gpt-oss-20b via Ollama Cloud
       final responseBody = await _callCloudModel(prompt);
       if (responseBody == null) {
-        debugPrint('MemoryService: got null response from cloud model');
+        // ignore: avoid_print
+        print('[MemoryService] got NULL response from cloud model');
         return;
       }
 
-      debugPrint('MemoryService: got response, parsing...');
+      // ignore: avoid_print
+      print('[MemoryService] got response: ${responseBody.substring(0, responseBody.length.clamp(0, 200))}...');
 
       // Parse and save
       _parseAndSave(chatId, responseBody);
@@ -136,6 +142,8 @@ class MemoryService extends ChangeNotifier {
 
   Future<String?> _callCloudModel(String prompt) async {
     final url = Uri.parse('$_cloudBaseUrl/api/chat');
+    // ignore: avoid_print
+    print('[MemoryService] POST $url model=$_model');
 
     try {
       final response = await http.post(
@@ -153,15 +161,19 @@ class MemoryService extends ChangeNotifier {
         }),
       ).timeout(const Duration(seconds: 60));
 
+      // ignore: avoid_print
+      print('[MemoryService] HTTP ${response.statusCode}');
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
         return json['message']?['content'] as String?;
       } else {
-        debugPrint('MemoryService API error: ${response.statusCode}');
+        // ignore: avoid_print
+        print('[MemoryService] API error: ${response.statusCode} ${response.body.substring(0, response.body.length.clamp(0, 200))}');
         return null;
       }
     } catch (e) {
-      debugPrint('MemoryService network error: $e');
+      // ignore: avoid_print
+      print('[MemoryService] network error: $e');
       return null;
     }
   }

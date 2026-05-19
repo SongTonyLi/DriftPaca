@@ -172,6 +172,7 @@ class OllamaService {
           messages, chat.systemPrompt,
           conversationMemory: conversationMemory,
           agentMemory: agentMemory,
+          currentModel: chat.model,
         ),
         if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
         "stream": false,
@@ -204,6 +205,7 @@ class OllamaService {
         messages, chat.systemPrompt,
         conversationMemory: conversationMemory,
         agentMemory: agentMemory,
+        currentModel: chat.model,
       ),
       if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
       "stream": true,
@@ -260,6 +262,7 @@ class OllamaService {
     String? systemPrompt, {
     ConversationMemory? conversationMemory,
     AgentMemory? agentMemory,
+    String? currentModel,
   }) async {
     // Determine which messages to send
     final hasMemory = conversationMemory != null && !conversationMemory.isEmpty;
@@ -267,18 +270,30 @@ class OllamaService {
         ? messages.sublist(messages.length - MemoryConstants.recentMessagesToKeep)
         : messages;
 
+    // Detect if multiple models are used in the conversation
+    final modelNames = messagesToProcess
+        .where((m) => m.role == OllamaMessageRole.assistant && m.model != null)
+        .map((m) => m.model!)
+        .toSet();
+    final isMultiModel = modelNames.length > 1 ||
+        (modelNames.length == 1 && currentModel != null && !modelNames.contains(currentModel));
+
     final jsonMessages = <Map<String, dynamic>>[];
 
     for (final m in messagesToProcess) {
-      final json = await m.toChatJson();
-      if (m.role == OllamaMessageRole.assistant &&
+      final msgJson = await m.toChatJson();
+      // Only annotate assistant messages from a DIFFERENT model in multi-model chats
+      // Use system-style annotation that models are less likely to copy
+      if (isMultiModel &&
+          m.role == OllamaMessageRole.assistant &&
           m.model != null &&
-          m.model!.isNotEmpty) {
+          m.model!.isNotEmpty &&
+          m.model != currentModel) {
         final displayName =
             m.model!.contains(':') ? m.model!.split(':').first : m.model!;
-        json['content'] = '[$displayName]\n${json['content']}';
+        msgJson['content'] = '(Response from $displayName)\n${msgJson['content']}';
       }
-      jsonMessages.add(json);
+      jsonMessages.add(msgJson);
     }
 
     // Build the system prompt with memory injection

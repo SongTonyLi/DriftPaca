@@ -54,6 +54,12 @@ class ChatPageViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clear incognito request (return to normal mode)
+  void clearIncognito() {
+    _incognitoRequested = false;
+    notifyListeners();
+  }
+
   /// The selected model for new chats
   OllamaModel? _selectedModel;
   OllamaModel? get selectedModel => _selectedModel;

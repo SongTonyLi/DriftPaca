@@ -47,7 +47,8 @@ class ChatDrawer extends StatelessWidget {
                     const Expanded(child: ChatNavigationDrawer()),
                     Builder(builder: (context) {
                       final chatProvider = Provider.of<ChatProvider>(context);
-                      final isIncognito = chatProvider.currentChat?.isIncognito == true;
+                      final viewModel = Provider.of<ChatPageViewModel>(context);
+                      final isIncognito = chatProvider.currentChat?.isIncognito == true || viewModel.incognitoRequested;
                       if (isIncognito) return const SizedBox.shrink();
                       return Container(
                         alignment: Alignment.centerLeft,

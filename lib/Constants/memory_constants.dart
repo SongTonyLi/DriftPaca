@@ -1,7 +1,7 @@
 // lib/Constants/memory_constants.dart
 
 class MemoryConstants {
-  static const String defaultModel = 'gpt-oss-20b';
+  static const String defaultModel = 'gpt-oss:20b-cloud';
 
   static const int maxConversationMemoryTokens = 8000;
   static const int maxAgentMemoryTokens = 4000;

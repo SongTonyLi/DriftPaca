@@ -99,8 +99,11 @@ class MemoryService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Build messages text for the prompt
-      final messagesText = _formatMessagesForPrompt(messages);
+      // Only send recent messages to the summarizer — existing memory covers older context
+      final recentMessages = messages.length > MemoryConstants.recentMessagesToKeep
+          ? messages.sublist(messages.length - MemoryConstants.recentMessagesToKeep)
+          : messages;
+      final messagesText = _formatMessagesForPrompt(recentMessages);
 
       // Get existing memories
       final existingConvMemory = await getConversationMemory(chatId);

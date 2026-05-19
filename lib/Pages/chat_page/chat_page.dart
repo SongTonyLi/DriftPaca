@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
+import 'package:llamaseek/Widgets/memory_status_indicator.dart';
 import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
 
 import 'chat_page_view_model.dart';
@@ -275,6 +276,7 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                       ),
                     ),
+                    const MemoryStatusIndicator(),
                     if (_viewModel.isStreaming)
                       IconButton(
                         icon: const Icon(Icons.stop_rounded, size: 20),

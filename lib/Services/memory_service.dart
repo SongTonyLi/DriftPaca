@@ -27,7 +27,14 @@ class MemoryService extends ChangeNotifier {
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
   AgentMemory? _agentMemoryCache;
 
-  MemoryService({required DatabaseService db}) : _db = db;
+  MemoryService({required DatabaseService db}) : _db = db {
+    // Migrate old incorrect default model name
+    final box = Hive.box('settings');
+    final stored = box.get('memoryModel');
+    if (stored == 'gpt-oss-20b') {
+      box.delete('memoryModel');
+    }
+  }
 
   // ============================================================
   // Configuration

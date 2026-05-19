@@ -23,6 +23,8 @@ Future<void> showMemoryBottomSheet(
   required void Function(List<MemorySection> updatedSections) onSave,
   VoidCallback? onClear,
   Future<String?> Function(String content, int tokenLimit)? onResummarize,
+  bool isUpdating = false,
+  String? updatingModelName,
 }) {
   return showModalBottomSheet(
     context: context,
@@ -36,6 +38,8 @@ Future<void> showMemoryBottomSheet(
         onSave: onSave,
         onClear: onClear,
         onResummarize: onResummarize,
+        isUpdating: isUpdating,
+        updatingModelName: updatingModelName,
       );
     },
   );
@@ -48,6 +52,8 @@ class _MemoryEditorSheet extends StatefulWidget {
   final void Function(List<MemorySection> updatedSections) onSave;
   final VoidCallback? onClear;
   final Future<String?> Function(String content, int tokenLimit)? onResummarize;
+  final bool isUpdating;
+  final String? updatingModelName;
 
   const _MemoryEditorSheet({
     required this.title,
@@ -56,6 +62,8 @@ class _MemoryEditorSheet extends StatefulWidget {
     required this.onSave,
     this.onClear,
     this.onResummarize,
+    this.isUpdating = false,
+    this.updatingModelName,
   });
 
   @override
@@ -149,6 +157,33 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                       ],
                     ),
                   ),
+                  if (widget.isUpdating)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '${widget.updatingModelName ?? 'Summarizer'} is actively updating memory...',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colorScheme.primary,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   if (_exceedsLimit)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),

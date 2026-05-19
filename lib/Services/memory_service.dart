@@ -28,10 +28,10 @@ class MemoryService extends ChangeNotifier {
   AgentMemory? _agentMemoryCache;
 
   MemoryService({required DatabaseService db}) : _db = db {
-    // Migrate old incorrect default model name
+    // Migrate old default model names to current default
     final box = Hive.box('settings');
     final stored = box.get('memoryModel');
-    if (stored == 'gpt-oss-20b') {
+    if (stored == 'gpt-oss-20b' || stored == 'gpt-oss:20b-cloud') {
       box.delete('memoryModel');
     }
   }
@@ -120,6 +120,24 @@ class MemoryService extends ChangeNotifier {
       final existingConvMemory = await getConversationMemory(chatId);
       final existingAgentMemory = await getAgentMemory();
 
+      // Gather conversation memories from ALL chats for richer agent memory
+      final allConvMemories = await _db.getAllConversationMemories();
+      final otherChatContexts = <String>[];
+      for (final entry in allConvMemories.entries) {
+        if (entry.key == chatId) continue; // skip current chat (already included)
+        if (entry.value.isEmpty) continue;
+        // Include full structured context, not just summary
+        final mem = entry.value;
+        final parts = <String>[];
+        if (mem.summary.isNotEmpty) parts.add('Summary: ${mem.summary}');
+        if (mem.keyContext.isNotEmpty) parts.add('Key context: ${mem.keyContext}');
+        if (mem.currentState.isNotEmpty) parts.add('State: ${mem.currentState}');
+        if (mem.unresolvedItems.isNotEmpty) parts.add('Unresolved: ${mem.unresolvedItems}');
+        if (parts.isNotEmpty) {
+          otherChatContexts.add(parts.join('\n'));
+        }
+      }
+
       // Build the summarization prompt
       final prompt = MemoryConstants.buildSummarizationPrompt(
         messagesText: messagesText,
@@ -127,12 +145,13 @@ class MemoryService extends ChangeNotifier {
         existingAgentMemory: existingAgentMemory != null
             ? jsonEncode(existingAgentMemory.toMap())
             : null,
+        otherChatContexts: otherChatContexts.isNotEmpty ? otherChatContexts : null,
       );
 
       // ignore: avoid_print
       print('[MemoryService] sending to model=$_model, prompt length=${prompt.length}');
 
-      // Call gpt-oss-20b via Ollama Cloud
+      // Call cloud model via Ollama Cloud
       final responseBody = await _callCloudModel(prompt);
       if (responseBody == null) {
         // ignore: avoid_print

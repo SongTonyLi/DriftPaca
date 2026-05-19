@@ -522,6 +522,12 @@ class _AgentMemoryTile extends StatelessWidget {
       lastUpdatedAt: agentMemory.updatedAt,
       lastUpdatedByModel: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
       sections: [
+        MemorySection(
+          label: 'System Info',
+          key: 'system_info',
+          value: 'Current time: ${DateTime.now().toString().split('.').first} (${DateTime.now().timeZoneName})',
+          readOnly: true,
+        ),
         MemorySection(label: 'User Profile', key: 'user_profile', value: agentMemory.userProfile),
         MemorySection(label: 'Preferences', key: 'preferences', value: agentMemory.preferences),
         MemorySection(label: 'Learned Facts', key: 'learned_facts', value: agentMemory.learnedFacts),

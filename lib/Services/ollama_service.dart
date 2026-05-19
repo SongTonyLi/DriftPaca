@@ -8,6 +8,7 @@ import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Utils/http_error_formatter.dart';
 import 'package:llamaseek/Models/api/tags_response.dart';
 import 'package:llamaseek/Models/api/show_response.dart';
+import 'package:llamaseek/Models/model_capabilities.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
@@ -52,6 +53,9 @@ class OllamaService {
     }
     return h;
   }
+
+  /// Cached model capabilities from /api/show, keyed by model name.
+  final Map<String, ModelCapabilities> _capabilitiesCache = {};
 
   /// Creates a new instance of the Ollama service.
   OllamaService({String? baseUrl}) : _baseUrl = baseUrl ?? defaultLocalUrl;
@@ -195,6 +199,20 @@ class OllamaService {
     ConversationMemory? conversationMemory,
     AgentMemory? agentMemory,
   }) async* {
+    // Check if model supports vision (needed for image handling)
+    final hasImages = messages.any((m) => m.images != null && m.images!.isNotEmpty);
+    bool supportsVision = true;
+    if (hasImages) {
+      // Check cache first, fetch if needed
+      if (!_capabilitiesCache.containsKey(chat.model)) {
+        final show = await _showModel(chat.model);
+        if (show != null) {
+          _capabilitiesCache[chat.model] = ModelCapabilities.fromList(show.capabilities);
+        }
+      }
+      supportsVision = _capabilitiesCache[chat.model]?.vision ?? true;
+    }
+
     final url = constructUrl('/api/chat');
 
     final request = http.Request("POST", url);
@@ -206,6 +224,7 @@ class OllamaService {
         conversationMemory: conversationMemory,
         agentMemory: agentMemory,
         currentModel: chat.model,
+        supportsVision: supportsVision,
       ),
       if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
       "stream": true,
@@ -263,6 +282,7 @@ class OllamaService {
     ConversationMemory? conversationMemory,
     AgentMemory? agentMemory,
     String? currentModel,
+    bool supportsVision = true,
   }) async {
     // Determine which messages to send
     final hasMemory = conversationMemory != null && !conversationMemory.isEmpty;
@@ -281,7 +301,21 @@ class OllamaService {
     final jsonMessages = <Map<String, dynamic>>[];
 
     for (final m in messagesToProcess) {
-      final msgJson = await m.toChatJson();
+      Map<String, dynamic> msgJson;
+
+      // For non-vision models, replace images with a textual placeholder
+      if (!supportsVision && m.images != null && m.images!.isNotEmpty) {
+        final count = m.images!.length;
+        final tag = '[${count} image${count > 1 ? 's' : ''} attached — not viewable by this model]';
+        msgJson = {
+          "role": m.role.name,
+          "content": '$tag\n${m.content}',
+          if (m.thinking != null) "thinking": m.thinking,
+        };
+      } else {
+        msgJson = await m.toChatJson();
+      }
+
       // Only annotate assistant messages from a DIFFERENT model in multi-model chats
       // Use system-style annotation that models are less likely to copy
       if (isMultiModel &&
@@ -333,7 +367,12 @@ class OllamaService {
     final models = await Future.wait(
       tagsResponse.models.map((model) async {
         final showResponse = await _showModel(model.name);
-        return OllamaModel.from(model, showResponse);
+        final ollamaModel = OllamaModel.from(model, showResponse);
+        // Cache capabilities for vision checks during streaming
+        if (ollamaModel.capabilities != null) {
+          _capabilitiesCache[ollamaModel.name] = ollamaModel.capabilities!;
+        }
+        return ollamaModel;
       }),
     );
 

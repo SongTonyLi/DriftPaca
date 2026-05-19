@@ -6,9 +6,10 @@ import 'package:llamaseek/Services/memory_service.dart';
 class MemorySection {
   final String label;
   final String key;
+  final bool readOnly;
   String value;
 
-  MemorySection({required this.label, required this.key, required this.value});
+  MemorySection({required this.label, required this.key, required this.value, this.readOnly = false});
 
   int get estimatedTokens => (value.length / 4).ceil();
 }
@@ -89,20 +90,20 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   void initState() {
     super.initState();
     _sections = widget.sections
-        .map((s) => MemorySection(label: s.label, key: s.key, value: s.value))
+        .map((s) => MemorySection(label: s.label, key: s.key, value: s.value, readOnly: s.readOnly))
         .toList();
-    // If any section has content, show all sections
-    if (_sections.any((s) => s.value.isNotEmpty)) {
+    // If any editable section has content, show all sections
+    if (_hasContent) {
       _viewMode = -1;
     }
   }
 
   int get _totalTokens =>
-      _sections.fold(0, (sum, s) => sum + s.estimatedTokens);
+      _sections.where((s) => !s.readOnly).fold(0, (sum, s) => sum + s.estimatedTokens);
 
   bool get _exceedsLimit => _totalTokens > widget.maxTotalTokens;
 
-  bool get _hasContent => _sections.any((s) => s.value.isNotEmpty);
+  bool get _hasContent => _sections.any((s) => !s.readOnly && s.value.isNotEmpty);
 
   void _openSection(int index) {
     setState(() => _viewMode = index);
@@ -376,15 +377,19 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
               ),
             ),
             const SizedBox(height: 24),
-            // Show collapsed section labels as tappable chips
+            // Show collapsed section labels as tappable chips (skip read-only)
             Wrap(
               spacing: 8,
               runSpacing: 8,
               alignment: WrapAlignment.center,
-              children: List.generate(_sections.length, (i) => ActionChip(
-                label: Text(_sections[i].label, style: const TextStyle(fontSize: 12)),
-                onPressed: () => _openSection(i),
-              )),
+              children: [
+                for (int i = 0; i < _sections.length; i++)
+                  if (!_sections[i].readOnly)
+                    ActionChip(
+                      label: Text(_sections[i].label, style: const TextStyle(fontSize: 12)),
+                      onPressed: () => _openSection(i),
+                    ),
+              ],
             ),
           ],
         ),
@@ -401,7 +406,19 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (section.value.isNotEmpty)
+          if (section.readOnly)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Managed by system — not editable',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                ),
+              ),
+            )
+          else if (section.value.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
@@ -415,8 +432,9 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
           Expanded(
             child: TextFormField(
               initialValue: section.value,
-              autofocus: true,
-              onChanged: (value) {
+              autofocus: !section.readOnly,
+              readOnly: section.readOnly,
+              onChanged: section.readOnly ? null : (value) {
                 setState(() {
                   section.value = value;
                 });
@@ -426,23 +444,32 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
               textAlignVertical: TextAlignVertical.top,
               decoration: InputDecoration(
                 filled: true,
-                fillColor: colorScheme.surfaceContainerLowest,
+                fillColor: section.readOnly
+                    ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
+                    : colorScheme.surfaceContainerLowest,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+                  borderSide: section.readOnly
+                      ? BorderSide.none
+                      : BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
                 ),
                 contentPadding: const EdgeInsets.all(16),
-                hintText: 'Describe your ${section.label.toLowerCase()}...',
+                hintText: section.readOnly ? null : 'Describe your ${section.label.toLowerCase()}...',
                 hintStyle: TextStyle(
                   color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
                   fontSize: 14,
                 ),
               ),
-              style: TextStyle(fontSize: 14, color: colorScheme.onSurface),
+              style: TextStyle(
+                fontSize: 14,
+                color: section.readOnly
+                    ? colorScheme.onSurfaceVariant.withValues(alpha: 0.7)
+                    : colorScheme.onSurface,
+              ),
             ),
           ),
         ],
@@ -460,16 +487,24 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              section.label,
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                fontSize: 13,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-                letterSpacing: 0.2,
-              ),
+            Row(
+              children: [
+                Text(
+                  section.label,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                if (section.readOnly) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.lock_outline, size: 12, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                ],
+              ],
             ),
-            if (hasContent)
+            if (hasContent && !section.readOnly)
               Text(
                 '~${section.estimatedTokens} tokens',
                 style: TextStyle(
@@ -482,7 +517,8 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
         const SizedBox(height: 6),
         TextFormField(
           initialValue: section.value,
-          onChanged: (value) {
+          readOnly: section.readOnly,
+          onChanged: section.readOnly ? null : (value) {
             setState(() {
               section.value = value;
             });
@@ -491,7 +527,9 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
           minLines: 2,
           decoration: InputDecoration(
             filled: true,
-            fillColor: colorScheme.surface.withValues(alpha: 0.5),
+            fillColor: section.readOnly
+                ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
+                : colorScheme.surface.withValues(alpha: 0.5),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
@@ -502,16 +540,23 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+              borderSide: section.readOnly
+                  ? BorderSide.none
+                  : BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
             ),
             contentPadding: const EdgeInsets.all(14),
-            hintText: 'Tap to add ${section.label.toLowerCase()}...',
+            hintText: section.readOnly ? null : 'Tap to add ${section.label.toLowerCase()}...',
             hintStyle: TextStyle(
               color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
               fontSize: 14,
             ),
           ),
-          style: TextStyle(fontSize: 14, color: colorScheme.onSurface),
+          style: TextStyle(
+            fontSize: 14,
+            color: section.readOnly
+                ? colorScheme.onSurfaceVariant.withValues(alpha: 0.7)
+                : colorScheme.onSurface,
+          ),
         ),
       ],
     );

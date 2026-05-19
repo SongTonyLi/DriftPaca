@@ -1,54 +1,64 @@
 // lib/Constants/memory_constants.dart
 
 class MemoryConstants {
-  static const String defaultModel = 'gpt-oss:20b-cloud';
+  static const String defaultModel = 'gpt-oss:120b-cloud';
 
-  static const int maxConversationMemoryTokens = 8000;
-  static const int maxAgentMemoryTokens = 4000;
-  static const int maxPerSectionTokens = 1500;
-  static const int recentMessagesToKeep = 10;
+  static const int maxConversationMemoryTokens = 12000;
+  static const int maxAgentMemoryTokens = 6000;
+  static const int maxPerSectionTokens = 2000;
+  static const int recentMessagesToKeep = 20;
 
   /// Estimates token count from text using chars/4 heuristic.
   static int estimateTokens(String text) => (text.length / 4).ceil();
 
-  /// The summarization prompt sent to gpt-oss-20b.
+  /// The summarization prompt sent to the cloud model.
   static String buildSummarizationPrompt({
     required String messagesText,
     String? existingConversationMemory,
     String? existingAgentMemory,
+    List<String>? otherChatContexts,
   }) {
-    return '''You are a conversation memory manager. Analyze the conversation and update two memory structures.
+    final otherChatsBlock = otherChatContexts != null && otherChatContexts.isNotEmpty
+        ? '\n\n## Context From Other Conversations:\nThese are memories from the user\'s other chat sessions. Extract any user-relevant information (preferences, facts, expertise, patterns) into agent memory. Do NOT merge these into the current conversation memory.\n${otherChatContexts.join('\n---\n')}'
+        : '';
 
-IMPORTANT: Be concise. Conversation memory total must not exceed $maxConversationMemoryTokens tokens (~${maxConversationMemoryTokens * 4} characters). Agent memory total must not exceed $maxAgentMemoryTokens tokens (~${maxAgentMemoryTokens * 4} characters). Summarize, don't transcribe.
+    return '''You are a comprehensive conversation memory manager. Your job is to create thorough, detailed memory that captures the FULL richness of conversations. Never lose important details.
+
+## Guidelines:
+- Conversation memory budget: up to $maxConversationMemoryTokens tokens (~${maxConversationMemoryTokens * 4} characters). Use as much as needed to be thorough.
+- Agent memory budget: up to $maxAgentMemoryTokens tokens (~${maxAgentMemoryTokens * 4} characters). Build a rich, detailed user profile.
+- Be COMPREHENSIVE — capture specifics, not just high-level summaries. Include names, numbers, technical details, exact preferences, specific examples, and concrete facts.
+- Never discard prior context. Merge, extend, and enrich existing memory with new information.
+- For agent memory: synthesize information from ALL conversations (current + other chats) to build the most complete user profile possible.
 
 ## Existing Conversation Memory:
 ${existingConversationMemory ?? 'None yet'}
 
 ## Existing Agent Memory:
-${existingAgentMemory ?? 'None yet'}
+${existingAgentMemory ?? 'None yet'}$otherChatsBlock
 
-## Conversation Messages:
+## Current Conversation Messages:
 $messagesText
 
 ---
 
-Merge new information with existing memory. Don't discard prior context — update and extend it. Return a JSON object with exactly these keys:
+Return a JSON object with exactly these keys. Be detailed and thorough in every field:
 
 {
   "conversation_memory": {
-    "summary": "Main goal and what this conversation is about",
-    "key_context": "Important facts, decisions, conclusions reached",
-    "media_descriptions": "Textual descriptions of all images/files discussed",
-    "current_state": "Where the conversation is at now",
-    "model_history": "Which models were used and for what purpose",
-    "unresolved_items": "Open questions, pending tasks"
+    "summary": "Detailed summary of what this conversation covers, its main goals, and key outcomes",
+    "key_context": "All important facts, decisions, conclusions, technical details, code snippets discussed, specific solutions found",
+    "media_descriptions": "Detailed textual descriptions of all images, files, screenshots, or media discussed — describe content, not just existence",
+    "current_state": "Exactly where the conversation stands now — what was just completed, what comes next",
+    "model_history": "Which AI models were used, what each was used for, how they performed, any model-specific observations",
+    "unresolved_items": "All open questions, pending tasks, things to follow up on, known issues"
   },
   "agent_memory": {
-    "user_profile": "Name, role, background if mentioned",
-    "preferences": "Communication style, response format preferences",
-    "learned_facts": "Specific facts learned about the user",
-    "interests_and_expertise": "Topics they discuss, domains of knowledge",
-    "language_and_tone": "Primary language, formality level, verbosity preference"
+    "user_profile": "Name, role, job title, background, team, company, timezone, any personal details shared across all conversations",
+    "preferences": "Communication style, response format preferences, workflow habits, tool preferences, coding style, how they like to work",
+    "learned_facts": "Every specific fact learned about the user across all conversations — projects they work on, technologies they use, problems they've solved, their environment/setup",
+    "interests_and_expertise": "All topics discussed, domains of knowledge, skill levels in different areas, what they're learning, what they're expert in",
+    "language_and_tone": "Primary language, formality level, verbosity preference, humor style, how they give feedback, communication patterns"
   }
 }
 

@@ -83,6 +83,9 @@ class AgentMemory {
 
   String toPromptBlock() {
     final sections = <String>[];
+    // System-managed: always reflects current time, not stored or editable
+    final now = DateTime.now();
+    sections.add('- **System Info**: Current time: ${now.toString().split('.').first} (${now.timeZoneName})');
     if (userProfile.isNotEmpty) sections.add('- **Profile**: $userProfile');
     if (preferences.isNotEmpty) sections.add('- **Preferences**: $preferences');
     if (learnedFacts.isNotEmpty) sections.add('- **Learned Facts**: $learnedFacts');

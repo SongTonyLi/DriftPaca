@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
 import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Constants/memory_constants.dart';
 import 'package:llamaseek/Models/agent_memory.dart';
@@ -234,6 +235,8 @@ class ChatNavigationDrawer extends StatelessWidget {
       context,
       title: 'Conversation Memory',
       maxTotalTokens: MemoryConstants.maxConversationMemoryTokens,
+      isUpdating: memoryService.isUpdating,
+      updatingModelName: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
       sections: [
         MemorySection(label: 'Summary', key: 'summary', value: convMemory.summary),
         MemorySection(label: 'Key Context', key: 'key_context', value: convMemory.keyContext),
@@ -488,6 +491,8 @@ class _AgentMemoryTile extends StatelessWidget {
       context,
       title: 'Agent Memory',
       maxTotalTokens: MemoryConstants.maxAgentMemoryTokens,
+      isUpdating: memoryService.isUpdating,
+      updatingModelName: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
       sections: [
         MemorySection(label: 'User Profile', key: 'user_profile', value: agentMemory.userProfile),
         MemorySection(label: 'Preferences', key: 'preferences', value: agentMemory.preferences),

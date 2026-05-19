@@ -499,7 +499,7 @@ class _AgentMemoryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final memoryService = Provider.of<MemoryService>(context);
-    final isUpdating = memoryService.isUpdating;
+    final isUpdating = memoryService.isAgentMemoryUpdating;
 
     return InkWell(
       onTap: () => _showAgentMemory(context),
@@ -548,7 +548,7 @@ class _AgentMemoryTile extends StatelessWidget {
       context,
       title: 'Agent Memory',
       maxTotalTokens: MemoryConstants.maxAgentMemoryTokens,
-      isUpdating: memoryService.isUpdating,
+      isUpdating: memoryService.isAgentMemoryUpdating,
       updatingModelName: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
       lastUpdatedAt: agentMemory.updatedAt,
       lastUpdatedByModel: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),

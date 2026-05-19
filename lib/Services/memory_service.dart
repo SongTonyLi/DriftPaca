@@ -17,6 +17,9 @@ class MemoryService extends ChangeNotifier {
   bool _isUpdating = false;
   bool get isUpdating => _isUpdating;
 
+  bool _isAgentMemoryUpdating = false;
+  bool get isAgentMemoryUpdating => _isAgentMemoryUpdating;
+
   String? _updatingChatId;
   String? get updatingChatId => _updatingChatId;
 
@@ -107,6 +110,7 @@ class MemoryService extends ChangeNotifier {
     bool skipAgentMemory = false,
   }) async {
     _isUpdating = true;
+    _isAgentMemoryUpdating = !skipAgentMemory;
     _updatingChatId = chatId;
     _lastError = null;
     notifyListeners();
@@ -174,6 +178,7 @@ class MemoryService extends ChangeNotifier {
       debugPrint('MemoryService update failed: $e');
     } finally {
       _isUpdating = false;
+      _isAgentMemoryUpdating = false;
       _updatingChatId = null;
       notifyListeners();
     }

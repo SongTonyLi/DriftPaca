@@ -384,6 +384,28 @@ class ChatProvider extends ChangeNotifier {
     return streamingMessage;
   }
 
+  /// Sends the edited text as a new message at the bottom, preserving all history.
+  Future<void> editAndResend(OllamaMessage originalMessage, String newContent) async {
+    final associatedChat = currentChat!;
+
+    // Create a new user message with the edited content
+    final newMessage = OllamaMessage(
+      newContent.trim(),
+      role: OllamaMessageRole.user,
+      images: originalMessage.images,
+    );
+    _messages.add(newMessage);
+
+    _activeChatStreams[associatedChat.id] = null;
+    notifyListeners();
+
+    // Save the new message to the database
+    await _databaseService.addMessage(newMessage, chat: associatedChat);
+
+    // Start a new response
+    await _initializeChatStream(associatedChat);
+  }
+
   Future<void> regenerateMessage(OllamaMessage message) async {
     final associatedChat = currentChat!;
 

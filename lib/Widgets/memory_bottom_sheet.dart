@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Constants/memory_constants.dart';
 
@@ -70,8 +68,16 @@ class _MemoryEditorSheet extends StatefulWidget {
   State<_MemoryEditorSheet> createState() => _MemoryEditorSheetState();
 }
 
-class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
+class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
+    with SingleTickerProviderStateMixin {
   late List<MemorySection> _sections;
+  bool _showEditor = false;
+  int? _focusedSectionIndex;
+  late AnimationController _transitionController;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _fadeAnimation;
+  final ScrollController _editorScrollController = ScrollController();
+  final List<GlobalKey> _sectionKeys = [];
 
   @override
   void initState() {
@@ -79,6 +85,30 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
     _sections = widget.sections
         .map((s) => MemorySection(label: s.label, key: s.key, value: s.value))
         .toList();
+    _showEditor = !_sections.every((s) => s.value.isEmpty);
+    _sectionKeys.addAll(List.generate(_sections.length, (_) => GlobalKey()));
+
+    _transitionController = AnimationController(
+      duration: const Duration(milliseconds: 350),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 0.92, end: 1.0).animate(
+      CurvedAnimation(parent: _transitionController, curve: Curves.easeOutCubic),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _transitionController, curve: Curves.easeOut),
+    );
+
+    if (_showEditor) {
+      _transitionController.value = 1.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _transitionController.dispose();
+    _editorScrollController.dispose();
+    super.dispose();
   }
 
   int get _totalTokens =>
@@ -86,7 +116,25 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
 
   bool get _exceedsLimit => _totalTokens > widget.maxTotalTokens;
 
-  bool get _isEmpty => _sections.every((s) => s.value.isEmpty);
+  void _openSection(int index) {
+    setState(() {
+      _showEditor = true;
+      _focusedSectionIndex = index;
+    });
+    _transitionController.forward().then((_) {
+      // Scroll to the tapped section after animation
+      if (_focusedSectionIndex != null) {
+        final keyContext = _sectionKeys[_focusedSectionIndex!].currentContext;
+        if (keyContext != null) {
+          Scrollable.ensureVisible(
+            keyContext,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,18 +146,10 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
       maxChildSize: 0.95,
       expand: false,
       builder: (context, scrollController) {
-        return ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-            child: Container(
+        return Container(
               decoration: BoxDecoration(
-                color: colorScheme.surface.withValues(alpha: 0.40),
+                color: colorScheme.surface,
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                border: Border.all(
-                  color: colorScheme.outline.withValues(alpha: 0.15),
-                  width: 0.5,
-                ),
               ),
               child: Column(
                 children: [
@@ -197,14 +237,20 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                   const SizedBox(height: 4),
                   // Section list
                   Expanded(
-                    child: _isEmpty
+                    child: !_showEditor
                         ? _buildEmptyState(colorScheme)
-                        : ListView.separated(
-                            controller: scrollController,
-                            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-                            itemCount: _sections.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 20),
-                            itemBuilder: (context, index) => _buildSection(index, colorScheme),
+                        : FadeTransition(
+                            opacity: _fadeAnimation,
+                            child: ScaleTransition(
+                              scale: _scaleAnimation,
+                              child: ListView.separated(
+                                controller: _editorScrollController,
+                                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                                itemCount: _sections.length,
+                                separatorBuilder: (_, __) => const SizedBox(height: 20),
+                                itemBuilder: (context, index) => _buildSection(index, colorScheme),
+                              ),
+                            ),
                           ),
                   ),
                   // Bottom actions — sticky footer
@@ -222,7 +268,7 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                         padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
                         child: Row(
                           children: [
-                            if (widget.onClear != null && !_isEmpty)
+                            if (widget.onClear != null && _showEditor)
                               TextButton(
                                 onPressed: () => _confirmClear(context),
                                 child: Text(
@@ -245,8 +291,6 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                   ),
                 ],
               ),
-            ),
-          ),
         );
       },
     );
@@ -288,22 +332,10 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
               spacing: 8,
               runSpacing: 8,
               alignment: WrapAlignment.center,
-              children: _sections.map((s) => ActionChip(
-                label: Text(s.label, style: const TextStyle(fontSize: 12)),
-                avatar: Icon(Icons.add, size: 14, color: colorScheme.primary),
-                onPressed: () {
-                  // Switch to full editor mode
-                  setState(() {
-                    s.value = ' '; // trigger non-empty to show editor
-                  });
-                  // Then clear it so field is empty but editor is visible
-                  Future.microtask(() {
-                    setState(() {
-                      s.value = '';
-                    });
-                  });
-                },
-              )).toList(),
+              children: List.generate(_sections.length, (i) => ActionChip(
+                label: Text(_sections[i].label, style: const TextStyle(fontSize: 12)),
+                onPressed: () => _openSection(i),
+              )),
             ),
           ],
         ),
@@ -316,6 +348,7 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
     final hasContent = section.value.isNotEmpty;
 
     return Column(
+      key: _sectionKeys[index],
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(

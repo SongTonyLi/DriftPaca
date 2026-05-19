@@ -226,19 +226,12 @@ class _ServerSettingsState extends State<ServerSettings> {
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
-          child: Wrap(
-            spacing: 8.0,
-            runSpacing: 8.0,
-            alignment: WrapAlignment.end,
-            children: [
-              ElevatedButton(
-                onPressed:
-                    _isCloudLoading || _apiKeyController.text.isEmpty ? null : _handleCloudConnectButton,
-                child: _ConnectionStatusIndicator(
-                  color: _cloudConnectionStatusColor,
-                ),
-              ),
-            ],
+          child: ElevatedButton(
+            onPressed:
+                _isCloudLoading || _apiKeyController.text.isEmpty ? null : _handleCloudConnectButton,
+            child: _ConnectionStatusIndicator(
+              color: _cloudConnectionStatusColor,
+            ),
           ),
         ),
       ],

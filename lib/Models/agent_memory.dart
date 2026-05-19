@@ -24,13 +24,21 @@ class AgentMemory {
       interestsAndExpertise.isEmpty &&
       languageAndTone.isEmpty;
 
+  /// Converts a value that may be a String, List, or null to a String.
+  static String _asString(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    if (value is List) return value.join('\n');
+    return value.toString();
+  }
+
   factory AgentMemory.fromMap(Map<String, dynamic> map) {
     return AgentMemory(
-      userProfile: map['user_profile'] ?? '',
-      preferences: map['preferences'] ?? '',
-      learnedFacts: map['learned_facts'] ?? '',
-      interestsAndExpertise: map['interests_and_expertise'] ?? '',
-      languageAndTone: map['language_and_tone'] ?? '',
+      userProfile: _asString(map['user_profile']),
+      preferences: _asString(map['preferences']),
+      learnedFacts: _asString(map['learned_facts']),
+      interestsAndExpertise: _asString(map['interests_and_expertise']),
+      languageAndTone: _asString(map['language_and_tone']),
       updatedAt: map['updated_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['updated_at'])
           : null,

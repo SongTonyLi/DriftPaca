@@ -36,14 +36,22 @@ class ConversationMemory {
     }
   }
 
+  /// Converts a value that may be a String, List, or null to a String.
+  static String _asString(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    if (value is List) return value.join('\n');
+    return value.toString();
+  }
+
   factory ConversationMemory.fromMap(Map<String, dynamic> map) {
     return ConversationMemory(
-      summary: map['summary'] ?? '',
-      keyContext: map['key_context'] ?? '',
-      mediaDescriptions: map['media_descriptions'] ?? '',
-      currentState: map['current_state'] ?? '',
-      modelHistory: map['model_history'] ?? '',
-      unresolvedItems: map['unresolved_items'] ?? '',
+      summary: _asString(map['summary']),
+      keyContext: _asString(map['key_context']),
+      mediaDescriptions: _asString(map['media_descriptions']),
+      currentState: _asString(map['current_state']),
+      modelHistory: _asString(map['model_history']),
+      unresolvedItems: _asString(map['unresolved_items']),
       updatedAt: map['updated_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['updated_at'])
           : null,

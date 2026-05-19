@@ -37,9 +37,6 @@ class _ServerSettingsState extends State<ServerSettings> {
   String? _cloudErrorText;
   bool _obscureApiKey = true;
 
-  List<String> _cloudModels = [];
-  bool _isLoadingModels = false;
-
   String get _serverMode => _settingsBox.get('serverMode', defaultValue: 'local');
 
   @override
@@ -405,78 +402,112 @@ class _ServerSettingsState extends State<ServerSettings> {
   }
 
   Widget _buildMemoryModelSelector(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final currentModel = _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel) as String;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    return InkWell(
+      onTap: () => _showMemoryModelPicker(context),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outline.withValues(alpha: 0.3)),
+        ),
+        child: Row(
           children: [
             Expanded(
-              child: DropdownButtonFormField<String>(
-                value: _cloudModels.contains(currentModel) || _cloudModels.isEmpty
-                    ? currentModel
-                    : null,
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  helperText: 'Model used for memory summarization (via Ollama Cloud)',
-                ),
-                hint: Text(currentModel),
-                items: [
-                  if (!_cloudModels.contains(currentModel))
-                    DropdownMenuItem(value: currentModel, child: Text(currentModel)),
-                  for (final model in _cloudModels)
-                    DropdownMenuItem(value: model, child: Text(model)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    currentModel,
+                    style: TextStyle(fontSize: 15, color: colorScheme.onSurface),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Used for memory summarization via Ollama Cloud',
+                    style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                  ),
                 ],
-                onChanged: (value) {
-                  if (value != null) {
-                    _settingsBox.put('memoryModel', value);
-                    setState(() {});
-                  }
-                },
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton(
-              onPressed: _isLoadingModels ? null : _fetchCloudModels,
-              icon: _isLoadingModels
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.refresh),
-              tooltip: 'Refresh model list',
-            ),
+            Icon(Icons.chevron_right, color: colorScheme.onSurfaceVariant, size: 20),
           ],
         ),
-      ],
+      ),
     );
   }
 
-  Future<void> _fetchCloudModels() async {
+  void _showMemoryModelPicker(BuildContext context) async {
     final apiKey = _settingsBox.get('cloudApiKey') as String?;
-    if (apiKey == null || apiKey.isEmpty) return;
+    List<String> models = [];
 
-    setState(() => _isLoadingModels = true);
+    if (apiKey != null && apiKey.isNotEmpty) {
+      try {
+        final url = Uri.parse('https://ollama.com/api/tags');
+        final response = await http.get(url, headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        }).timeout(const Duration(seconds: 10));
 
-    try {
-      final url = Uri.parse('https://ollama.com/api/tags');
-      final response = await http.get(url, headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
-      }).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final models = (json['models'] as List?)
-            ?.map((m) => m['name'] as String? ?? '')
-            .where((name) => name.isNotEmpty)
-            .toList();
-        if (models != null && mounted) {
-          setState(() => _cloudModels = models);
+        if (response.statusCode == 200) {
+          final json = jsonDecode(response.body);
+          models = (json['models'] as List?)
+              ?.map((m) => m['name'] as String? ?? '')
+              .where((name) => name.isNotEmpty)
+              .toList() ?? [];
         }
-      }
-    } catch (_) {
-      // Silently fail — user can retry
-    } finally {
-      if (mounted) setState(() => _isLoadingModels = false);
+      } catch (_) {}
+    }
+
+    // Ensure current model is in the list
+    final currentModel = _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel) as String;
+    if (!models.contains(currentModel)) {
+      models.insert(0, currentModel);
+    }
+
+    if (!mounted) return;
+
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Select Memory Model',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const Divider(),
+              if (models.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'Connect to Ollama Cloud first to see available models.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                )
+              else
+                ...models.map((model) => ListTile(
+                  title: Text(model),
+                  trailing: model == currentModel ? const Icon(Icons.check, size: 20) : null,
+                  onTap: () => Navigator.pop(context, model),
+                )),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected != null) {
+      _settingsBox.put('memoryModel', selected);
+      setState(() {});
     }
   }
 

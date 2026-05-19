@@ -246,8 +246,10 @@ class ChatNavigationDrawer extends StatelessWidget {
       sections: [
         MemorySection(label: 'Summary', key: 'summary', value: convMemory.summary),
         MemorySection(label: 'Key Context', key: 'key_context', value: convMemory.keyContext),
+        MemorySection(label: 'User Requests', key: 'user_requests', value: convMemory.userRequests),
         MemorySection(label: 'Media Descriptions', key: 'media_descriptions', value: convMemory.mediaDescriptions),
         MemorySection(label: 'Current State', key: 'current_state', value: convMemory.currentState),
+        MemorySection(label: 'Errors & Solutions', key: 'errors_and_solutions', value: convMemory.errorsAndSolutions),
         MemorySection(label: 'Model History', key: 'model_history', value: convMemory.modelHistory),
         MemorySection(label: 'Unresolved Items', key: 'unresolved_items', value: convMemory.unresolvedItems),
       ],
@@ -255,8 +257,10 @@ class ChatNavigationDrawer extends StatelessWidget {
         final updated = ConversationMemory(
           summary: sections.firstWhere((s) => s.key == 'summary').value,
           keyContext: sections.firstWhere((s) => s.key == 'key_context').value,
+          userRequests: sections.firstWhere((s) => s.key == 'user_requests').value,
           mediaDescriptions: sections.firstWhere((s) => s.key == 'media_descriptions').value,
           currentState: sections.firstWhere((s) => s.key == 'current_state').value,
+          errorsAndSolutions: sections.firstWhere((s) => s.key == 'errors_and_solutions').value,
           modelHistory: sections.firstWhere((s) => s.key == 'model_history').value,
           unresolvedItems: sections.firstWhere((s) => s.key == 'unresolved_items').value,
         );
@@ -533,6 +537,9 @@ class _AgentMemoryTile extends StatelessWidget {
         MemorySection(label: 'Learned Facts', key: 'learned_facts', value: agentMemory.learnedFacts),
         MemorySection(label: 'Interests & Expertise', key: 'interests_and_expertise', value: agentMemory.interestsAndExpertise),
         MemorySection(label: 'Language & Tone', key: 'language_and_tone', value: agentMemory.languageAndTone),
+        MemorySection(label: 'Key People', key: 'key_people', value: agentMemory.keyPeople),
+        MemorySection(label: 'Ongoing Projects & Goals', key: 'ongoing_projects', value: agentMemory.ongoingProjects),
+        MemorySection(label: 'Past Conversations', key: 'past_conversation_refs', value: agentMemory.pastConversationRefs),
       ],
       onSave: (sections) {
         final updated = AgentMemory(
@@ -541,6 +548,9 @@ class _AgentMemoryTile extends StatelessWidget {
           learnedFacts: sections.firstWhere((s) => s.key == 'learned_facts').value,
           interestsAndExpertise: sections.firstWhere((s) => s.key == 'interests_and_expertise').value,
           languageAndTone: sections.firstWhere((s) => s.key == 'language_and_tone').value,
+          keyPeople: sections.firstWhere((s) => s.key == 'key_people').value,
+          ongoingProjects: sections.firstWhere((s) => s.key == 'ongoing_projects').value,
+          pastConversationRefs: sections.firstWhere((s) => s.key == 'past_conversation_refs').value,
         );
         memoryService.updateAgentMemoryField(updated);
       },

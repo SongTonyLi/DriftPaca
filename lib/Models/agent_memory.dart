@@ -77,6 +77,7 @@ class AgentMemory {
     final sections = <String>[];
     if (userProfile.isNotEmpty) sections.add('- **Profile**: $userProfile');
     if (preferences.isNotEmpty) sections.add('- **Preferences**: $preferences');
+    if (learnedFacts.isNotEmpty) sections.add('- **Learned Facts**: $learnedFacts');
     if (interestsAndExpertise.isNotEmpty) sections.add('- **Interests & Expertise**: $interestsAndExpertise');
     if (languageAndTone.isNotEmpty) sections.add('- **Language & Tone**: $languageAndTone');
     return sections.join('\n');

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive/hive.dart';
+import 'package:llamaseek/Constants/memory_constants.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_request_state.dart';
@@ -119,6 +120,21 @@ class _ServerSettingsState extends State<ServerSettings> {
           _buildCloudSettings(context)
         else
           _buildLocalSettings(context),
+        const SizedBox(height: 16),
+        Text('Memory Model', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        TextFormField(
+          initialValue: _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel),
+          decoration: const InputDecoration(
+            labelText: 'Summarization Model',
+            hintText: MemoryConstants.defaultModel,
+            border: OutlineInputBorder(),
+            helperText: 'Model used for memory summarization (via Ollama Cloud)',
+          ),
+          onChanged: (value) {
+            _settingsBox.put('memoryModel', value.trim().isEmpty ? MemoryConstants.defaultModel : value.trim());
+          },
+        ),
       ],
     );
   }

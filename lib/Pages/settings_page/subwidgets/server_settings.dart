@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -35,6 +36,9 @@ class _ServerSettingsState extends State<ServerSettings> {
   String? _serverAddressErrorText;
   String? _cloudErrorText;
   bool _obscureApiKey = true;
+
+  List<String> _cloudModels = [];
+  bool _isLoadingModels = false;
 
   String get _serverMode => _settingsBox.get('serverMode', defaultValue: 'local');
 
@@ -123,18 +127,7 @@ class _ServerSettingsState extends State<ServerSettings> {
         const SizedBox(height: 16),
         Text('Memory Model', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
-        TextFormField(
-          initialValue: _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel),
-          decoration: const InputDecoration(
-            labelText: 'Summarization Model',
-            hintText: MemoryConstants.defaultModel,
-            border: OutlineInputBorder(),
-            helperText: 'Model used for memory summarization (via Ollama Cloud)',
-          ),
-          onChanged: (value) {
-            _settingsBox.put('memoryModel', value.trim().isEmpty ? MemoryConstants.defaultModel : value.trim());
-          },
-        ),
+        _buildMemoryModelSelector(context),
       ],
     );
   }
@@ -409,6 +402,82 @@ class _ServerSettingsState extends State<ServerSettings> {
     final String formattedAddress =
         "${url.scheme}://${url.host}${url.hasPort ? ":${url.port}" : ""}${url.path}";
     return formattedAddress;
+  }
+
+  Widget _buildMemoryModelSelector(BuildContext context) {
+    final currentModel = _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel) as String;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: _cloudModels.contains(currentModel) || _cloudModels.isEmpty
+                    ? currentModel
+                    : null,
+                decoration: InputDecoration(
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  helperText: 'Model used for memory summarization (via Ollama Cloud)',
+                ),
+                hint: Text(currentModel),
+                items: [
+                  if (!_cloudModels.contains(currentModel))
+                    DropdownMenuItem(value: currentModel, child: Text(currentModel)),
+                  for (final model in _cloudModels)
+                    DropdownMenuItem(value: model, child: Text(model)),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    _settingsBox.put('memoryModel', value);
+                    setState(() {});
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: _isLoadingModels ? null : _fetchCloudModels,
+              icon: _isLoadingModels
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh),
+              tooltip: 'Refresh model list',
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _fetchCloudModels() async {
+    final apiKey = _settingsBox.get('cloudApiKey') as String?;
+    if (apiKey == null || apiKey.isEmpty) return;
+
+    setState(() => _isLoadingModels = true);
+
+    try {
+      final url = Uri.parse('https://ollama.com/api/tags');
+      final response = await http.get(url, headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $apiKey',
+      }).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        final models = (json['models'] as List?)
+            ?.map((m) => m['name'] as String? ?? '')
+            .where((name) => name.isNotEmpty)
+            .toList();
+        if (models != null && mounted) {
+          setState(() => _cloudModels = models);
+        }
+      }
+    } catch (_) {
+      // Silently fail — user can retry
+    } finally {
+      if (mounted) setState(() => _isLoadingModels = false);
+    }
   }
 
   void _showOllamaInfoBottomSheet(BuildContext context) {

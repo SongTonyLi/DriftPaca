@@ -1,6 +1,7 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Constants/memory_constants.dart';
-import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_bottom_sheet.dart';
 
 class MemorySection {
   final String label;
@@ -12,7 +13,8 @@ class MemorySection {
   int get estimatedTokens => (value.length / 4).ceil();
 }
 
-/// Shows a memory editor bottom sheet using the same pattern as ChatBubbleBottomSheet.
+/// Shows a memory editor bottom sheet with glassy sidebar-like UI.
+/// Swipe down to dismiss — no close button.
 Future<void> showMemoryBottomSheet(
   BuildContext context, {
   required String title,
@@ -24,12 +26,8 @@ Future<void> showMemoryBottomSheet(
 }) {
   return showModalBottomSheet(
     context: context,
-    constraints: BoxConstraints(
-      maxHeight: MediaQuery.of(context).size.height * 0.9,
-    ),
     isScrollControlled: true,
-    isDismissible: false,
-    enableDrag: false,
+    backgroundColor: Colors.transparent,
     builder: (context) {
       return _MemoryEditorSheet(
         title: title,
@@ -84,100 +82,162 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return ChatBubbleBottomSheet(
-      title: widget.title,
-      actions: [
-        if (widget.onClear != null)
-          TextButton(
-            onPressed: () => _confirmClear(context),
-            child: const Text('Clear', style: TextStyle(color: Colors.red)),
-          ),
-        Text(
-          '~$_totalTokens tokens',
-          style: TextStyle(
-            fontSize: 12,
-            color: _exceedsLimit ? Colors.red : colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(width: 8),
-        TextButton(
-          onPressed: _handleSave,
-          child: const Text('Save'),
-        ),
-      ],
-      child: Column(
-        children: [
-          if (_exceedsLimit)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.3,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (context, scrollController) {
+        return ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+            child: Container(
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(alpha: 0.40),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                border: Border.all(
+                  color: colorScheme.outline.withValues(alpha: 0.15),
+                  width: 0.5,
+                ),
+              ),
+              child: Column(
                 children: [
-                  Icon(Icons.warning_amber, size: 16, color: Colors.orange),
-                  const SizedBox(width: 8),
+                  // Drag handle
+                  Container(
+                    margin: const EdgeInsets.only(top: 10),
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            widget.title,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '~$_totalTokens tokens',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _exceedsLimit ? Colors.red : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Actions row
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (widget.onClear != null)
+                          TextButton(
+                            onPressed: () => _confirmClear(context),
+                            child: const Text('Clear', style: TextStyle(color: Colors.red, fontSize: 13)),
+                          ),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: _handleSave,
+                          child: const Text('Save', style: TextStyle(fontSize: 13)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_exceedsLimit)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Memory exceeds token limit. Reduce content or it will be auto-resummarized.',
+                              style: TextStyle(fontSize: 12, color: Colors.orange),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  Divider(height: 1, color: colorScheme.outline.withValues(alpha: 0.15)),
+                  // Section list
                   Expanded(
-                    child: Text(
-                      'Memory exceeds token limit. Reduce content or it will be auto-resummarized.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                    child: ListView.separated(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(20),
+                      itemCount: _sections.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 16),
+                      itemBuilder: (context, index) {
+                        final section = _sections[index];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  section.label,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                                Text(
+                                  '~${section.estimatedTokens} tokens',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              initialValue: section.value,
+                              onChanged: (value) {
+                                setState(() {
+                                  section.value = value;
+                                });
+                              },
+                              maxLines: null,
+                              minLines: 2,
+                              decoration: InputDecoration(
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                contentPadding: const EdgeInsets.all(12),
+                                hintText: 'No ${section.label.toLowerCase()} recorded',
+                              ),
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
               ),
             ),
-          Expanded(
-            child: ListView.separated(
-              itemCount: _sections.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 16),
-              itemBuilder: (context, index) {
-                final section = _sections[index];
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          section.label,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                        Text(
-                          '~${section.estimatedTokens} tokens',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue: section.value,
-                      onChanged: (value) {
-                        setState(() {
-                          section.value = value;
-                        });
-                      },
-                      maxLines: null,
-                      minLines: 2,
-                      decoration: InputDecoration(
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        contentPadding: const EdgeInsets.all(12),
-                        hintText: 'No ${section.label.toLowerCase()} recorded',
-                      ),
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                  ],
-                );
-              },
-            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

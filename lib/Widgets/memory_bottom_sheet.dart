@@ -25,6 +25,8 @@ Future<void> showMemoryBottomSheet(
   Future<String?> Function(String content, int tokenLimit)? onResummarize,
   bool isUpdating = false,
   String? updatingModelName,
+  DateTime? lastUpdatedAt,
+  String? lastUpdatedByModel,
 }) {
   return showModalBottomSheet(
     context: context,
@@ -40,6 +42,8 @@ Future<void> showMemoryBottomSheet(
         onResummarize: onResummarize,
         isUpdating: isUpdating,
         updatingModelName: updatingModelName,
+        lastUpdatedAt: lastUpdatedAt,
+        lastUpdatedByModel: lastUpdatedByModel,
       );
     },
   );
@@ -54,6 +58,8 @@ class _MemoryEditorSheet extends StatefulWidget {
   final Future<String?> Function(String content, int tokenLimit)? onResummarize;
   final bool isUpdating;
   final String? updatingModelName;
+  final DateTime? lastUpdatedAt;
+  final String? lastUpdatedByModel;
 
   const _MemoryEditorSheet({
     required this.title,
@@ -64,6 +70,8 @@ class _MemoryEditorSheet extends StatefulWidget {
     this.onResummarize,
     this.isUpdating = false,
     this.updatingModelName,
+    this.lastUpdatedAt,
+    this.lastUpdatedByModel,
   });
 
   @override
@@ -102,6 +110,15 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
 
   void _goBack() {
     setState(() => _viewMode = _hasContent ? -1 : null);
+  }
+
+  String _formatTime(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -156,15 +173,28 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                         ],
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            _viewMode != null && _viewMode! >= 0
-                                ? _sections[_viewMode!].label
-                                : widget.title,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 17,
-                              color: colorScheme.onSurface,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _viewMode != null && _viewMode! >= 0
+                                    ? _sections[_viewMode!].label
+                                    : widget.title,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 17,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                              if (widget.lastUpdatedAt != null && _viewMode == null || _viewMode == -1)
+                                Text(
+                                  'by ${widget.lastUpdatedByModel ?? 'unknown'} at ${_formatTime(widget.lastUpdatedAt!)}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                         if (_totalTokens > 0)

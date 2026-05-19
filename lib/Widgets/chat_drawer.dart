@@ -465,6 +465,8 @@ class _AgentMemoryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final memoryService = Provider.of<MemoryService>(context);
+    final isUpdating = memoryService.isUpdating;
 
     return InkWell(
       onTap: () => _showAgentMemory(context),
@@ -473,12 +475,30 @@ class _AgentMemoryTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8.0),
         child: Row(
           children: [
-            Icon(Icons.auto_awesome_outlined, color: colorScheme.onSurfaceVariant, size: 22),
+            if (isUpdating)
+              _PulsingIcon(
+                icon: Icons.auto_awesome,
+                size: 22,
+                color: colorScheme.primary,
+              )
+            else
+              Icon(Icons.auto_awesome_outlined, color: colorScheme.onSurfaceVariant, size: 22),
             const SizedBox(width: 12),
-            Text(
-              'Agent Memory',
-              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+            Expanded(
+              child: Text(
+                'Agent Memory',
+                style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+              ),
             ),
+            if (isUpdating)
+              Text(
+                'Updating...',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colorScheme.primary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
           ],
         ),
       ),

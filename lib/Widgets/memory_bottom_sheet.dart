@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:llamaseek/Constants/memory_constants.dart';
+import 'package:llamaseek/Services/memory_service.dart';
 
 class MemorySection {
   final String label;
@@ -143,7 +145,14 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                           )
                         else ...[
                           const SizedBox(width: 12),
-                          Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary),
+                          Consumer<MemoryService>(
+                            builder: (context, memoryService, _) {
+                              if (memoryService.isUpdating) {
+                                return _PulsingStarIcon(size: 20, color: colorScheme.primary);
+                              }
+                              return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
+                            },
+                          ),
                         ],
                         const SizedBox(width: 8),
                         Expanded(
@@ -169,33 +178,37 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                       ],
                     ),
                   ),
-                  if (widget.isUpdating)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              '${widget.updatingModelName ?? 'Summarizer'} is actively updating memory...',
-                              style: TextStyle(
-                                fontSize: 12,
+                  Consumer<MemoryService>(
+                    builder: (context, memoryService, _) {
+                      if (!memoryService.isUpdating) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
                                 color: colorScheme.primary,
-                                fontStyle: FontStyle.italic,
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '${widget.updatingModelName ?? 'Summarizer'} is actively updating memory...',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colorScheme.primary,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                   if (_exceedsLimit)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
@@ -524,6 +537,46 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PulsingStarIcon extends StatefulWidget {
+  final double size;
+  final Color color;
+
+  const _PulsingStarIcon({required this.size, required this.color});
+
+  @override
+  State<_PulsingStarIcon> createState() => _PulsingStarIconState();
+}
+
+class _PulsingStarIconState extends State<_PulsingStarIcon>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.3, end: 1.0).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      ),
+      child: Icon(Icons.auto_awesome, size: widget.size, color: widget.color),
     );
   }
 }

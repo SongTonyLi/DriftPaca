@@ -78,7 +78,7 @@ class ChatNavigationDrawer extends StatelessWidget {
   const ChatNavigationDrawer({super.key});
 
   static String _dateGroupLabel(DateTime? date) {
-    if (date == null) return 'Older';
+    if (date == null) return 'Today';
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final chatDay = DateTime(date.year, date.month, date.day);
@@ -241,6 +241,8 @@ class ChatNavigationDrawer extends StatelessWidget {
       maxTotalTokens: MemoryConstants.maxConversationMemoryTokens,
       isUpdating: memoryService.isUpdating,
       updatingModelName: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
+      lastUpdatedAt: convMemory.updatedAt,
+      lastUpdatedByModel: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
       sections: [
         MemorySection(label: 'Summary', key: 'summary', value: convMemory.summary),
         MemorySection(label: 'Key Context', key: 'key_context', value: convMemory.keyContext),
@@ -517,6 +519,8 @@ class _AgentMemoryTile extends StatelessWidget {
       maxTotalTokens: MemoryConstants.maxAgentMemoryTokens,
       isUpdating: memoryService.isUpdating,
       updatingModelName: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
+      lastUpdatedAt: agentMemory.updatedAt,
+      lastUpdatedByModel: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
       sections: [
         MemorySection(label: 'User Profile', key: 'user_profile', value: agentMemory.userProfile),
         MemorySection(label: 'Preferences', key: 'preferences', value: agentMemory.preferences),

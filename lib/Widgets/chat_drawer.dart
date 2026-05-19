@@ -138,11 +138,15 @@ class ChatNavigationDrawer extends StatelessWidget {
                     final chat = entry.value;
                     final isSelected = chatProvider.currentChat?.id == chat.id;
 
+                    final memoryService = Provider.of<MemoryService>(context);
+                    final isSummarizing = memoryService.isUpdating && memoryService.updatingChatId == chat.id;
+
                     return _ChatDrawerTile(
                       icon: Icons.chat_outlined,
                       selectedIcon: Icons.chat,
                       title: chat.title,
                       isSelected: isSelected,
+                      isSummarizing: isSummarizing,
                       onTap: () {
                         chatProvider.destinationChatSelected(index + 1);
                         if (ResponsiveBreakpoints.of(context).isMobile) {
@@ -521,6 +525,7 @@ class _ChatDrawerTile extends StatelessWidget {
   final IconData selectedIcon;
   final String title;
   final bool isSelected;
+  final bool isSummarizing;
   final VoidCallback onTap;
   final void Function(Offset globalPosition)? onLongPress;
 
@@ -529,6 +534,7 @@ class _ChatDrawerTile extends StatelessWidget {
     required this.selectedIcon,
     required this.title,
     required this.isSelected,
+    this.isSummarizing = false,
     required this.onTap,
     this.onLongPress,
   });
@@ -574,12 +580,61 @@ class _ChatDrawerTile extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (isSummarizing)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: _PulsingIcon(
+                        icon: Icons.auto_awesome,
+                        size: 14,
+                        color: colorScheme.primary,
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PulsingIcon extends StatefulWidget {
+  final IconData icon;
+  final double size;
+  final Color color;
+
+  const _PulsingIcon({required this.icon, required this.size, required this.color});
+
+  @override
+  State<_PulsingIcon> createState() => _PulsingIconState();
+}
+
+class _PulsingIconState extends State<_PulsingIcon> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.3, end: 1.0).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      ),
+      child: Icon(widget.icon, size: widget.size, color: widget.color),
     );
   }
 }

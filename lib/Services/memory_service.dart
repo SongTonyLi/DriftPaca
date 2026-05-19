@@ -17,6 +17,9 @@ class MemoryService extends ChangeNotifier {
   bool _isUpdating = false;
   bool get isUpdating => _isUpdating;
 
+  String? _updatingChatId;
+  String? get updatingChatId => _updatingChatId;
+
   /// In-memory cache to avoid DB reads on every message send.
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
   AgentMemory? _agentMemoryCache;
@@ -81,6 +84,7 @@ class MemoryService extends ChangeNotifier {
     required List<OllamaMessage> messages,
   }) async {
     _isUpdating = true;
+    _updatingChatId = chatId;
     notifyListeners();
 
     try {
@@ -100,9 +104,16 @@ class MemoryService extends ChangeNotifier {
             : null,
       );
 
+      debugPrint('MemoryService: sending summarization request for chat $chatId');
+
       // Call gpt-oss-20b via Ollama Cloud
       final responseBody = await _callCloudModel(prompt);
-      if (responseBody == null) return;
+      if (responseBody == null) {
+        debugPrint('MemoryService: got null response from cloud model');
+        return;
+      }
+
+      debugPrint('MemoryService: got response, parsing...');
 
       // Parse and save
       _parseAndSave(chatId, responseBody);
@@ -110,6 +121,7 @@ class MemoryService extends ChangeNotifier {
       debugPrint('MemoryService update failed: $e');
     } finally {
       _isUpdating = false;
+      _updatingChatId = null;
       notifyListeners();
     }
   }

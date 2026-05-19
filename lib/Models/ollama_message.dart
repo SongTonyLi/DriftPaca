@@ -146,14 +146,16 @@ class OllamaMessage {
     evalDuration = message.evalDuration;
   }
 
-  Future<List<String>?> _base64EncodeImages() async {
-    if (images != null) {
-      return await Future.wait(images!.map(
-        (file) async => base64Encode(await file.readAsBytes()),
-      ));
-    }
+  List<String>? _cachedBase64Images;
 
-    return null;
+  Future<List<String>?> _base64EncodeImages() async {
+    if (images == null) return null;
+    if (_cachedBase64Images != null) return _cachedBase64Images;
+
+    _cachedBase64Images = await Future.wait(images!.map(
+      (file) async => base64Encode(await file.readAsBytes()),
+    ));
+    return _cachedBase64Images;
   }
 
   static List<File>? _constructImages(String? raw) {

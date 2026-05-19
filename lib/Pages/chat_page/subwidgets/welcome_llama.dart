@@ -10,13 +10,14 @@ class WelcomeLlama extends StatefulWidget {
 }
 
 class _WelcomeLlamaState extends State<WelcomeLlama>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _trot;
   late AnimationController _walk;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _trot = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -28,7 +29,19 @@ class _WelcomeLlamaState extends State<WelcomeLlama>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _trot.stop();
+      _walk.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      _trot.repeat();
+      _walk.repeat(reverse: true);
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _trot.dispose();
     _walk.dispose();
     super.dispose();

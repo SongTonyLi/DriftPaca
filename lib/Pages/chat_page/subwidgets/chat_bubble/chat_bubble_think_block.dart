@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 /// Parses message content into thinking and response parts.
@@ -65,6 +66,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   final Stopwatch _stopwatch = Stopwatch();
   late final bool _wasAlreadyComplete;
   int _elapsedSeconds = 0;
+  Timer? _timer;
 
   late final AnimationController _pulseController;
   late final AnimationController _expandController;
@@ -105,13 +107,14 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   }
 
   void _startTimer() {
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(seconds: 1));
-      if (!mounted || !_stopwatch.isRunning) return false;
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_stopwatch.isRunning) {
+        _timer?.cancel();
+        return;
+      }
       setState(() {
         _elapsedSeconds = _stopwatch.elapsed.inSeconds;
       });
-      return true;
     });
   }
 
@@ -136,6 +139,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
 
   @override
   void dispose() {
+    _timer?.cancel();
     _stopwatch.stop();
     _pulseController.dispose();
     _expandController.dispose();

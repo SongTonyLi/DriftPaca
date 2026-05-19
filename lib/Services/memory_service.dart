@@ -20,6 +20,9 @@ class MemoryService extends ChangeNotifier {
   String? _updatingChatId;
   String? get updatingChatId => _updatingChatId;
 
+  String? _lastError;
+  String? get lastError => _lastError;
+
   /// In-memory cache to avoid DB reads on every message send.
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
   AgentMemory? _agentMemoryCache;
@@ -96,6 +99,7 @@ class MemoryService extends ChangeNotifier {
   }) async {
     _isUpdating = true;
     _updatingChatId = chatId;
+    _lastError = null;
     notifyListeners();
 
     try {
@@ -126,8 +130,10 @@ class MemoryService extends ChangeNotifier {
       if (responseBody == null) {
         // ignore: avoid_print
         print('[MemoryService] got NULL response from cloud model');
+        // _lastError is already set by _callCloudModel
         return;
       }
+      _lastError = null;
 
       // ignore: avoid_print
       print('[MemoryService] got response: ${responseBody.substring(0, responseBody.length.clamp(0, 200))}...');
@@ -169,12 +175,19 @@ class MemoryService extends ChangeNotifier {
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
         return json['message']?['content'] as String?;
-      } else {
+      } else if (response.statusCode == 404) {
+        _lastError = 'Model "$_model" not found. Change it in Settings → Memory Model.';
         // ignore: avoid_print
-        print('[MemoryService] API error: ${response.statusCode} ${response.body.substring(0, response.body.length.clamp(0, 200))}');
+        print('[MemoryService] 404: model "$_model" not found');
+        return null;
+      } else {
+        _lastError = 'API error ${response.statusCode}';
+        // ignore: avoid_print
+        print('[MemoryService] API error: ${response.statusCode}');
         return null;
       }
     } catch (e) {
+      _lastError = 'Network error: $e';
       // ignore: avoid_print
       print('[MemoryService] network error: $e');
       return null;

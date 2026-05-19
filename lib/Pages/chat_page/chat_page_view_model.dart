@@ -44,6 +44,16 @@ class ChatPageViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether the next new chat should be incognito
+  bool _incognitoRequested = false;
+  bool get incognitoRequested => _incognitoRequested;
+
+  /// Request the next new chat to be incognito
+  void requestIncognito() {
+    _incognitoRequested = true;
+    notifyListeners();
+  }
+
   /// The selected model for new chats
   OllamaModel? _selectedModel;
   OllamaModel? get selectedModel => _selectedModel;
@@ -284,7 +294,8 @@ class ChatPageViewModel extends ChangeNotifier {
       }
 
       // Create a new chat with the selected model
-      await _chatProvider.createNewChat(_selectedModel!);
+      await _chatProvider.createNewChat(_selectedModel!, isIncognito: _incognitoRequested);
+      _incognitoRequested = false;
       _presets = ChatPresets.randomPresets;
       isNewChat = true;
     }

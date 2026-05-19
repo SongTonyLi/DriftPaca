@@ -24,7 +24,7 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 5,
+      version: 6,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
@@ -49,6 +49,9 @@ updated_at INTEGER
           await db.execute("ALTER TABLE agent_memory ADD COLUMN ongoing_projects TEXT DEFAULT ''");
           await db.execute("ALTER TABLE agent_memory ADD COLUMN past_conversation_refs TEXT DEFAULT ''");
         }
+        if (oldVersion < 6) {
+          await db.execute("ALTER TABLE chats ADD COLUMN is_incognito INTEGER DEFAULT 0");
+        }
       },
       onCreate: (Database db, int version) async {
         await db.execute('''CREATE TABLE IF NOT EXISTS chats (
@@ -57,7 +60,8 @@ model TEXT NOT NULL,
 chat_title TEXT NOT NULL,
 system_prompt TEXT,
 options TEXT,
-conversation_memory TEXT
+conversation_memory TEXT,
+is_incognito INTEGER DEFAULT 0
 ) WITHOUT ROWID;''');
 
         await db.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -106,15 +110,16 @@ updated_at INTEGER
 
   // Chat Operations
 
-  Future<OllamaChat> createChat(String model) async {
+  Future<OllamaChat> createChat(String model, {bool isIncognito = false}) async {
     final id = Uuid().v4();
 
     await _db.insert('chats', {
       'chat_id': id,
       'model': model,
-      'chat_title': 'New Chat',
+      'chat_title': isIncognito ? 'Incognito Chat' : 'New Chat',
       'system_prompt': null,
       'options': null,
+      'is_incognito': isIncognito ? 1 : 0,
     });
 
     return (await getChat(id))!;
@@ -349,7 +354,7 @@ ORDER BY last_update DESC;''');
     final List<Map<String, dynamic>> maps = await _db.query(
       'chats',
       columns: ['chat_id', 'conversation_memory'],
-      where: 'conversation_memory IS NOT NULL',
+      where: 'conversation_memory IS NOT NULL AND (is_incognito IS NULL OR is_incognito = 0)',
     );
 
     final result = <String, ConversationMemory>{};

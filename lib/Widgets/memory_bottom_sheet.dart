@@ -210,6 +210,23 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                   ),
                   Consumer<MemoryService>(
                     builder: (context, memoryService, _) {
+                      if (memoryService.lastError != null) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                          child: Row(
+                            children: [
+                              Icon(Icons.error_outline, size: 14, color: Colors.red),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  memoryService.lastError!,
+                                  style: TextStyle(fontSize: 12, color: Colors.red),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
                       if (!memoryService.isUpdating) return const SizedBox.shrink();
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),

@@ -276,7 +276,6 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                       ),
                     ),
-                    const MemoryStatusIndicator(),
                     if (_viewModel.isStreaming)
                       IconButton(
                         icon: const Icon(Icons.stop_rounded, size: 20),

@@ -350,7 +350,7 @@ class _UserActionButtons extends StatelessWidget {
           label: 'Edit',
           color: colorScheme.onSurfaceVariant,
           onTap: () async {
-            final result = await actions.handleEdit(context);
+            final result = await _showEditPopup(context, message);
             if (result != null && context.mounted) {
               final chatProvider = Provider.of<ChatProvider>(context, listen: false);
               chatProvider.editAndResend(message, result);
@@ -481,6 +481,156 @@ class _CopyChipState extends State<_CopyChip> with SingleTickerProviderStateMixi
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shows an animated edit popup that expands from the chat bubble.
+/// Returns the edited text if saved, null if cancelled.
+Future<String?> _showEditPopup(BuildContext context, OllamaMessage message) async {
+  return showGeneralDialog<String>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Dismiss',
+    barrierColor: Colors.black38,
+    transitionDuration: const Duration(milliseconds: 400),
+    pageBuilder: (_, __, ___) => const SizedBox.shrink(),
+    transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
+      final moveCurve = CurvedAnimation(
+        parent: animation,
+        curve: const Cubic(0.16, 1.0, 0.3, 1.0),
+        reverseCurve: Curves.easeInQuart,
+      );
+      final fadeCurve = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOut,
+        reverseCurve: Curves.easeIn,
+      );
+
+      return FadeTransition(
+        opacity: fadeCurve,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.04),
+            end: Offset.zero,
+          ).animate(moveCurve),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.94, end: 1.0).animate(moveCurve),
+            child: _EditPopupContent(message: message),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _EditPopupContent extends StatefulWidget {
+  final OllamaMessage message;
+
+  const _EditPopupContent({required this.message});
+
+  @override
+  State<_EditPopupContent> createState() => _EditPopupContentState();
+}
+
+class _EditPopupContentState extends State<_EditPopupContent> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.message.content);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: Material(
+            color: Colors.transparent,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: colorScheme.outline.withValues(alpha: 0.15),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                          child: TextField(
+                            controller: _controller,
+                            autofocus: true,
+                            maxLines: null,
+                            textCapitalization: TextCapitalization.sentences,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                            decoration: const InputDecoration(
+                              border: InputBorder.none,
+                              hintText: 'Edit message...',
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  color: colorScheme.onPrimaryContainer.withValues(alpha: 0.6),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton.icon(
+                              onPressed: () {
+                                final text = _controller.text.trim();
+                                if (text.isNotEmpty) {
+                                  Navigator.pop(context, text);
+                                }
+                              },
+                              icon: const Icon(Icons.send_rounded, size: 16),
+                              label: const Text('Send as New'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),

@@ -73,7 +73,15 @@ class MemoryService extends ChangeNotifier {
     required String chatId,
     required List<OllamaMessage> messages,
   }) {
-    if (!isEnabled || _isUpdating) return;
+    debugPrint('MemoryService.triggerMemoryUpdate: enabled=$isEnabled, updating=$_isUpdating, apiKey=${_apiKey != null ? '***' : 'null'}, messages=${messages.length}');
+    if (!isEnabled) {
+      debugPrint('MemoryService: skipped — no API key configured');
+      return;
+    }
+    if (_isUpdating) {
+      debugPrint('MemoryService: skipped — already updating');
+      return;
+    }
 
     // Fire and forget
     _performUpdate(chatId: chatId, messages: messages);

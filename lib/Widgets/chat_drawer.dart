@@ -45,11 +45,16 @@ class ChatDrawer extends StatelessWidget {
                 child: Column(
                   children: [
                     const Expanded(child: ChatNavigationDrawer()),
-                    Container(
-                      alignment: Alignment.centerLeft,
-                      padding: const EdgeInsets.fromLTRB(28, 0, 28, 0),
-                      child: _AgentMemoryTile(),
-                    ),
+                    Builder(builder: (context) {
+                      final chatProvider = Provider.of<ChatProvider>(context);
+                      final isIncognito = chatProvider.currentChat?.isIncognito == true;
+                      if (isIncognito) return const SizedBox.shrink();
+                      return Container(
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.fromLTRB(28, 0, 28, 0),
+                        child: _AgentMemoryTile(),
+                      );
+                    }),
                     Container(
                       alignment: Alignment.centerLeft,
                       padding: const EdgeInsets.fromLTRB(28, 16, 28, 10),
@@ -155,7 +160,7 @@ class ChatNavigationDrawer extends StatelessWidget {
                     final isSelected = chatProvider.currentChat?.id == chat.id;
 
                     final memoryService = Provider.of<MemoryService>(context);
-                    final isSummarizing = !chat.isIncognito && memoryService.isUpdating && memoryService.updatingChatId == chat.id;
+                    final isSummarizing = memoryService.isUpdating && memoryService.updatingChatId == chat.id;
 
                     return _ChatDrawerTile(
                       icon: chat.isIncognito ? Icons.visibility_off_outlined : Icons.chat_outlined,

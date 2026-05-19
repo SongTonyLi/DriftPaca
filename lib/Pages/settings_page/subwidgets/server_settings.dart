@@ -10,6 +10,7 @@ import 'package:llamaseek/Constants/memory_constants.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_request_state.dart';
+import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
 import 'package:llamaseek/Widgets/ollama_bottom_sheet_header.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
@@ -440,73 +441,16 @@ class _ServerSettingsState extends State<ServerSettings> {
   }
 
   void _showMemoryModelPicker(BuildContext context) async {
-    final apiKey = _settingsBox.get('cloudApiKey') as String?;
-    List<String> models = [];
-
-    if (apiKey != null && apiKey.isNotEmpty) {
-      try {
-        final url = Uri.parse('https://ollama.com/api/tags');
-        final response = await http.get(url, headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $apiKey',
-        }).timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final json = jsonDecode(response.body);
-          models = (json['models'] as List?)
-              ?.map((m) => m['name'] as String? ?? '')
-              .where((name) => name.isNotEmpty)
-              .toList() ?? [];
-        }
-      } catch (_) {}
-    }
-
-    // Ensure current model is in the list
     final currentModel = _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel) as String;
-    if (!models.contains(currentModel)) {
-      models.insert(0, currentModel);
-    }
 
-    if (!mounted) return;
-
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showModelSelectionBottomSheet(
       context: context,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text(
-                  'Select Memory Model',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-              const Divider(),
-              if (models.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(
-                    'Connect to Ollama Cloud first to see available models.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                )
-              else
-                ...models.map((model) => ListTile(
-                  title: Text(model),
-                  trailing: model == currentModel ? const Icon(Icons.check, size: 20) : null,
-                  onTap: () => Navigator.pop(context, model),
-                )),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
+      title: 'Memory Model',
+      currentModelName: currentModel,
     );
 
     if (selected != null) {
-      _settingsBox.put('memoryModel', selected);
+      _settingsBox.put('memoryModel', selected.name);
       setState(() {});
     }
   }

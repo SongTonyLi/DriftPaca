@@ -1032,7 +1032,7 @@ Future<OllamaModel?> showModelSelectionBottomSheet({
                   color: Theme.of(context)
                       .colorScheme
                       .surface
-                      .withValues(alpha: 0.78),
+                      .withValues(alpha: 0.94),
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(20)),
                   border: Border.all(

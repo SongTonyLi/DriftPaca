@@ -62,6 +62,8 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
     final viewModel = context.watch<ChatPageViewModel>();
     final isIncognito = viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
 
+    final baseTheme = Theme.of(context);
+
     final scaffold = Scaffold(
       extendBodyBehindAppBar: true,
       appBar: const ChatAppBar(),
@@ -70,10 +72,10 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
       drawerScrimColor: Colors.transparent,
     );
 
-    if (!isIncognito) return scaffold;
-
-    return Theme(
-      data: _incognitoTheme,
+    return AnimatedTheme(
+      data: isIncognito ? _incognitoTheme : baseTheme,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOutCubic,
       child: scaffold,
     );
   }

@@ -24,6 +24,10 @@ class _ChatPageState extends State<ChatPage> {
   static const double _collapsedComposerPadding = 56.0;
   static const double _expandedComposerPadding = 86.0;
 
+  // Incognito mode transition
+  static const _transitionDuration = Duration(milliseconds: 400);
+  static const _transitionCurve = Curves.easeInOutCubic;
+
   // ViewModel reference
   late final ChatPageViewModel _viewModel;
 
@@ -95,70 +99,92 @@ class _ChatPageState extends State<ChatPage> {
                 bottom: 0,
                 child: _buildBottomOverlay(),
               ),
-              // Incognito badge
-              if (isIncognito)
-                Positioned(
-                  top: MediaQuery.of(context).padding.top + 8,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _incognitoSurface.withValues(alpha: 0.9),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: _incognitoAccent.withValues(alpha: 0.15),
-                          width: 0.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _incognitoAccent.withValues(alpha: 0.08),
-                            blurRadius: 12,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.visibility_off_outlined, size: 13, color: _incognitoAccent.withValues(alpha: 0.7)),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Incognito',
-                            style: TextStyle(
-                              color: _incognitoText,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              letterSpacing: 0.8,
+              // Incognito badge (animated)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 8,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: AnimatedOpacity(
+                    opacity: isIncognito ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    child: AnimatedSlide(
+                      offset: isIncognito ? Offset.zero : const Offset(0, -0.5),
+                      duration: _transitionDuration,
+                      curve: Curves.easeOutCubic,
+                      child: IgnorePointer(
+                        ignoring: !isIncognito,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: _incognitoSurface.withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _incognitoAccent.withValues(alpha: 0.15),
+                              width: 0.5,
                             ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _incognitoAccent.withValues(alpha: 0.08),
+                                blurRadius: 12,
+                                spreadRadius: 1,
+                              ),
+                            ],
                           ),
-                        ],
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.visibility_off_outlined, size: 13, color: _incognitoAccent.withValues(alpha: 0.7)),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Incognito',
+                                style: TextStyle(
+                                  color: _incognitoText,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
+              ),
             ],
           ),
         ),
       ],
     );
 
-    if (!isIncognito) return body;
-
-    // Incognito: deep dark background with subtle radial glow
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment(0.0, -0.4),
-          radius: 1.2,
-          colors: [
-            Color(0xFF141428),  // subtle blue-violet center
-            _incognitoBg,       // deep dark edges
-          ],
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Incognito gradient background (animated)
+        IgnorePointer(
+          child: AnimatedOpacity(
+            opacity: isIncognito ? 1.0 : 0.0,
+            duration: _transitionDuration,
+            curve: _transitionCurve,
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment(0.0, -0.4),
+                  radius: 1.2,
+                  colors: [
+                    Color(0xFF141428),
+                    _incognitoBg,
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
-      child: body,
+        body,
+      ],
     );
   }
 
@@ -243,7 +269,9 @@ class _ChatPageState extends State<ChatPage> {
         // Gradient fade below the input bar — content fades out in safe area
         if (bottomSafeArea > 0)
           IgnorePointer(
-            child: Container(
+            child: AnimatedContainer(
+              duration: _transitionDuration,
+              curve: _transitionCurve,
               height: bottomSafeArea,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -266,7 +294,9 @@ class _ChatPageState extends State<ChatPage> {
       borderRadius: BorderRadius.circular(24.0),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-        child: Container(
+        child: AnimatedContainer(
+          duration: _transitionDuration,
+          curve: _transitionCurve,
           decoration: BoxDecoration(
             color: _isIncognito
                 ? _incognitoSurface.withValues(alpha: 0.85)

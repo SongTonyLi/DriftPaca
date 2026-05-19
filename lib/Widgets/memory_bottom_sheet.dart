@@ -86,10 +86,11 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
 
   bool get _exceedsLimit => _totalTokens > widget.maxTotalTokens;
 
+  bool get _isEmpty => _sections.every((s) => s.value.isEmpty);
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -100,23 +101,15 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
+            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
             child: Container(
               decoration: BoxDecoration(
-                color: isDark
-                    ? colorScheme.surface.withValues(alpha: 0.82)
-                    : colorScheme.surfaceContainerHighest.withValues(alpha: 0.85),
+                color: colorScheme.surface.withValues(alpha: 0.40),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
                 border: Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                  color: colorScheme.outline.withValues(alpha: 0.15),
+                  width: 0.5,
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.15),
-                    blurRadius: 20,
-                    offset: const Offset(0, -4),
-                  ),
-                ],
               ),
               child: Column(
                 children: [
@@ -147,13 +140,14 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                             ),
                           ),
                         ),
-                        Text(
-                          '~$_totalTokens tokens',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: _exceedsLimit ? Colors.red : colorScheme.onSurfaceVariant,
+                        if (_totalTokens > 0)
+                          Text(
+                            '~$_totalTokens tokens',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _exceedsLimit ? Colors.red : colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -200,93 +194,52 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                         ],
                       ),
                     ),
-                  Divider(height: 1, indent: 20, endIndent: 20, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                  const SizedBox(height: 4),
                   // Section list
                   Expanded(
-                    child: ListView.separated(
-                      controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                      itemCount: _sections.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 16),
-                      itemBuilder: (context, index) {
-                        final section = _sections[index];
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  section.label,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                                Text(
-                                  '~${section.estimatedTokens} tokens',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            TextFormField(
-                              initialValue: section.value,
-                              onChanged: (value) {
-                                setState(() {
-                                  section.value = value;
-                                });
-                              },
-                              maxLines: null,
-                              minLines: 2,
-                              decoration: InputDecoration(
-                                filled: true,
-                                fillColor: colorScheme.surface.withValues(alpha: 0.6),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-                                ),
-                                contentPadding: const EdgeInsets.all(12),
-                                hintText: 'No ${section.label.toLowerCase()} recorded',
-                                hintStyle: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
-                              ),
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
+                    child: _isEmpty
+                        ? _buildEmptyState(colorScheme)
+                        : ListView.separated(
+                            controller: scrollController,
+                            padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                            itemCount: _sections.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 20),
+                            itemBuilder: (context, index) => _buildSection(index, colorScheme),
+                          ),
                   ),
                   // Bottom actions — sticky footer
-                  Divider(height: 1, indent: 20, endIndent: 20, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
-                  SafeArea(
-                    top: false,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-                      child: Row(
-                        children: [
-                          if (widget.onClear != null)
-                            TextButton(
-                              onPressed: () => _confirmClear(context),
-                              child: Text(
-                                'Clear',
-                                style: TextStyle(color: Colors.red.withValues(alpha: 0.8), fontSize: 14),
+                  Container(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        top: BorderSide(
+                          color: colorScheme.outline.withValues(alpha: 0.1),
+                        ),
+                      ),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+                        child: Row(
+                          children: [
+                            if (widget.onClear != null && !_isEmpty)
+                              TextButton(
+                                onPressed: () => _confirmClear(context),
+                                child: Text(
+                                  'Clear All',
+                                  style: TextStyle(color: Colors.red.withValues(alpha: 0.7), fontSize: 14),
+                                ),
                               ),
+                            const Spacer(),
+                            FilledButton(
+                              onPressed: _handleSave,
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+                              ),
+                              child: const Text('Save'),
                             ),
-                          const Spacer(),
-                          FilledButton(
-                            onPressed: _handleSave,
-                            child: const Text('Save'),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -296,6 +249,132 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildEmptyState(ColorScheme colorScheme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.auto_awesome_outlined,
+              size: 48,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.25),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No memories yet',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Memories are built automatically as you chat.\nTap a section below to add manually.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Show collapsed section labels as tappable chips
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: _sections.map((s) => ActionChip(
+                label: Text(s.label, style: const TextStyle(fontSize: 12)),
+                avatar: Icon(Icons.add, size: 14, color: colorScheme.primary),
+                onPressed: () {
+                  // Switch to full editor mode
+                  setState(() {
+                    s.value = ' '; // trigger non-empty to show editor
+                  });
+                  // Then clear it so field is empty but editor is visible
+                  Future.microtask(() {
+                    setState(() {
+                      s.value = '';
+                    });
+                  });
+                },
+              )).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection(int index, ColorScheme colorScheme) {
+    final section = _sections[index];
+    final hasContent = section.value.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              section.label,
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 13,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                letterSpacing: 0.2,
+              ),
+            ),
+            if (hasContent)
+              Text(
+                '~${section.estimatedTokens} tokens',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        TextFormField(
+          initialValue: section.value,
+          onChanged: (value) {
+            setState(() {
+              section.value = value;
+            });
+          },
+          maxLines: null,
+          minLines: 2,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: colorScheme.surface.withValues(alpha: 0.5),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+            ),
+            contentPadding: const EdgeInsets.all(14),
+            hintText: 'Tap to add ${section.label.toLowerCase()}...',
+            hintStyle: TextStyle(
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+              fontSize: 14,
+            ),
+          ),
+          style: TextStyle(fontSize: 14, color: colorScheme.onSurface),
+        ),
+      ],
     );
   }
 

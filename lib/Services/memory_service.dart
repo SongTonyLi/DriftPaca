@@ -131,7 +131,9 @@ class MemoryService extends ChangeNotifier {
         final parts = <String>[];
         if (mem.summary.isNotEmpty) parts.add('Summary: ${mem.summary}');
         if (mem.keyContext.isNotEmpty) parts.add('Key context: ${mem.keyContext}');
+        if (mem.userRequests.isNotEmpty) parts.add('User requests: ${mem.userRequests}');
         if (mem.currentState.isNotEmpty) parts.add('State: ${mem.currentState}');
+        if (mem.errorsAndSolutions.isNotEmpty) parts.add('Errors & solutions: ${mem.errorsAndSolutions}');
         if (mem.unresolvedItems.isNotEmpty) parts.add('Unresolved: ${mem.unresolvedItems}');
         if (parts.isNotEmpty) {
           otherChatContexts.add(parts.join('\n'));

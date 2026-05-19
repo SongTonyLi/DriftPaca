@@ -7,6 +7,8 @@ class ConversationMemory {
   final String currentState;
   final String modelHistory;
   final String unresolvedItems;
+  final String errorsAndSolutions;
+  final String userRequests;
   final DateTime updatedAt;
 
   ConversationMemory({
@@ -16,6 +18,8 @@ class ConversationMemory {
     this.currentState = '',
     this.modelHistory = '',
     this.unresolvedItems = '',
+    this.errorsAndSolutions = '',
+    this.userRequests = '',
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
@@ -25,7 +29,9 @@ class ConversationMemory {
       mediaDescriptions.isEmpty &&
       currentState.isEmpty &&
       modelHistory.isEmpty &&
-      unresolvedItems.isEmpty;
+      unresolvedItems.isEmpty &&
+      errorsAndSolutions.isEmpty &&
+      userRequests.isEmpty;
 
   factory ConversationMemory.fromJson(String jsonString) {
     try {
@@ -52,6 +58,8 @@ class ConversationMemory {
       currentState: _asString(map['current_state']),
       modelHistory: _asString(map['model_history']),
       unresolvedItems: _asString(map['unresolved_items']),
+      errorsAndSolutions: _asString(map['errors_and_solutions']),
+      userRequests: _asString(map['user_requests']),
       updatedAt: map['updated_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['updated_at'])
           : null,
@@ -66,6 +74,8 @@ class ConversationMemory {
       'current_state': currentState,
       'model_history': modelHistory,
       'unresolved_items': unresolvedItems,
+      'errors_and_solutions': errorsAndSolutions,
+      'user_requests': userRequests,
       'updated_at': updatedAt.millisecondsSinceEpoch,
     });
   }
@@ -77,6 +87,8 @@ class ConversationMemory {
     String? currentState,
     String? modelHistory,
     String? unresolvedItems,
+    String? errorsAndSolutions,
+    String? userRequests,
   }) {
     return ConversationMemory(
       summary: summary ?? this.summary,
@@ -85,6 +97,8 @@ class ConversationMemory {
       currentState: currentState ?? this.currentState,
       modelHistory: modelHistory ?? this.modelHistory,
       unresolvedItems: unresolvedItems ?? this.unresolvedItems,
+      errorsAndSolutions: errorsAndSolutions ?? this.errorsAndSolutions,
+      userRequests: userRequests ?? this.userRequests,
     );
   }
 
@@ -94,7 +108,9 @@ class ConversationMemory {
         mediaDescriptions.length +
         currentState.length +
         modelHistory.length +
-        unresolvedItems.length;
+        unresolvedItems.length +
+        errorsAndSolutions.length +
+        userRequests.length;
     return (total / 4).ceil();
   }
 
@@ -102,8 +118,10 @@ class ConversationMemory {
     final sections = <String>[];
     if (summary.isNotEmpty) sections.add('- **Summary**: $summary');
     if (keyContext.isNotEmpty) sections.add('- **Key Context**: $keyContext');
+    if (userRequests.isNotEmpty) sections.add('- **User Requests**: $userRequests');
     if (mediaDescriptions.isNotEmpty) sections.add('- **Media Descriptions**: $mediaDescriptions');
     if (currentState.isNotEmpty) sections.add('- **Current State**: $currentState');
+    if (errorsAndSolutions.isNotEmpty) sections.add('- **Errors & Solutions**: $errorsAndSolutions');
     if (modelHistory.isNotEmpty) sections.add('- **Model History**: $modelHistory');
     if (unresolvedItems.isNotEmpty) sections.add('- **Unresolved Items**: $unresolvedItems');
     return sections.join('\n');

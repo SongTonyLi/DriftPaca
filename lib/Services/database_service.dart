@@ -24,7 +24,7 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 4,
+      version: 5,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
@@ -43,6 +43,11 @@ interests_and_expertise TEXT DEFAULT '',
 language_and_tone TEXT DEFAULT '',
 updated_at INTEGER
 )''');
+        }
+        if (oldVersion < 5) {
+          await db.execute("ALTER TABLE agent_memory ADD COLUMN key_people TEXT DEFAULT ''");
+          await db.execute("ALTER TABLE agent_memory ADD COLUMN ongoing_projects TEXT DEFAULT ''");
+          await db.execute("ALTER TABLE agent_memory ADD COLUMN past_conversation_refs TEXT DEFAULT ''");
         }
       },
       onCreate: (Database db, int version) async {
@@ -88,6 +93,9 @@ preferences TEXT DEFAULT '',
 learned_facts TEXT DEFAULT '',
 interests_and_expertise TEXT DEFAULT '',
 language_and_tone TEXT DEFAULT '',
+key_people TEXT DEFAULT '',
+ongoing_projects TEXT DEFAULT '',
+past_conversation_refs TEXT DEFAULT '',
 updated_at INTEGER
 )''');
       },

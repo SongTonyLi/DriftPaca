@@ -305,6 +305,15 @@ class ChatProvider extends ChangeNotifier {
         chatId: associatedChat.id,
         messages: _messages,
       );
+
+      // Refresh chat to update lastUpdate for sidebar date grouping
+      final refreshedChat = await _databaseService.getChatWithLastUpdate(associatedChat.id);
+      if (refreshedChat != null) {
+        final chatIdx = _chats.indexWhere((c) => c.id == associatedChat.id);
+        if (chatIdx != -1) {
+          _chats[chatIdx] = refreshedChat;
+        }
+      }
     }
   }
 

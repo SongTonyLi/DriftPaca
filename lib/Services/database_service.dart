@@ -192,7 +192,7 @@ updated_at INTEGER
 
   Future<List<OllamaChat>> getAllChats() async {
     final List<Map<String, dynamic>> maps = await _db.rawQuery(
-        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, MAX(messages.timestamp) AS last_update
+        '''SELECT chats.chat_id, chats.model, chats.chat_title, chats.system_prompt, chats.options, chats.is_incognito, MAX(messages.timestamp) AS last_update
 FROM chats
 LEFT JOIN messages ON chats.chat_id = messages.chat_id
 GROUP BY chats.chat_id

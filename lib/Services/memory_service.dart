@@ -180,7 +180,8 @@ class MemoryService extends ChangeNotifier {
       // ignore: avoid_print
       print('[MemoryService] HTTP ${response.statusCode}');
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
+        final responseBody = utf8.decode(response.bodyBytes);
+        final json = jsonDecode(responseBody);
         return json['message']?['content'] as String?;
       } else if (response.statusCode == 404) {
         _lastError = 'Model "$_model" not found. Change it in Settings → Memory Model.';

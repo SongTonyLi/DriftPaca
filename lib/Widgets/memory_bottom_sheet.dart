@@ -13,7 +13,7 @@ class MemorySection {
   int get estimatedTokens => (value.length / 4).ceil();
 }
 
-/// Shows a memory editor bottom sheet with glassy sidebar-like UI.
+/// Shows a memory editor bottom sheet with glassy UI.
 /// Swipe down to dismiss — no close button.
 Future<void> showMemoryBottomSheet(
   BuildContext context, {
@@ -81,6 +81,7 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -91,15 +92,23 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+            filter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
             child: Container(
               decoration: BoxDecoration(
-                color: colorScheme.surface.withValues(alpha: 0.40),
+                color: isDark
+                    ? colorScheme.surface.withValues(alpha: 0.82)
+                    : colorScheme.surfaceContainerHighest.withValues(alpha: 0.85),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
                 border: Border.all(
-                  color: colorScheme.outline.withValues(alpha: 0.15),
-                  width: 0.5,
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.3),
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
               ),
               child: Column(
                 children: [
@@ -109,23 +118,23 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                     width: 36,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                   // Header
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
                     child: Row(
                       children: [
-                        Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.onSurfaceVariant),
+                        Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
                             widget.title,
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
-                              fontSize: 16,
+                              fontSize: 17,
                               color: colorScheme.onSurface,
                             ),
                           ),
@@ -136,25 +145,6 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                             fontSize: 12,
                             color: _exceedsLimit ? Colors.red : colorScheme.onSurfaceVariant,
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Actions row
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (widget.onClear != null)
-                          TextButton(
-                            onPressed: () => _confirmClear(context),
-                            child: const Text('Clear', style: TextStyle(color: Colors.red, fontSize: 13)),
-                          ),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: _handleSave,
-                          child: const Text('Save', style: TextStyle(fontSize: 13)),
                         ),
                       ],
                     ),
@@ -175,12 +165,12 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                         ],
                       ),
                     ),
-                  Divider(height: 1, color: colorScheme.outline.withValues(alpha: 0.15)),
+                  Divider(height: 1, indent: 20, endIndent: 20, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
                   // Section list
                   Expanded(
                     child: ListView.separated(
                       controller: scrollController,
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                       itemCount: _sections.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 16),
                       itemBuilder: (context, index) {
@@ -219,17 +209,50 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                               maxLines: null,
                               minLines: 2,
                               decoration: InputDecoration(
+                                filled: true,
+                                fillColor: colorScheme.surface.withValues(alpha: 0.6),
                                 border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
                                 ),
                                 contentPadding: const EdgeInsets.all(12),
                                 hintText: 'No ${section.label.toLowerCase()} recorded',
+                                hintStyle: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
                               ),
                               style: const TextStyle(fontSize: 14),
                             ),
                           ],
                         );
                       },
+                    ),
+                  ),
+                  // Bottom actions — sticky footer
+                  Divider(height: 1, indent: 20, endIndent: 20, color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+                  SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                      child: Row(
+                        children: [
+                          if (widget.onClear != null)
+                            TextButton(
+                              onPressed: () => _confirmClear(context),
+                              child: Text(
+                                'Clear',
+                                style: TextStyle(color: Colors.red.withValues(alpha: 0.8), fontSize: 14),
+                              ),
+                            ),
+                          const Spacer(),
+                          FilledButton(
+                            onPressed: _handleSave,
+                            child: const Text('Save'),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],

@@ -6,6 +6,7 @@ import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Pages/main_page.dart';
 import 'package:llamaseek/Pages/settings_page/settings_page.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
+import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/services.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
 import 'package:provider/provider.dart';
@@ -56,9 +57,15 @@ void main() async {
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),
         ChangeNotifierProvider(
+          create: (context) => MemoryService(
+            db: context.read<DatabaseService>(),
+          ),
+        ),
+        ChangeNotifierProvider(
           create: (context) => ChatProvider(
             ollamaService: context.read(),
             databaseService: context.read(),
+            memoryService: context.read<MemoryService>(),
           ),
         ),
         ChangeNotifierProvider(

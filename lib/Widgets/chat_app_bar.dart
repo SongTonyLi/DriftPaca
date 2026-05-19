@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
+import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:provider/provider.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -82,6 +83,14 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         IconButton(
           icon: const Icon(Icons.add_circle_outline),
           onPressed: () {
+            final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);
+            // Stay in current mode: if currently incognito, new chat is also incognito
+            final wasIncognito = chatProvider.currentChat?.isIncognito == true || viewModel.incognitoRequested;
+            if (wasIncognito) {
+              viewModel.requestIncognito();
+            } else {
+              viewModel.clearIncognito();
+            }
             chatProvider.destinationChatSelected(0);
           },
         ),

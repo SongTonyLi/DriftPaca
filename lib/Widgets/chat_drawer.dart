@@ -125,8 +125,10 @@ class ChatNavigationDrawer extends StatelessWidget {
               icon: Icons.add_circle_outline,
               selectedIcon: Icons.add_circle,
               title: 'New Chat',
-              isSelected: chatProvider.currentChat == null,
+              isSelected: chatProvider.currentChat == null && !Provider.of<ChatPageViewModel>(context).incognitoRequested,
               onTap: () {
+                final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);
+                viewModel.clearIncognito();
                 chatProvider.destinationChatSelected(0);
                 if (ResponsiveBreakpoints.of(context).isMobile) {
                   Navigator.pop(context);
@@ -171,6 +173,8 @@ class ChatNavigationDrawer extends StatelessWidget {
                       isSummarizing: isSummarizing,
                       isIncognito: chat.isIncognito,
                       onTap: () {
+                        // Clear incognito flag when selecting an existing chat
+                        Provider.of<ChatPageViewModel>(context, listen: false).clearIncognito();
                         chatProvider.destinationChatSelected(index + 1);
                         if (ResponsiveBreakpoints.of(context).isMobile) {
                           Navigator.pop(context);

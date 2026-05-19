@@ -337,6 +337,21 @@ ORDER BY last_update DESC;''');
     );
   }
 
+  Future<Map<String, ConversationMemory>> getAllConversationMemories() async {
+    final List<Map<String, dynamic>> maps = await _db.query(
+      'chats',
+      columns: ['chat_id', 'conversation_memory'],
+      where: 'conversation_memory IS NOT NULL',
+    );
+
+    final result = <String, ConversationMemory>{};
+    for (final row in maps) {
+      final chatId = row['chat_id'] as String;
+      result[chatId] = ConversationMemory.fromJson(row['conversation_memory']);
+    }
+    return result;
+  }
+
   Future<AgentMemory?> getAgentMemory() async {
     final List<Map<String, dynamic>> maps = await _db.query('agent_memory');
 

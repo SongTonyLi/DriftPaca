@@ -68,16 +68,12 @@ class _MemoryEditorSheet extends StatefulWidget {
   State<_MemoryEditorSheet> createState() => _MemoryEditorSheetState();
 }
 
-class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
-    with SingleTickerProviderStateMixin {
+class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   late List<MemorySection> _sections;
-  bool _showEditor = false;
-  int? _focusedSectionIndex;
-  late AnimationController _transitionController;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _fadeAnimation;
-  final ScrollController _editorScrollController = ScrollController();
-  final List<GlobalKey> _sectionKeys = [];
+
+  // null = chips/overview, non-null = focused on that section index
+  // -1 = show all sections (when memory has content)
+  int? _viewMode;
 
   @override
   void initState() {
@@ -85,30 +81,10 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
     _sections = widget.sections
         .map((s) => MemorySection(label: s.label, key: s.key, value: s.value))
         .toList();
-    _showEditor = !_sections.every((s) => s.value.isEmpty);
-    _sectionKeys.addAll(List.generate(_sections.length, (_) => GlobalKey()));
-
-    _transitionController = AnimationController(
-      duration: const Duration(milliseconds: 350),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 0.92, end: 1.0).animate(
-      CurvedAnimation(parent: _transitionController, curve: Curves.easeOutCubic),
-    );
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _transitionController, curve: Curves.easeOut),
-    );
-
-    if (_showEditor) {
-      _transitionController.value = 1.0;
+    // If any section has content, show all sections
+    if (_sections.any((s) => s.value.isNotEmpty)) {
+      _viewMode = -1;
     }
-  }
-
-  @override
-  void dispose() {
-    _transitionController.dispose();
-    _editorScrollController.dispose();
-    super.dispose();
   }
 
   int get _totalTokens =>
@@ -116,24 +92,14 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
 
   bool get _exceedsLimit => _totalTokens > widget.maxTotalTokens;
 
+  bool get _hasContent => _sections.any((s) => s.value.isNotEmpty);
+
   void _openSection(int index) {
-    setState(() {
-      _showEditor = true;
-      _focusedSectionIndex = index;
-    });
-    _transitionController.forward().then((_) {
-      // Scroll to the tapped section after animation
-      if (_focusedSectionIndex != null) {
-        final keyContext = _sectionKeys[_focusedSectionIndex!].currentContext;
-        if (keyContext != null) {
-          Scrollable.ensureVisible(
-            keyContext,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      }
-    });
+    setState(() => _viewMode = index);
+  }
+
+  void _goBack() {
+    setState(() => _viewMode = _hasContent ? -1 : null);
   }
 
   @override
@@ -165,14 +131,26 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
                   ),
                   // Header
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+                    padding: const EdgeInsets.fromLTRB(8, 14, 20, 4),
                     child: Row(
                       children: [
-                        Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary),
-                        const SizedBox(width: 10),
+                        if (_viewMode != null && _viewMode! >= 0)
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+                            onPressed: _goBack,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                          )
+                        else ...[
+                          const SizedBox(width: 12),
+                          Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary),
+                        ],
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            widget.title,
+                            _viewMode != null && _viewMode! >= 0
+                                ? _sections[_viewMode!].label
+                                : widget.title,
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 17,
@@ -235,23 +213,34 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
                       ),
                     ),
                   const SizedBox(height: 4),
-                  // Section list
+                  // Content area
                   Expanded(
-                    child: !_showEditor
-                        ? _buildEmptyState(colorScheme)
-                        : FadeTransition(
-                            opacity: _fadeAnimation,
-                            child: ScaleTransition(
-                              scale: _scaleAnimation,
-                              child: ListView.separated(
-                                controller: _editorScrollController,
-                                padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-                                itemCount: _sections.length,
-                                separatorBuilder: (_, __) => const SizedBox(height: 20),
-                                itemBuilder: (context, index) => _buildSection(index, colorScheme),
-                              ),
-                            ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      transitionBuilder: (child, animation) {
+                        return FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0, 0.05),
+                              end: Offset.zero,
+                            ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+                            child: child,
                           ),
+                        );
+                      },
+                      child: _viewMode == null
+                          ? _buildEmptyState(colorScheme)
+                          : _viewMode! >= 0
+                              ? _buildFocusedSection(_viewMode!, colorScheme)
+                              : ListView.separated(
+                                  key: const ValueKey('all'),
+                                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                                  itemCount: _sections.length,
+                                  separatorBuilder: (_, __) => const SizedBox(height: 20),
+                                  itemBuilder: (context, index) => _buildSection(index, colorScheme),
+                                ),
+                    ),
                   ),
                   // Bottom actions — sticky footer
                   Container(
@@ -268,7 +257,7 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
                         padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
                         child: Row(
                           children: [
-                            if (widget.onClear != null && _showEditor)
+                            if (widget.onClear != null && _viewMode != null)
                               TextButton(
                                 onPressed: () => _confirmClear(context),
                                 child: Text(
@@ -343,12 +332,69 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet>
     );
   }
 
+  Widget _buildFocusedSection(int index, ColorScheme colorScheme) {
+    final section = _sections[index];
+
+    return Padding(
+      key: ValueKey('focused_$index'),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (section.value.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '~${section.estimatedTokens} tokens',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                ),
+              ),
+            ),
+          Expanded(
+            child: TextFormField(
+              initialValue: section.value,
+              autofocus: true,
+              onChanged: (value) {
+                setState(() {
+                  section.value = value;
+                });
+              },
+              maxLines: null,
+              expands: true,
+              textAlignVertical: TextAlignVertical.top,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: colorScheme.surfaceContainerLowest,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+                ),
+                contentPadding: const EdgeInsets.all(16),
+                hintText: 'Describe your ${section.label.toLowerCase()}...',
+                hintStyle: TextStyle(
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                  fontSize: 14,
+                ),
+              ),
+              style: TextStyle(fontSize: 14, color: colorScheme.onSurface),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSection(int index, ColorScheme colorScheme) {
     final section = _sections[index];
     final hasContent = section.value.isNotEmpty;
 
     return Column(
-      key: _sectionKeys[index],
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:notification_centre/notification_centre.dart';
@@ -19,6 +20,9 @@ class ChatProvider extends ChangeNotifier {
   OllamaService get ollamaService => _ollamaService;
   final DatabaseService _databaseService;
   final MemoryService _memoryService;
+
+  ValueListenable? _settingsListenable;
+  VoidCallback? _settingsCallback;
 
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
@@ -346,6 +350,7 @@ class ChatProvider extends ChangeNotifier {
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
+    final notifyThrottle = Stopwatch()..start();
 
     await for (receivedMessage in stream) {
       // If the chat id is not in the active chat streams, it means the stream
@@ -375,16 +380,25 @@ class ChatProvider extends ChangeNotifier {
         if (associatedChat.id == currentChat?.id) {
           _messages.add(streamingMessage);
         }
+
+        notifyListeners();
       } else {
         streamingMessage.content += receivedMessage.content;
         // Accumulate thinking tokens alongside content
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
           streamingMessage.thinking = (streamingMessage.thinking ?? '') + receivedMessage.thinking!;
         }
-      }
 
-      notifyListeners();
+        // Throttle UI updates during streaming (~30fps)
+        if (notifyThrottle.elapsedMilliseconds >= 32) {
+          notifyThrottle.reset();
+          notifyListeners();
+        }
+      }
     }
+
+    // Flush any throttled content to UI
+    notifyListeners();
 
     if (receivedMessage != null) {
       // Update the metadata of the streaming message with the last received message
@@ -514,19 +528,27 @@ class ChatProvider extends ChangeNotifier {
     return await _ollamaService.listModels();
   }
 
+  @override
+  void dispose() {
+    if (_settingsListenable != null && _settingsCallback != null) {
+      _settingsListenable!.removeListener(_settingsCallback!);
+    }
+    super.dispose();
+  }
+
   void _updateOllamaServiceAddress() {
     final settingsBox = Hive.box('settings');
 
     _applyServerSettings(settingsBox);
 
-    settingsBox
-        .listenable(keys: ["serverAddress", "isCloudMode", "cloudApiKey"])
-        .addListener(() {
+    _settingsListenable = settingsBox.listenable(keys: ["serverAddress", "isCloudMode", "cloudApiKey"]);
+    _settingsCallback = () {
       _applyServerSettings(settingsBox);
 
       // This will update empty chat state to dismiss "Tap to configure server address" message
       notifyListeners();
-    });
+    };
+    _settingsListenable!.addListener(_settingsCallback!);
   }
 
   void _applyServerSettings(Box settingsBox) {

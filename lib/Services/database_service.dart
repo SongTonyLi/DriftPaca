@@ -24,7 +24,7 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 6,
+      version: 7,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
@@ -51,6 +51,9 @@ updated_at INTEGER
         }
         if (oldVersion < 6) {
           await db.execute("ALTER TABLE chats ADD COLUMN is_incognito INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 7) {
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)');
         }
       },
       onCreate: (Database db, int version) async {
@@ -102,6 +105,8 @@ ongoing_projects TEXT DEFAULT '',
 past_conversation_refs TEXT DEFAULT '',
 updated_at INTEGER
 )''');
+
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)');
       },
     );
   }
@@ -366,7 +371,10 @@ ORDER BY last_update DESC;''');
   }
 
   Future<AgentMemory?> getAgentMemory() async {
-    final List<Map<String, dynamic>> maps = await _db.query('agent_memory');
+    final List<Map<String, dynamic>> maps = await _db.query(
+      'agent_memory',
+      limit: 1,
+    );
 
     if (maps.isEmpty) {
       return null;
@@ -376,7 +384,7 @@ ORDER BY last_update DESC;''');
   }
 
   Future<void> updateAgentMemory(AgentMemory memory) async {
-    final exists = (await _db.query('agent_memory')).isNotEmpty;
+    final exists = (await _db.query('agent_memory', limit: 1)).isNotEmpty;
 
     if (exists) {
       await _db.update('agent_memory', memory.toMap());

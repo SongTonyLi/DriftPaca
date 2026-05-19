@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -80,14 +81,15 @@ class _ImageGalleryFullScreenState extends State<_ImageGalleryFullScreen>
   double _backgroundOpacity = 1.0;
   bool _isZoomed = false;
   late PhotoViewScaleStateController _scaleStateController;
+  StreamSubscription? _scaleStateSubscription;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
-    _scaleStateController = PhotoViewScaleStateController()
-      ..outputScaleStateStream.listen(_onScaleStateChanged);
+    _scaleStateController = PhotoViewScaleStateController();
+    _scaleStateSubscription = _scaleStateController.outputScaleStateStream.listen(_onScaleStateChanged);
     _springController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 250),
@@ -102,6 +104,7 @@ class _ImageGalleryFullScreenState extends State<_ImageGalleryFullScreen>
 
   @override
   void dispose() {
+    _scaleStateSubscription?.cancel();
     _pageController.dispose();
     _scaleStateController.dispose();
     _springController.dispose();

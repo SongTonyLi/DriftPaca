@@ -42,8 +42,6 @@ class ChatBubbleActions {
 
   /// Opens edit sheet. Returns the new text if saved, null if cancelled.
   Future<String?> handleEdit(BuildContext context) async {
-    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-
     return await showModalBottomSheet<String?>(
       context: context,
       constraints: BoxConstraints(
@@ -63,16 +61,12 @@ class ChatBubbleActions {
               child: const Text('Cancel'),
             ),
             TextButton(
-              onPressed: () async {
+              onPressed: () {
                 if (textFieldText.isNotEmpty) {
-                  await chatProvider.updateMessage(
-                    message,
-                    newContent: textFieldText,
-                  );
-                  if (context.mounted) Navigator.pop(context, textFieldText);
+                  Navigator.pop(context, textFieldText);
                 }
               },
-              child: const Text('Save'),
+              child: const Text('Send as New'),
             ),
           ],
           child: TextFormField(

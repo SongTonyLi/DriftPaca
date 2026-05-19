@@ -350,9 +350,10 @@ class _UserActionButtons extends StatelessWidget {
           label: 'Edit',
           color: colorScheme.onSurfaceVariant,
           onTap: () async {
-            final result = await _showEditPopup(context, message);
+            final result = await actions.handleEdit(context);
             if (result != null && context.mounted) {
-              actions.handleRegenerate(context);
+              final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+              chatProvider.editAndResend(message, result);
             }
           },
         ),

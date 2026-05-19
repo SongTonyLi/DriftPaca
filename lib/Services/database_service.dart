@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Models/agent_memory.dart';
+import 'package:llamaseek/Models/conversation_memory.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:sqflite/sqflite.dart';
@@ -22,13 +24,25 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 3,
+      version: 4,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
         }
         if (oldVersion < 3) {
           await db.execute('ALTER TABLE messages ADD COLUMN model TEXT');
+        }
+        if (oldVersion < 4) {
+          await db.execute('ALTER TABLE chats ADD COLUMN conversation_memory TEXT');
+          await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory (
+id INTEGER PRIMARY KEY DEFAULT 1,
+user_profile TEXT DEFAULT '',
+preferences TEXT DEFAULT '',
+learned_facts TEXT DEFAULT '',
+interests_and_expertise TEXT DEFAULT '',
+language_and_tone TEXT DEFAULT '',
+updated_at INTEGER
+)''');
         }
       },
       onCreate: (Database db, int version) async {
@@ -37,7 +51,8 @@ chat_id TEXT PRIMARY KEY,
 model TEXT NOT NULL,
 chat_title TEXT NOT NULL,
 system_prompt TEXT,
-options TEXT
+options TEXT,
+conversation_memory TEXT
 ) WITHOUT ROWID;''');
 
         await db.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -65,6 +80,16 @@ WHEN OLD.images IS NOT NULL
 BEGIN
   INSERT INTO cleanup_jobs (image_paths) VALUES (OLD.images);
 END;''');
+
+        await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory (
+id INTEGER PRIMARY KEY DEFAULT 1,
+user_profile TEXT DEFAULT '',
+preferences TEXT DEFAULT '',
+learned_facts TEXT DEFAULT '',
+interests_and_expertise TEXT DEFAULT '',
+language_and_tone TEXT DEFAULT '',
+updated_at INTEGER
+)''');
       },
     );
   }
@@ -270,5 +295,55 @@ ORDER BY last_update DESC;''');
     }
 
     return null;
+  }
+
+  // Memory Operations
+
+  Future<ConversationMemory?> getConversationMemory(String chatId) async {
+    final List<Map<String, dynamic>> maps = await _db.query(
+      'chats',
+      columns: ['conversation_memory'],
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
+
+    if (maps.isEmpty || maps.first['conversation_memory'] == null) {
+      return null;
+    }
+
+    return ConversationMemory.fromJson(maps.first['conversation_memory']);
+  }
+
+  Future<void> updateConversationMemory(String chatId, ConversationMemory memory) async {
+    await _db.update(
+      'chats',
+      {'conversation_memory': memory.toJson()},
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
+  }
+
+  Future<AgentMemory?> getAgentMemory() async {
+    final List<Map<String, dynamic>> maps = await _db.query('agent_memory');
+
+    if (maps.isEmpty) {
+      return null;
+    }
+
+    return AgentMemory.fromMap(maps.first);
+  }
+
+  Future<void> updateAgentMemory(AgentMemory memory) async {
+    final exists = (await _db.query('agent_memory')).isNotEmpty;
+
+    if (exists) {
+      await _db.update('agent_memory', memory.toMap());
+    } else {
+      await _db.insert('agent_memory', {'id': 1, ...memory.toMap()});
+    }
+  }
+
+  Future<void> clearAgentMemory() async {
+    await _db.delete('agent_memory');
   }
 }

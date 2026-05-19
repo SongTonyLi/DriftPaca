@@ -1,0 +1,103 @@
+import 'dart:convert';
+
+class ConversationMemory {
+  final String summary;
+  final String keyContext;
+  final String mediaDescriptions;
+  final String currentState;
+  final String modelHistory;
+  final String unresolvedItems;
+  final DateTime updatedAt;
+
+  ConversationMemory({
+    this.summary = '',
+    this.keyContext = '',
+    this.mediaDescriptions = '',
+    this.currentState = '',
+    this.modelHistory = '',
+    this.unresolvedItems = '',
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now();
+
+  bool get isEmpty =>
+      summary.isEmpty &&
+      keyContext.isEmpty &&
+      mediaDescriptions.isEmpty &&
+      currentState.isEmpty &&
+      modelHistory.isEmpty &&
+      unresolvedItems.isEmpty;
+
+  factory ConversationMemory.fromJson(String jsonString) {
+    try {
+      final map = jsonDecode(jsonString) as Map<String, dynamic>;
+      return ConversationMemory.fromMap(map);
+    } catch (_) {
+      return ConversationMemory(summary: jsonString);
+    }
+  }
+
+  factory ConversationMemory.fromMap(Map<String, dynamic> map) {
+    return ConversationMemory(
+      summary: map['summary'] ?? '',
+      keyContext: map['key_context'] ?? '',
+      mediaDescriptions: map['media_descriptions'] ?? '',
+      currentState: map['current_state'] ?? '',
+      modelHistory: map['model_history'] ?? '',
+      unresolvedItems: map['unresolved_items'] ?? '',
+      updatedAt: map['updated_at'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(map['updated_at'])
+          : null,
+    );
+  }
+
+  String toJson() {
+    return jsonEncode({
+      'summary': summary,
+      'key_context': keyContext,
+      'media_descriptions': mediaDescriptions,
+      'current_state': currentState,
+      'model_history': modelHistory,
+      'unresolved_items': unresolvedItems,
+      'updated_at': updatedAt.millisecondsSinceEpoch,
+    });
+  }
+
+  ConversationMemory copyWith({
+    String? summary,
+    String? keyContext,
+    String? mediaDescriptions,
+    String? currentState,
+    String? modelHistory,
+    String? unresolvedItems,
+  }) {
+    return ConversationMemory(
+      summary: summary ?? this.summary,
+      keyContext: keyContext ?? this.keyContext,
+      mediaDescriptions: mediaDescriptions ?? this.mediaDescriptions,
+      currentState: currentState ?? this.currentState,
+      modelHistory: modelHistory ?? this.modelHistory,
+      unresolvedItems: unresolvedItems ?? this.unresolvedItems,
+    );
+  }
+
+  int get estimatedTokens {
+    final total = summary.length +
+        keyContext.length +
+        mediaDescriptions.length +
+        currentState.length +
+        modelHistory.length +
+        unresolvedItems.length;
+    return (total / 4).ceil();
+  }
+
+  String toPromptBlock() {
+    final sections = <String>[];
+    if (summary.isNotEmpty) sections.add('- **Summary**: $summary');
+    if (keyContext.isNotEmpty) sections.add('- **Key Context**: $keyContext');
+    if (mediaDescriptions.isNotEmpty) sections.add('- **Media Descriptions**: $mediaDescriptions');
+    if (currentState.isNotEmpty) sections.add('- **Current State**: $currentState');
+    if (modelHistory.isNotEmpty) sections.add('- **Model History**: $modelHistory');
+    if (unresolvedItems.isNotEmpty) sections.add('- **Unresolved Items**: $unresolvedItems');
+    return sections.join('\n');
+  }
+}

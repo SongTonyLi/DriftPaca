@@ -8,6 +8,7 @@ class OllamaChat {
   final String? systemPrompt;
   final OllamaChatOptions options;
   final DateTime? lastUpdate;
+  final bool isIncognito;
 
   OllamaChat({
     String? id,
@@ -16,8 +17,9 @@ class OllamaChat {
     this.systemPrompt,
     OllamaChatOptions? options,
     this.lastUpdate,
+    this.isIncognito = false,
   })  : id = id ?? Uuid().v4(),
-        title = title ?? 'New Chat',
+        title = title ?? (isIncognito ? 'Incognito Chat' : 'New Chat'),
         options = options ?? OllamaChatOptions();
 
   factory OllamaChat.fromMap(Map<String, dynamic> map) {
@@ -30,6 +32,7 @@ class OllamaChat {
       lastUpdate: map['last_update'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['last_update'])
           : null,
+      isIncognito: map['is_incognito'] == 1,
     );
   }
 }

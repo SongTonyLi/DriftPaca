@@ -7,6 +7,7 @@ import 'package:llamaseek/Constants/memory_constants.dart';
 import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Models/conversation_memory.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
+import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Widgets/memory_bottom_sheet.dart';
@@ -126,6 +127,21 @@ class ChatNavigationDrawer extends StatelessWidget {
                 }
               },
             ),
+            _ChatDrawerTile(
+              icon: Icons.visibility_off_outlined,
+              selectedIcon: Icons.visibility_off,
+              title: 'New Incognito Chat',
+              isSelected: false,
+              isIncognito: true,
+              onTap: () {
+                final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);
+                viewModel.requestIncognito();
+                chatProvider.destinationChatSelected(0);
+                if (ResponsiveBreakpoints.of(context).isMobile) {
+                  Navigator.pop(context);
+                }
+              },
+            ),
             for (final groupName in groupOrder)
               if (groups.containsKey(groupName)) ...[
                 Padding(
@@ -139,14 +155,15 @@ class ChatNavigationDrawer extends StatelessWidget {
                     final isSelected = chatProvider.currentChat?.id == chat.id;
 
                     final memoryService = Provider.of<MemoryService>(context);
-                    final isSummarizing = memoryService.isUpdating && memoryService.updatingChatId == chat.id;
+                    final isSummarizing = !chat.isIncognito && memoryService.isUpdating && memoryService.updatingChatId == chat.id;
 
                     return _ChatDrawerTile(
-                      icon: Icons.chat_outlined,
-                      selectedIcon: Icons.chat,
+                      icon: chat.isIncognito ? Icons.visibility_off_outlined : Icons.chat_outlined,
+                      selectedIcon: chat.isIncognito ? Icons.visibility_off : Icons.chat,
                       title: chat.title,
                       isSelected: isSelected,
                       isSummarizing: isSummarizing,
+                      isIncognito: chat.isIncognito,
                       onTap: () {
                         chatProvider.destinationChatSelected(index + 1);
                         if (ResponsiveBreakpoints.of(context).isMobile) {
@@ -566,6 +583,7 @@ class _ChatDrawerTile extends StatelessWidget {
   final String title;
   final bool isSelected;
   final bool isSummarizing;
+  final bool isIncognito;
   final VoidCallback onTap;
   final void Function(Offset globalPosition)? onLongPress;
 
@@ -575,6 +593,7 @@ class _ChatDrawerTile extends StatelessWidget {
     required this.title,
     required this.isSelected,
     this.isSummarizing = false,
+    this.isIncognito = false,
     required this.onTap,
     this.onLongPress,
   });
@@ -583,6 +602,23 @@ class _ChatDrawerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
+    const incognitoAccent = Color(0xFF6C63FF);
+    final Color tileColor;
+    final Color contentColor;
+    if (isSelected && isIncognito) {
+      tileColor = incognitoAccent.withValues(alpha: 0.12);
+      contentColor = incognitoAccent.withValues(alpha: 0.8);
+    } else if (isSelected) {
+      tileColor = colorScheme.secondaryContainer.withValues(alpha: 0.45);
+      contentColor = colorScheme.onSecondaryContainer;
+    } else if (isIncognito) {
+      tileColor = Colors.transparent;
+      contentColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.75);
+    } else {
+      tileColor = Colors.transparent;
+      contentColor = colorScheme.onSurfaceVariant;
+    }
+
     return GestureDetector(
       onLongPressStart: onLongPress != null
           ? (details) => onLongPress!(details.globalPosition)
@@ -590,9 +626,7 @@ class _ChatDrawerTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 2.0),
         child: Material(
-          color: isSelected
-              ? colorScheme.secondaryContainer.withValues(alpha: 0.45)
-              : Colors.transparent,
+          color: tileColor,
           borderRadius: BorderRadius.circular(28.0),
           child: InkWell(
             borderRadius: BorderRadius.circular(28.0),
@@ -604,9 +638,7 @@ class _ChatDrawerTile extends StatelessWidget {
                 children: [
                   Icon(
                     isSelected ? selectedIcon : icon,
-                    color: isSelected
-                        ? colorScheme.onSecondaryContainer
-                        : colorScheme.onSurfaceVariant,
+                    color: contentColor,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -614,9 +646,8 @@ class _ChatDrawerTile extends StatelessWidget {
                       title,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: isSelected
-                            ? colorScheme.onSecondaryContainer
-                            : colorScheme.onSurfaceVariant,
+                        color: contentColor,
+                        fontStyle: isIncognito ? FontStyle.italic : FontStyle.normal,
                       ),
                     ),
                   ),

@@ -119,8 +119,8 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> createNewChat(OllamaModel model) async {
-    final chat = await _databaseService.createChat(model.name);
+  Future<void> createNewChat(OllamaModel model, {bool isIncognito = false}) async {
+    final chat = await _databaseService.createChat(model.name, isIncognito: isIncognito);
 
     _chats.insert(0, chat);
     _currentChatIndex = 0;
@@ -301,9 +301,11 @@ class ChatProvider extends ChangeNotifier {
       await _databaseService.addMessage(ollamaMessage, chat: associatedChat);
 
       // Trigger async memory update (fire-and-forget)
+      // Incognito chats: update conversation memory only, skip agent memory
       _memoryService.triggerMemoryUpdate(
         chatId: associatedChat.id,
         messages: _messages,
+        skipAgentMemory: associatedChat.isIncognito,
       );
 
       // Refresh chat to update lastUpdate for sidebar date grouping
@@ -329,9 +331,11 @@ class ChatProvider extends ChangeNotifier {
       ];
     }
 
-    // Fetch current memories for injection
+    // Fetch memories for injection — incognito chats use conv memory but skip agent memory
     final conversationMemory = await _memoryService.getConversationMemory(associatedChat.id);
-    final agentMemory = await _memoryService.getAgentMemory();
+    final agentMemory = associatedChat.isIncognito
+        ? null
+        : await _memoryService.getAgentMemory();
 
     final stream = _ollamaService.chatStream(
       messagesToSend,
@@ -389,6 +393,14 @@ class ChatProvider extends ChangeNotifier {
 
     // Update created at time to the current time when the stream is finished
     streamingMessage?.createdAt = DateTime.now();
+
+    // Strip model annotation prefix that may have been echoed by the model
+    if (streamingMessage != null) {
+      streamingMessage.content = streamingMessage.content.replaceFirst(
+        RegExp(r'^\(Response from [^)]+\)\n?'),
+        '',
+      );
+    }
 
     return streamingMessage;
   }

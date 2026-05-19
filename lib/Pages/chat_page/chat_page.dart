@@ -64,12 +64,24 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  bool get _isIncognito =>
+      _viewModel.currentChat?.isIncognito == true || _viewModel.incognitoRequested;
+
+  // Incognito palette
+  static const _incognitoBg = Color(0xFF0D0D1A);
+  static const _incognitoSurface = Color(0xFF16162A);
+  static const _incognitoAccent = Color(0xFF6C63FF);
+  static const _incognitoBorder = Color(0xFF2A2A4A);
+  static const _incognitoText = Color(0xFF9898B0);
+
   @override
   Widget build(BuildContext context) {
     // Subscribe to ViewModel changes
     context.watch<ChatPageViewModel>();
 
-    return Column(
+    final isIncognito = _isIncognito;
+
+    Widget body = Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
         if (!ResponsiveBreakpoints.of(context).isMobile) ChatAppBar(),
@@ -83,10 +95,70 @@ class _ChatPageState extends State<ChatPage> {
                 bottom: 0,
                 child: _buildBottomOverlay(),
               ),
+              // Incognito badge
+              if (isIncognito)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 8,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _incognitoSurface.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: _incognitoAccent.withValues(alpha: 0.15),
+                          width: 0.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _incognitoAccent.withValues(alpha: 0.08),
+                            blurRadius: 12,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.visibility_off_outlined, size: 13, color: _incognitoAccent.withValues(alpha: 0.7)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Incognito',
+                            style: TextStyle(
+                              color: _incognitoText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ],
+    );
+
+    if (!isIncognito) return body;
+
+    // Incognito: deep dark background with subtle radial glow
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment(0.0, -0.4),
+          radius: 1.2,
+          colors: [
+            Color(0xFF141428),  // subtle blue-violet center
+            _incognitoBg,       // deep dark edges
+          ],
+        ),
+      ),
+      child: body,
     );
   }
 
@@ -102,6 +174,10 @@ class _ChatPageState extends State<ChatPage> {
               onSecondChildScaleEnd: () => setState(() => _scale = 1.0),
             ),
           );
+        } else if (_isIncognito) {
+          return ChatEmpty(
+            child: _buildIncognitoWelcome(),
+          );
         } else {
           return ChatEmpty(
             child: ChatSelectModelButton(
@@ -110,6 +186,10 @@ class _ChatPageState extends State<ChatPage> {
             ),
           );
         }
+      } else if (_isIncognito && _viewModel.messages.isEmpty) {
+        return ChatEmpty(
+          child: _buildIncognitoWelcome(),
+        );
       } else {
         return ChatEmpty(
           child: Text('No messages yet!'),
@@ -136,7 +216,7 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildBottomOverlay() {
     final footer = _buildChatFooter();
-    final bgColor = Theme.of(context).colorScheme.surface;
+    final bgColor = _isIncognito ? _incognitoBg : Theme.of(context).colorScheme.surface;
     final bottomSafeArea = MediaQuery.of(context).padding.bottom;
 
     return Column(
@@ -188,15 +268,21 @@ class _ChatPageState extends State<ChatPage> {
         filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
         child: Container(
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
+            color: _isIncognito
+                ? _incognitoSurface.withValues(alpha: 0.85)
+                : Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
             borderRadius: BorderRadius.circular(24.0),
             border: Border.all(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
+              color: _isIncognito
+                  ? _incognitoBorder.withValues(alpha: 0.4)
+                  : Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
               width: 0.5,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
+                color: _isIncognito
+                    ? _incognitoAccent.withValues(alpha: 0.04)
+                    : Colors.black.withValues(alpha: 0.06),
                 blurRadius: 12,
                 offset: const Offset(0, 2),
               ),
@@ -267,7 +353,9 @@ class _ChatPageState extends State<ChatPage> {
                               child: Text(
                                 'Message',
                                 style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                                  color: _isIncognito
+                                      ? _incognitoText.withValues(alpha: 0.4)
+                                      : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                                   fontSize: 16,
                                 ),
                               ),
@@ -294,6 +382,52 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildIncognitoWelcome() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.visibility_off_outlined,
+          size: 48,
+          color: _incognitoAccent.withValues(alpha: 0.5),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Incognito Mode',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: _incognitoText,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Text(
+            'Your profile is unknown in this mode.\n'
+            'Conversations won\'t be used to build your memory.\n'
+            'Agent memory is not available here.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: _incognitoText.withValues(alpha: 0.6),
+              height: 1.5,
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        TextButton.icon(
+          onPressed: _showModelSelectionBottomSheet,
+          icon: Icon(Icons.auto_awesome_outlined, size: 16, color: _incognitoAccent),
+          label: Text(
+            _viewModel.selectedModel?.name ?? 'Select a model to start',
+            style: TextStyle(color: _incognitoAccent),
+          ),
+        ),
+      ],
     );
   }
 

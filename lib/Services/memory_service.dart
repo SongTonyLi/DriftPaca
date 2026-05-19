@@ -82,9 +82,10 @@ class MemoryService extends ChangeNotifier {
   void triggerMemoryUpdate({
     required String chatId,
     required List<OllamaMessage> messages,
+    bool skipAgentMemory = false,
   }) {
     // ignore: avoid_print
-    print('[MemoryService] triggerMemoryUpdate: enabled=$isEnabled, updating=$_isUpdating, apiKey=${_apiKey != null ? "set(${_apiKey!.length}chars)" : "null"}, messages=${messages.length}');
+    print('[MemoryService] triggerMemoryUpdate: enabled=$isEnabled, updating=$_isUpdating, apiKey=${_apiKey != null ? "set(${_apiKey!.length}chars)" : "null"}, messages=${messages.length}, skipAgent=$skipAgentMemory');
     if (!isEnabled) {
       // ignore: avoid_print
       print('[MemoryService] SKIPPED — no API key configured');
@@ -97,12 +98,13 @@ class MemoryService extends ChangeNotifier {
     }
 
     // Fire and forget
-    _performUpdate(chatId: chatId, messages: messages);
+    _performUpdate(chatId: chatId, messages: messages, skipAgentMemory: skipAgentMemory);
   }
 
   Future<void> _performUpdate({
     required String chatId,
     required List<OllamaMessage> messages,
+    bool skipAgentMemory = false,
   }) async {
     _isUpdating = true;
     _updatingChatId = chatId;
@@ -167,7 +169,7 @@ class MemoryService extends ChangeNotifier {
       print('[MemoryService] got response: ${responseBody.substring(0, responseBody.length.clamp(0, 200))}...');
 
       // Parse and save
-      _parseAndSave(chatId, responseBody);
+      _parseAndSave(chatId, responseBody, skipAgentMemory: skipAgentMemory);
     } catch (e) {
       debugPrint('MemoryService update failed: $e');
     } finally {
@@ -223,7 +225,7 @@ class MemoryService extends ChangeNotifier {
     }
   }
 
-  void _parseAndSave(String chatId, String responseBody) {
+  void _parseAndSave(String chatId, String responseBody, {bool skipAgentMemory = false}) {
     try {
       // Try to extract JSON from the response (model may wrap it in markdown)
       var jsonStr = responseBody.trim();
@@ -242,12 +244,14 @@ class MemoryService extends ChangeNotifier {
         _db.updateConversationMemory(chatId, convMemory);
       }
 
-      // Parse agent memory
-      final agentMap = parsed['agent_memory'] as Map<String, dynamic>?;
-      if (agentMap != null) {
-        final agentMemory = AgentMemory.fromMap(agentMap);
-        _agentMemoryCache = agentMemory;
-        _db.updateAgentMemory(agentMemory);
+      // Parse agent memory — skip for incognito chats
+      if (!skipAgentMemory) {
+        final agentMap = parsed['agent_memory'] as Map<String, dynamic>?;
+        if (agentMap != null) {
+          final agentMemory = AgentMemory.fromMap(agentMap);
+          _agentMemoryCache = agentMemory;
+          _db.updateAgentMemory(agentMemory);
+        }
       }
     } catch (_) {
       // JSON parsing failed — store raw text as conversation memory summary

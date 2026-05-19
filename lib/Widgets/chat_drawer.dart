@@ -2,8 +2,13 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Constants/memory_constants.dart';
+import 'package:llamaseek/Models/agent_memory.dart';
+import 'package:llamaseek/Models/conversation_memory.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
+import 'package:llamaseek/Services/memory_service.dart';
+import 'package:llamaseek/Widgets/memory_bottom_sheet.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -38,6 +43,11 @@ class ChatDrawer extends StatelessWidget {
                 child: Column(
                   children: [
                     const Expanded(child: ChatNavigationDrawer()),
+                    Container(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.fromLTRB(28, 0, 28, 0),
+                      child: _AgentMemoryTile(),
+                    ),
                     Container(
                       alignment: Alignment.centerLeft,
                       padding: const EdgeInsets.fromLTRB(28, 16, 28, 10),
@@ -182,6 +192,7 @@ class ChatNavigationDrawer extends StatelessWidget {
                   opacity: animation,
                   child: _GlassContextMenu(
                     onRename: () => Navigator.pop(dialogContext, 'rename'),
+                    onMemory: () => Navigator.pop(dialogContext, 'memory'),
                     onDelete: () => Navigator.pop(dialogContext, 'delete'),
                     chatTitle: chat.title,
                   ),
@@ -203,12 +214,50 @@ class ChatNavigationDrawer extends StatelessWidget {
       if (newTitle != null) {
         await chatProvider.updateChat(chat, newTitle: newTitle);
       }
+    } else if (result == 'memory') {
+      _showConversationMemory(context, chat);
     } else if (result == 'delete') {
       final confirmed = await _showDeleteDialog(context);
       if (confirmed == true) {
         await chatProvider.deleteChat(chat);
       }
     }
+  }
+
+  void _showConversationMemory(BuildContext context, OllamaChat chat) async {
+    final memoryService = Provider.of<MemoryService>(context, listen: false);
+    final convMemory = await memoryService.getConversationMemory(chat.id) ?? ConversationMemory();
+
+    if (!context.mounted) return;
+
+    showMemoryBottomSheet(
+      context,
+      title: 'Conversation Memory',
+      maxTotalTokens: MemoryConstants.maxConversationMemoryTokens,
+      sections: [
+        MemorySection(label: 'Summary', key: 'summary', value: convMemory.summary),
+        MemorySection(label: 'Key Context', key: 'key_context', value: convMemory.keyContext),
+        MemorySection(label: 'Media Descriptions', key: 'media_descriptions', value: convMemory.mediaDescriptions),
+        MemorySection(label: 'Current State', key: 'current_state', value: convMemory.currentState),
+        MemorySection(label: 'Model History', key: 'model_history', value: convMemory.modelHistory),
+        MemorySection(label: 'Unresolved Items', key: 'unresolved_items', value: convMemory.unresolvedItems),
+      ],
+      onSave: (sections) {
+        final updated = ConversationMemory(
+          summary: sections.firstWhere((s) => s.key == 'summary').value,
+          keyContext: sections.firstWhere((s) => s.key == 'key_context').value,
+          mediaDescriptions: sections.firstWhere((s) => s.key == 'media_descriptions').value,
+          currentState: sections.firstWhere((s) => s.key == 'current_state').value,
+          modelHistory: sections.firstWhere((s) => s.key == 'model_history').value,
+          unresolvedItems: sections.firstWhere((s) => s.key == 'unresolved_items').value,
+        );
+        memoryService.updateConversationMemoryField(chat.id, updated);
+      },
+      onClear: () {
+        memoryService.updateConversationMemoryField(chat.id, ConversationMemory());
+      },
+      onResummarize: (content, limit) => memoryService.resummarize(content, limit),
+    );
   }
 
   Future<String?> _showRenameDialog(
@@ -280,11 +329,13 @@ class ChatNavigationDrawer extends StatelessWidget {
 
 class _GlassContextMenu extends StatelessWidget {
   final VoidCallback onRename;
+  final VoidCallback onMemory;
   final VoidCallback onDelete;
   final String chatTitle;
 
   const _GlassContextMenu({
     required this.onRename,
+    required this.onMemory,
     required this.onDelete,
     required this.chatTitle,
   });
@@ -336,6 +387,11 @@ class _GlassContextMenu extends StatelessWidget {
                 icon: Icons.edit_outlined,
                 label: 'Rename',
                 onTap: onRename,
+              ),
+              _GlassMenuItem(
+                icon: Icons.auto_awesome_outlined,
+                label: 'Memory',
+                onTap: onMemory,
               ),
               _GlassMenuItem(
                 icon: Icons.delete_outline,
@@ -392,6 +448,65 @@ class _GlassMenuItem extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AgentMemoryTile extends StatelessWidget {
+  const _AgentMemoryTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return InkWell(
+      onTap: () => _showAgentMemory(context),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8.0),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome_outlined, color: colorScheme.onSurfaceVariant, size: 22),
+            const SizedBox(width: 12),
+            Text(
+              'Agent Memory',
+              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAgentMemory(BuildContext context) async {
+    final memoryService = Provider.of<MemoryService>(context, listen: false);
+    final agentMemory = await memoryService.getAgentMemory() ?? AgentMemory();
+
+    if (!context.mounted) return;
+
+    showMemoryBottomSheet(
+      context,
+      title: 'Agent Memory',
+      maxTotalTokens: MemoryConstants.maxAgentMemoryTokens,
+      sections: [
+        MemorySection(label: 'User Profile', key: 'user_profile', value: agentMemory.userProfile),
+        MemorySection(label: 'Preferences', key: 'preferences', value: agentMemory.preferences),
+        MemorySection(label: 'Learned Facts', key: 'learned_facts', value: agentMemory.learnedFacts),
+        MemorySection(label: 'Interests & Expertise', key: 'interests_and_expertise', value: agentMemory.interestsAndExpertise),
+        MemorySection(label: 'Language & Tone', key: 'language_and_tone', value: agentMemory.languageAndTone),
+      ],
+      onSave: (sections) {
+        final updated = AgentMemory(
+          userProfile: sections.firstWhere((s) => s.key == 'user_profile').value,
+          preferences: sections.firstWhere((s) => s.key == 'preferences').value,
+          learnedFacts: sections.firstWhere((s) => s.key == 'learned_facts').value,
+          interestsAndExpertise: sections.firstWhere((s) => s.key == 'interests_and_expertise').value,
+          languageAndTone: sections.firstWhere((s) => s.key == 'language_and_tone').value,
+        );
+        memoryService.updateAgentMemoryField(updated);
+      },
+      onClear: () => memoryService.clearAgentMemory(),
+      onResummarize: (content, limit) => memoryService.resummarize(content, limit),
     );
   }
 }

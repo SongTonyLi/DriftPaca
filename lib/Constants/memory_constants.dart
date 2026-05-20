@@ -1,94 +1,154 @@
 // lib/Constants/memory_constants.dart
 
+import 'dart:convert';
+
 class MemoryConstants {
   static const String defaultModel = 'gpt-oss:120b-cloud';
 
   static const int maxConversationMemoryTokens = 12000;
-  static const int maxAgentMemoryTokens = 8000;
+  static const int maxProfileTokens = 2000;
   static const int maxPerSectionTokens = 2000;
   static const int recentMessagesToKeep = 20;
+  static const int recentMessagesForSelection = 5;
 
   /// Estimates token count from text using chars/4 heuristic.
   static int estimateTokens(String text) => (text.length / 4).ceil();
 
-  /// The summarization prompt sent to the cloud model.
+  /// The summarization prompt sent to the cloud model after each LLM response.
   static String buildSummarizationPrompt({
     required String messagesText,
     String? existingConversationMemory,
-    String? existingAgentMemory,
-    List<String>? otherChatContexts,
+    String? existingProfile,
+    List<Map<String, dynamic>>? existingTopics,
+    List<Map<String, dynamic>>? existingEphemeral,
   }) {
-    final otherChatsBlock = otherChatContexts != null && otherChatContexts.isNotEmpty
-        ? '\n\n## Context From Other Conversations:\nThese are memories from the user\'s other chat sessions. Extract any user-relevant information (preferences, facts, expertise, patterns) into agent memory. Do NOT merge these into the current conversation memory.\n${otherChatContexts.join('\n---\n')}'
-        : '';
+    final topicsBlock = existingTopics != null && existingTopics.isNotEmpty
+        ? existingTopics.map((t) => '- "${t['topic_key']}": ${t['content']}').join('\n')
+        : 'No topics yet';
 
-    return '''You are a comprehensive conversation memory manager. Your job is to create thorough, detailed memory that captures the FULL richness of conversations. Never lose important details.
+    final ephemeralBlock = existingEphemeral != null && existingEphemeral.isNotEmpty
+        ? existingEphemeral.map((e) => '- "${e['context_key']}": ${e['content']}').join('\n')
+        : 'No ephemeral context yet';
 
-## Guidelines:
-- Conversation memory budget: up to $maxConversationMemoryTokens tokens (~${maxConversationMemoryTokens * 4} characters). Use as much as needed to be thorough.
-- Agent memory budget: up to $maxAgentMemoryTokens tokens (~${maxAgentMemoryTokens * 4} characters). Build a rich, detailed user profile.
-- Be COMPREHENSIVE — capture specifics, not just high-level summaries. Include names, numbers, technical details, exact preferences, specific examples, and concrete facts.
-- Never discard prior context. Merge, extend, and enrich existing memory with new information.
-- For agent memory: synthesize information from ALL conversations (current + other chats) to build the most complete user profile possible.
+    return '''You are a memory manager for a chat application. Analyze the conversation and update structured memory.
+
+## Rules:
+- **Profile updates**: Only update profile fields when you have HIGH confidence. Profile stores stable, universal traits (name, language, communication style). Do NOT infer profile traits from a single conversation topic. A user discussing physics homework does NOT mean their role is "physics student" unless they explicitly say so.
+  - Confidence levels: "high" = user explicitly stated it or it\'s been consistent across context. "medium" = reasonable inference but not confirmed. "low" = speculation.
+  - Only "high" confidence updates will be applied. Be conservative.
+- **Topic updates**: Create, update, or merge topic entries. Topics are domain-specific knowledge (e.g., "Flutter development", "quantum mechanics homework"). Use descriptive but general keys. Merge similar topics when they overlap.
+  - Actions: "create" (new topic), "update" (modify existing topic content), "merge" (combine two topics — specify "from" and "into")
+- **Ephemeral updates**: Short-lived context about what the user is currently doing. Things like "debugging a crash" or "writing an essay". Default TTL: 7 days, max: 14 days.
+- **Conversation memory**: Detailed summary of THIS conversation only.
+
+## Existing Stable Profile:
+${existingProfile ?? 'None yet'}
+
+## Existing Topics:
+$topicsBlock
+
+## Existing Ephemeral Context:
+$ephemeralBlock
 
 ## Existing Conversation Memory:
 ${existingConversationMemory ?? 'None yet'}
-
-## Existing Agent Memory:
-${existingAgentMemory ?? 'None yet'}$otherChatsBlock
 
 ## Current Conversation Messages:
 $messagesText
 
 ---
 
-Return a JSON object with exactly these keys. Be detailed and thorough in every field:
+Return a JSON object with exactly this structure:
 
 {
   "conversation_memory": {
-    "summary": "Detailed summary of what this conversation covers, its main goals, and key outcomes",
-    "key_context": "All important facts, decisions, conclusions, technical details, code snippets discussed, specific solutions found",
-    "user_requests": "What the user originally asked for, how the request evolved, what was delivered vs what was requested, any scope changes",
-    "media_descriptions": "Detailed textual descriptions of all images, files, screenshots, or media discussed — describe content, not just existence",
-    "current_state": "Exactly where the conversation stands now — what was just completed, what comes next",
-    "errors_and_solutions": "Every error, bug, or problem encountered and exactly how it was resolved — so the same mistake is never repeated",
-    "model_history": "Which AI models were used, what each was used for, how they performed, any model-specific observations",
-    "unresolved_items": "All open questions, pending tasks, things to follow up on, known issues"
+    "summary": "Detailed summary of this conversation",
+    "key_context": "Important facts, decisions, technical details",
+    "user_requests": "What the user asked for and how it evolved",
+    "media_descriptions": "Descriptions of images/files discussed",
+    "current_state": "Where the conversation stands now",
+    "errors_and_solutions": "Problems encountered and how they were resolved",
+    "model_history": "Which models were used and how they performed",
+    "unresolved_items": "Open questions or pending tasks"
   },
-  "agent_memory": {
-    "user_profile": "Name, role, job title, background, team, company, timezone, any personal details shared across all conversations",
-    "preferences": "Communication style, response format preferences, workflow habits, tool preferences, coding style, how they like to work",
-    "learned_facts": "Every specific fact learned about the user across all conversations — projects they work on, technologies they use, problems they've solved, their environment/setup",
-    "interests_and_expertise": "All topics discussed, domains of knowledge, skill levels in different areas, what they're learning, what they're expert in",
-    "language_and_tone": "Primary language, formality level, verbosity preference, humor style, how they give feedback, communication patterns",
-    "key_people": "People mentioned by the user across conversations — names, roles, relationships (coworkers, managers, friends, family), preferences and traits noted about them",
-    "ongoing_projects": "Active projects, goals, deadlines the user is working toward — track progress and status across conversations",
-    "past_conversation_refs": "Brief references to previous conversations — what topics were discussed, key outcomes, so the agent can naturally reference prior context (e.g. 'as we discussed when you were debugging X...')"
-  }
+  "profile_updates": {
+    "name": { "value": "string or null if no update", "confidence": "high|medium|low" },
+    "primary_language": { "value": "string or null", "confidence": "high|medium|low" },
+    "tone_and_formality": { "value": "string or null", "confidence": "high|medium|low" },
+    "role_and_background": { "value": "string or null", "confidence": "high|medium|low" },
+    "communication_style": { "value": "string or null", "confidence": "high|medium|low" }
+  },
+  "topic_updates": [
+    { "action": "create|update|merge", "key": "topic key", "content": "topic content", "from": "only for merge" }
+  ],
+  "ephemeral_updates": [
+    { "action": "create", "key": "context key", "content": "context content", "ttl_days": 7 }
+  ]
 }
+
+Return ONLY the JSON object, no other text.''';
+  }
+
+  /// Prompt for the lightweight topic selection call before each message.
+  static String buildSelectionPrompt({
+    required String recentMessagesText,
+    String? conversationSummary,
+    required List<String> topicKeys,
+    required List<String> ephemeralKeys,
+  }) {
+    final allKeys = [...topicKeys, ...ephemeralKeys];
+    final keysBlock = allKeys.map((k) => '- "$k"').join('\n');
+
+    final summaryBlock = conversationSummary != null && conversationSummary.isNotEmpty
+        ? '\n\n## Conversation Summary:\n$conversationSummary'
+        : '';
+
+    return '''You are a relevance filter. Given recent chat messages and a list of memory topic keys, return ONLY the keys that are relevant to the current conversation.
+
+## Recent Messages:
+$recentMessagesText$summaryBlock
+
+## Available Memory Keys:
+$keysBlock
+
+---
+
+Return a JSON object with exactly this structure:
+{
+  "relevant_keys": ["key1", "key2"]
+}
+
+Rules:
+- Only include keys whose content would genuinely help answer the current conversation
+- When in doubt, exclude — it\'s better to miss a marginally relevant topic than to inject irrelevant context
+- Return an empty array if nothing is relevant
 
 Return ONLY the JSON object, no other text.''';
   }
 
   /// Builds the memory injection block for the active model's system prompt.
   static String buildMemoryInjection({
+    required String profileBlock,
+    required String relevantContextBlock,
     required String conversationMemoryBlock,
-    required String agentMemoryBlock,
   }) {
     final parts = <String>[];
 
+    if (profileBlock.isNotEmpty) {
+      parts.add('''## About This User
+$profileBlock''');
+    }
+
+    if (relevantContextBlock.isNotEmpty) {
+      parts.add('''## Relevant Context
+$relevantContextBlock''');
+    }
+
     if (conversationMemoryBlock.isNotEmpty) {
-      parts.add('''
-## Conversation Context
+      parts.add('''## Conversation Context
 The following is a summary of earlier conversation history. Use it to maintain continuity.
 
 $conversationMemoryBlock''');
-    }
-
-    if (agentMemoryBlock.isNotEmpty) {
-      parts.add('''
-## About This User
-$agentMemoryBlock''');
     }
 
     if (parts.isNotEmpty) {

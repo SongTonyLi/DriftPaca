@@ -151,11 +151,18 @@ class _ChatBubbleBody extends StatelessWidget {
     return text;
   }
 
-  /// In table rows, replaces `|` inside LaTeX ($...$) with `\vert`
-  /// so the markdown table parser doesn't treat them as cell delimiters.
+  /// In table rows, replaces `|` inside matched LaTeX ($...$, $$...$$)
+  /// with `\vert` so the table parser doesn't split cells on them.
+  ///
+  /// Uses the same regex pattern as _InlineLatexSyntax to identify LaTeX
+  /// regions, ensuring consistency. Skips inline code (backtick-delimited)
+  /// and only processes lines that start with `|` (table rows).
   static String _escapeLatexPipesInTables(String content) {
     final lines = content.split('\n');
     final result = <String>[];
+    // Same patterns as _InlineLatexSyntax — only match confirmed pairs.
+    final latexPattern = RegExp(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$');
+    final codePattern = RegExp(r'`[^`\n]+`');
 
     for (final line in lines) {
       if (!line.trimLeft().startsWith('|')) {
@@ -163,42 +170,30 @@ class _ChatBubbleBody extends StatelessWidget {
         continue;
       }
 
-      // Track whether we're inside $...$ or $$...$$ and replace | → \vert.
+      // Skip inline code segments, only escape pipes in non-code parts.
       final buf = StringBuffer();
-      bool inSingle = false;
-      bool inDouble = false;
-
-      for (int i = 0; i < line.length; i++) {
-        final c = line[i];
-
-        // Check for $$ before single $
-        if (c == '\$' && i + 1 < line.length && line[i + 1] == '\$' && !inSingle) {
-          inDouble = !inDouble;
-          buf.write('\$\$');
-          i++;
-          continue;
-        }
-
-        // Single $ toggle (skip escaped \$)
-        if (c == '\$' && !inDouble && !(i > 0 && line[i - 1] == '\\')) {
-          inSingle = !inSingle;
-          buf.write(c);
-          continue;
-        }
-
-        // Replace | with \vert inside LaTeX
-        if (c == '|' && (inSingle || inDouble)) {
-          buf.write('\\vert ');
-          continue;
-        }
-
-        buf.write(c);
+      int pos = 0;
+      for (final codeMatch in codePattern.allMatches(line)) {
+        buf.write(_replacePipesInLatex(line.substring(pos, codeMatch.start), latexPattern));
+        buf.write(codeMatch.group(0));
+        pos = codeMatch.end;
       }
+      buf.write(_replacePipesInLatex(line.substring(pos), latexPattern));
 
       result.add(buf.toString());
     }
 
     return result.join('\n');
+  }
+
+  /// Within matched $...$ / $$...$$ regions, replace | with \vert.
+  static String _replacePipesInLatex(String text, RegExp pattern) {
+    return text.replaceAllMapped(pattern, (match) {
+      final full = match.group(0)!;
+      if (!full.contains('|')) return full;
+      // Only replace unescaped | (preserve existing \|).
+      return full.replaceAllMapped(RegExp(r'(?<!\\)\|'), (_) => '\\vert ');
+    });
   }
 }
 

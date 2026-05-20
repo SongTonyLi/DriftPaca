@@ -279,7 +279,7 @@ class _ChatPageState extends State<ChatPage> {
                   end: Alignment.bottomCenter,
                   colors: [
                     bgColor.withValues(alpha: 0.5),
-                    bgColor.withValues(alpha: 0.95),
+                    bgColor,
                   ],
                 ),
               ),
@@ -347,7 +347,7 @@ class _ChatPageState extends State<ChatPage> {
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.add, size: 20),
+                      icon: Icon(Icons.add, size: 20, color: _isIncognito ? _incognitoText : null),
                       padding: const EdgeInsets.all(6),
                       constraints: const BoxConstraints(),
                       onPressed: _handleAttachmentButton,
@@ -357,7 +357,9 @@ class _ChatPageState extends State<ChatPage> {
                       icon: Icon(
                         _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
                         size: 20,
-                        color: _viewModel.webSearchEnabled ? Theme.of(context).colorScheme.onPrimary : null,
+                        color: _viewModel.webSearchEnabled
+                            ? Theme.of(context).colorScheme.onPrimary
+                            : (_isIncognito ? _incognitoText : null),
                       ),
                       padding: const EdgeInsets.all(6),
                       constraints: const BoxConstraints(),

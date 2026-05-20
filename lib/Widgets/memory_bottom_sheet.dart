@@ -1364,17 +1364,21 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       context: context,
       builder: (ctx) {
         final colorScheme = Theme.of(ctx).colorScheme;
-        return Dialog(
-          backgroundColor: colorScheme.surface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header with inline topic name
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 200),
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Dialog(
+            backgroundColor: colorScheme.surface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header with inline topic name
                 Row(
                   children: [
                     Icon(
@@ -1429,8 +1433,8 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                 TextField(
                   controller: contentController,
                   textCapitalization: TextCapitalization.sentences,
-                  maxLines: 6,
-                  minLines: 4,
+                  maxLines: 10,
+                  minLines: 6,
                   style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
                   decoration: InputDecoration(
                     hintText: 'What should the AI remember about this topic?',
@@ -1461,6 +1465,8 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               ],
             ),
           ),
+        ),
+          ),
         );
       },
     );
@@ -1485,8 +1491,8 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       }
     }
 
-    keyController.dispose();
-    contentController.dispose();
+    // Controllers are intentionally not disposed here — the dialog's exit
+    // animation may still reference them. They will be garbage collected.
   }
 
   // ---- Ephemeral / Recent Context tab ----
@@ -1632,17 +1638,21 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
         final colorScheme = Theme.of(ctx).colorScheme;
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
-            return Dialog(
-              backgroundColor: colorScheme.surface,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header
+            return AnimatedPadding(
+              duration: const Duration(milliseconds: 200),
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Dialog(
+                backgroundColor: colorScheme.surface,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
                     Row(
                       children: [
                         Icon(Icons.schedule_outlined, size: 20, color: colorScheme.primary),
@@ -1739,10 +1749,12 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                         child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                       ),
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            );
+            ),
+              );
           },
         );
       },
@@ -1762,7 +1774,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       });
     }
 
-    contentController.dispose();
+    // Controller intentionally not disposed — dialog exit animation may still reference it.
   }
 
   // ---- Save / Clear ----

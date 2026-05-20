@@ -248,12 +248,17 @@ class _ChatPageState extends State<ChatPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Composer
-        Padding(
+        // Composer — AnimatedContainer provides the incognito background
+        // behind the rounded corners so the Scaffold's light color won't
+        // peek through.
+        AnimatedContainer(
+          duration: _transitionDuration,
+          curve: _transitionCurve,
           padding: EdgeInsets.only(
             left: _composerHorizontalInset,
             right: _composerHorizontalInset,
           ),
+          color: _isIncognito ? _incognitoBg : Colors.transparent,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

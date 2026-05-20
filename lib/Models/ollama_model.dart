@@ -52,7 +52,9 @@ class OllamaModel {
           ? show!.format : tags.format,
       description: showResponse?.description ?? '',
       contextLength: showResponse?.contextLength,
-      capabilities: showResponse != null ? ModelCapabilities.fromList(showResponse.capabilities) : null,
+      capabilities: showResponse != null && showResponse.capabilities.isNotEmpty
+          ? ModelCapabilities.fromList(showResponse.capabilities)
+          : null,
     );
   }
 

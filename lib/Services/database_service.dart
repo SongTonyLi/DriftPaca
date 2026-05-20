@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Models/conversation_memory.dart';
+import 'package:llamaseek/Models/memory_topic.dart';
+import 'package:llamaseek/Models/ephemeral_context.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:sqflite/sqflite.dart';
@@ -24,7 +26,7 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 7,
+      version: 8,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
@@ -54,6 +56,33 @@ updated_at INTEGER
         }
         if (oldVersion < 7) {
           await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)');
+        }
+        if (oldVersion < 8) {
+          await db.execute('DROP TABLE IF EXISTS agent_memory');
+          await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory (
+id INTEGER PRIMARY KEY DEFAULT 1,
+name TEXT DEFAULT '',
+primary_language TEXT DEFAULT '',
+tone_and_formality TEXT DEFAULT '',
+role_and_background TEXT DEFAULT '',
+communication_style TEXT DEFAULT '',
+updated_at INTEGER
+)''');
+          await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory_topics (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+topic_key TEXT NOT NULL,
+content TEXT NOT NULL,
+created_at INTEGER NOT NULL,
+updated_at INTEGER NOT NULL
+)''');
+          await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory_ephemeral (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+context_key TEXT NOT NULL,
+content TEXT NOT NULL,
+source_chat_id TEXT,
+created_at INTEGER NOT NULL,
+expires_at INTEGER NOT NULL
+)''');
         }
       },
       onCreate: (Database db, int version) async {
@@ -95,15 +124,29 @@ END;''');
 
         await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory (
 id INTEGER PRIMARY KEY DEFAULT 1,
-user_profile TEXT DEFAULT '',
-preferences TEXT DEFAULT '',
-learned_facts TEXT DEFAULT '',
-interests_and_expertise TEXT DEFAULT '',
-language_and_tone TEXT DEFAULT '',
-key_people TEXT DEFAULT '',
-ongoing_projects TEXT DEFAULT '',
-past_conversation_refs TEXT DEFAULT '',
+name TEXT DEFAULT '',
+primary_language TEXT DEFAULT '',
+tone_and_formality TEXT DEFAULT '',
+role_and_background TEXT DEFAULT '',
+communication_style TEXT DEFAULT '',
 updated_at INTEGER
+)''');
+
+        await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory_topics (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+topic_key TEXT NOT NULL,
+content TEXT NOT NULL,
+created_at INTEGER NOT NULL,
+updated_at INTEGER NOT NULL
+)''');
+
+        await db.execute('''CREATE TABLE IF NOT EXISTS agent_memory_ephemeral (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+context_key TEXT NOT NULL,
+content TEXT NOT NULL,
+source_chat_id TEXT,
+created_at INTEGER NOT NULL,
+expires_at INTEGER NOT NULL
 )''');
 
         await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)');
@@ -329,7 +372,11 @@ ORDER BY last_update DESC;''');
     return null;
   }
 
+  // ============================================================
   // Memory Operations
+  // ============================================================
+
+  // --- Conversation Memory (unchanged) ---
 
   Future<ConversationMemory?> getConversationMemory(String chatId) async {
     final List<Map<String, dynamic>> maps = await _db.query(
@@ -370,16 +417,15 @@ ORDER BY last_update DESC;''');
     return result;
   }
 
+  // --- Tier 1: Stable Profile ---
+
   Future<AgentMemory?> getAgentMemory() async {
     final List<Map<String, dynamic>> maps = await _db.query(
       'agent_memory',
       limit: 1,
     );
 
-    if (maps.isEmpty) {
-      return null;
-    }
-
+    if (maps.isEmpty) return null;
     return AgentMemory.fromMap(maps.first);
   }
 
@@ -395,5 +441,127 @@ ORDER BY last_update DESC;''');
 
   Future<void> clearAgentMemory() async {
     await _db.delete('agent_memory');
+  }
+
+  // --- Tier 2: Topic Store ---
+
+  Future<List<MemoryTopic>> getAllTopics() async {
+    final maps = await _db.query('agent_memory_topics', orderBy: 'updated_at DESC');
+    return maps.map((m) => MemoryTopic.fromMap(m)).toList();
+  }
+
+  Future<MemoryTopic?> getTopicByKey(String topicKey) async {
+    final maps = await _db.query(
+      'agent_memory_topics',
+      where: 'topic_key = ?',
+      whereArgs: [topicKey],
+      limit: 1,
+    );
+    if (maps.isEmpty) return null;
+    return MemoryTopic.fromMap(maps.first);
+  }
+
+  Future<int> insertTopic(MemoryTopic topic) async {
+    return await _db.insert('agent_memory_topics', topic.toInsertMap());
+  }
+
+  Future<void> updateTopic(MemoryTopic topic) async {
+    await _db.update(
+      'agent_memory_topics',
+      {
+        'topic_key': topic.topicKey,
+        'content': topic.content,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      where: 'topic_key = ?',
+      whereArgs: [topic.topicKey],
+    );
+  }
+
+  Future<void> deleteTopic(String topicKey) async {
+    await _db.delete(
+      'agent_memory_topics',
+      where: 'topic_key = ?',
+      whereArgs: [topicKey],
+    );
+  }
+
+  Future<void> deleteTopicById(int id) async {
+    await _db.delete(
+      'agent_memory_topics',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> mergeTopics(String fromKey, String intoKey, String content) async {
+    await _db.transaction((txn) async {
+      await txn.delete('agent_memory_topics', where: 'topic_key = ?', whereArgs: [fromKey]);
+      final existing = await txn.query('agent_memory_topics', where: 'topic_key = ?', whereArgs: [intoKey]);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (existing.isNotEmpty) {
+        await txn.update(
+          'agent_memory_topics',
+          {'content': content, 'updated_at': now},
+          where: 'topic_key = ?',
+          whereArgs: [intoKey],
+        );
+      } else {
+        await txn.insert('agent_memory_topics', {
+          'topic_key': intoKey,
+          'content': content,
+          'created_at': now,
+          'updated_at': now,
+        });
+      }
+    });
+  }
+
+  Future<void> clearAllTopics() async {
+    await _db.delete('agent_memory_topics');
+  }
+
+  // --- Tier 3: Ephemeral Context ---
+
+  Future<List<EphemeralContext>> getAllEphemeralContexts() async {
+    final maps = await _db.query('agent_memory_ephemeral', orderBy: 'created_at DESC');
+    return maps.map((m) => EphemeralContext.fromMap(m)).toList();
+  }
+
+  Future<int> insertEphemeralContext(EphemeralContext ctx) async {
+    return await _db.insert('agent_memory_ephemeral', ctx.toInsertMap());
+  }
+
+  Future<void> updateEphemeralContext(EphemeralContext ctx) async {
+    await _db.update(
+      'agent_memory_ephemeral',
+      {
+        'context_key': ctx.contextKey,
+        'content': ctx.content,
+        'expires_at': ctx.expiresAt.millisecondsSinceEpoch,
+      },
+      where: 'id = ?',
+      whereArgs: [ctx.id],
+    );
+  }
+
+  Future<void> deleteEphemeralContextById(int id) async {
+    await _db.delete(
+      'agent_memory_ephemeral',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> cleanupExpiredEphemeral() async {
+    return await _db.delete(
+      'agent_memory_ephemeral',
+      where: 'expires_at < ?',
+      whereArgs: [DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<void> clearAllEphemeral() async {
+    await _db.delete('agent_memory_ephemeral');
   }
 }

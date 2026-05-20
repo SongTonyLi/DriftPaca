@@ -902,4 +902,64 @@ void main() {
       expect(overflowErrors(errors), isEmpty);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Group 13: Specific LaTeX commands that may fail in flutter_math_fork
+  // ---------------------------------------------------------------------------
+  group('flutter_math_fork compatibility', () {
+    testWidgets(r'renders \mathrm and \ln commands', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'$S=\hbar\,\mathrm{Im}(\ln\Psi)$',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
+
+    testWidgets(r'renders \hbar\to 0', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'$\hbar\to 0$',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
+
+    testWidgets(r'renders \vert (pipe replacement)', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'$\rho=\vert \Psi\vert ^2$',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
+
+    testWidgets('renders LaTeX after br tags in table cell', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '| Advantages |\n| --- |\n| text A<br>text B（\$\\hbar\\to 0\$ and \$S=\\hbar\\,\\mathrm{Im}(\\ln\\Psi)\$）<br>text C |',
+        surfaceSize: const Size(500, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(2));
+    });
+
+    testWidgets('pipe in earlier row does not break LaTeX in later rows', (tester) async {
+      // Row 1 has $|\Psi|^2$ (pipes in LaTeX), row 2 has normal LaTeX.
+      // Without pipe escaping, row 1 breaks the table structure and
+      // cascading failures affect row 2.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '| Name | Formula |\n| --- | --- |\n| Prob | \$\\rho=|\\Psi|^2\$ |\n| Limit | \$\\hbar\\to 0\$ |',
+        surfaceSize: const Size(500, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(2));
+    });
+  });
 }

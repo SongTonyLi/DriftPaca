@@ -733,25 +733,37 @@ class _SmartLatexWidget extends StatelessWidget {
       ),
     );
 
-    // Wrap in horizontal scroll so equations that exceed container width
-    // become slidable instead of overflowing.
-    final scrollableMath = SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      clipBehavior: Clip.antiAlias,
-      child: mathWidget,
-    );
-
     if (isDisplay) {
+      // Display math: centered, horizontally scrollable for long equations.
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: SizedBox(
           width: double.infinity,
-          child: Center(child: scrollableMath),
+          child: Center(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.antiAlias,
+              child: mathWidget,
+            ),
+          ),
         ),
       );
     }
 
-    return scrollableMath;
+    // Inline math in table cells: wrap in scroll to prevent overflow.
+    final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
+    if (inTableCell) {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.antiAlias,
+        child: mathWidget,
+      );
+    }
+
+    // Inline math in text: return directly so it flows with surrounding
+    // text. Wrapping in SingleChildScrollView breaks WidgetSpan intrinsic
+    // width calculation, causing line breaks (e.g. "$N$ 体" splits).
+    return mathWidget;
   }
 }
 

@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:llamaseek/Constants/memory_constants.dart';
 import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Models/conversation_memory.dart';
+import 'package:llamaseek/Models/ephemeral_context.dart';
+import 'package:llamaseek/Models/memory_topic.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Services/database_service.dart';
 
@@ -26,9 +28,11 @@ class MemoryService extends ChangeNotifier {
   String? _lastError;
   String? get lastError => _lastError;
 
-  /// In-memory cache to avoid DB reads on every message send.
+  /// In-memory caches to avoid DB reads on every message send.
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
-  AgentMemory? _agentMemoryCache;
+  AgentMemory? _profileCache;
+  List<MemoryTopic>? _topicsCache;
+  List<EphemeralContext>? _ephemeralCache;
 
   MemoryService({required DatabaseService db}) : _db = db {
     // Migrate old default model names to current default
@@ -72,10 +76,99 @@ class MemoryService extends ChangeNotifier {
   }
 
   Future<AgentMemory?> getAgentMemory() async {
-    if (_agentMemoryCache != null) return _agentMemoryCache;
+    if (_profileCache != null) return _profileCache;
 
-    _agentMemoryCache = await _db.getAgentMemory();
-    return _agentMemoryCache;
+    _profileCache = await _db.getAgentMemory();
+    return _profileCache;
+  }
+
+  Future<List<MemoryTopic>> getTopics() async {
+    if (_topicsCache != null) return _topicsCache!;
+    _topicsCache = await _db.getAllTopics();
+    return _topicsCache!;
+  }
+
+  Future<List<EphemeralContext>> getEphemeralContexts() async {
+    if (_ephemeralCache != null) return _ephemeralCache!;
+    _ephemeralCache = await _db.getAllEphemeralContexts();
+    return _ephemeralCache!;
+  }
+
+  // ============================================================
+  // Pre-message: Select Relevant Context
+  // ============================================================
+
+  /// Lightweight LLM call before each message to select which topic/ephemeral
+  /// keys are relevant to the current conversation. Returns a formatted string
+  /// of relevant entries for injection, or '' if none are relevant.
+  Future<String> selectRelevantContext(
+    List<OllamaMessage> recentMessages, {
+    String? conversationSummary,
+  }) async {
+    try {
+      if (!isEnabled) return '';
+
+      final topics = await getTopics();
+      final ephemeral = await getEphemeralContexts();
+
+      // Filter out expired ephemeral
+      final activeEphemeral = ephemeral.where((e) => !e.isExpired).toList();
+
+      final topicKeys = topics.map((t) => t.topicKey).toList();
+      final ephemeralKeys = activeEphemeral.map((e) => e.contextKey).toList();
+
+      // Nothing to select from
+      if (topicKeys.isEmpty && ephemeralKeys.isEmpty) return '';
+
+      // Take last N messages for the selection prompt
+      final messagesToUse = recentMessages.length > MemoryConstants.recentMessagesForSelection
+          ? recentMessages.sublist(recentMessages.length - MemoryConstants.recentMessagesForSelection)
+          : recentMessages;
+
+      final messagesText = _formatMessagesForPrompt(messagesToUse);
+
+      final prompt = MemoryConstants.buildSelectionPrompt(
+        recentMessagesText: messagesText,
+        conversationSummary: conversationSummary,
+        topicKeys: topicKeys,
+        ephemeralKeys: ephemeralKeys,
+      );
+
+      final responseBody = await _callCloudModel(prompt);
+      if (responseBody == null) return '';
+
+      final parsed = _extractJson(responseBody);
+      if (parsed == null) return '';
+
+      final relevantKeys = (parsed['relevant_keys'] as List<dynamic>?)
+              ?.map((k) => k.toString())
+              .toList() ??
+          [];
+
+      if (relevantKeys.isEmpty) return '';
+
+      // Fetch full content for selected keys
+      final entries = <String>[];
+      for (final key in relevantKeys) {
+        // Check topics
+        final matchingTopic = topics.where((t) => t.topicKey == key).toList();
+        if (matchingTopic.isNotEmpty) {
+          entries.add(matchingTopic.first.toPromptEntry());
+          continue;
+        }
+        // Check ephemeral
+        final matchingEphemeral =
+            activeEphemeral.where((e) => e.contextKey == key).toList();
+        if (matchingEphemeral.isNotEmpty) {
+          entries.add(matchingEphemeral.first.toPromptEntry());
+        }
+      }
+
+      return entries.join('\n');
+    } catch (e) {
+      debugPrint('MemoryService selectRelevantContext failed: $e');
+      return '';
+    }
   }
 
   // ============================================================
@@ -116,7 +209,7 @@ class MemoryService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Only send recent messages to the summarizer — existing memory covers older context
+      // Only send recent messages to the summarizer
       final recentMessages = messages.length > MemoryConstants.recentMessagesToKeep
           ? messages.sublist(messages.length - MemoryConstants.recentMessagesToKeep)
           : messages;
@@ -124,47 +217,36 @@ class MemoryService extends ChangeNotifier {
 
       // Get existing memories
       final existingConvMemory = await getConversationMemory(chatId);
-      final existingAgentMemory = await getAgentMemory();
+      final existingProfile = await getAgentMemory();
+      final existingTopics = await getTopics();
+      final existingEphemeral = await getEphemeralContexts();
 
-      // Gather conversation memories from ALL chats for richer agent memory
-      final allConvMemories = await _db.getAllConversationMemories();
-      final otherChatContexts = <String>[];
-      for (final entry in allConvMemories.entries) {
-        if (entry.key == chatId) continue; // skip current chat (already included)
-        if (entry.value.isEmpty) continue;
-        // Include full structured context, not just summary
-        final mem = entry.value;
-        final parts = <String>[];
-        if (mem.summary.isNotEmpty) parts.add('Summary: ${mem.summary}');
-        if (mem.keyContext.isNotEmpty) parts.add('Key context: ${mem.keyContext}');
-        if (mem.userRequests.isNotEmpty) parts.add('User requests: ${mem.userRequests}');
-        if (mem.currentState.isNotEmpty) parts.add('State: ${mem.currentState}');
-        if (mem.errorsAndSolutions.isNotEmpty) parts.add('Errors & solutions: ${mem.errorsAndSolutions}');
-        if (mem.unresolvedItems.isNotEmpty) parts.add('Unresolved: ${mem.unresolvedItems}');
-        if (parts.isNotEmpty) {
-          otherChatContexts.add(parts.join('\n'));
-        }
-      }
+      // Cleanup expired ephemeral entries
+      await _db.cleanupExpiredEphemeral();
 
-      // Build the summarization prompt
+      // Build summarization prompt with all three tiers
       final prompt = MemoryConstants.buildSummarizationPrompt(
         messagesText: messagesText,
         existingConversationMemory: existingConvMemory?.toJson(),
-        existingAgentMemory: existingAgentMemory != null
-            ? jsonEncode(existingAgentMemory.toMap())
+        existingProfile: existingProfile != null
+            ? jsonEncode(existingProfile.toMap())
             : null,
-        otherChatContexts: otherChatContexts.isNotEmpty ? otherChatContexts : null,
+        existingTopics: existingTopics.isNotEmpty
+            ? existingTopics.map((t) => t.toMap()).toList()
+            : null,
+        existingEphemeral: existingEphemeral.isNotEmpty
+            ? existingEphemeral.where((e) => !e.isExpired).map((e) => e.toMap()).toList()
+            : null,
       );
 
       // ignore: avoid_print
       print('[MemoryService] sending to model=$_model, prompt length=${prompt.length}');
 
-      // Call cloud model via Ollama Cloud
+      // Call cloud model
       final responseBody = await _callCloudModel(prompt);
       if (responseBody == null) {
         // ignore: avoid_print
         print('[MemoryService] got NULL response from cloud model');
-        // _lastError is already set by _callCloudModel
         return;
       }
       _lastError = null;
@@ -173,7 +255,7 @@ class MemoryService extends ChangeNotifier {
       print('[MemoryService] got response: ${responseBody.substring(0, responseBody.length.clamp(0, 200))}...');
 
       // Parse and save
-      _parseAndSave(chatId, responseBody, skipAgentMemory: skipAgentMemory);
+      await _parseAndSave(chatId, responseBody, skipAgentMemory: skipAgentMemory);
     } catch (e) {
       debugPrint('MemoryService update failed: $e');
     } finally {
@@ -230,16 +312,16 @@ class MemoryService extends ChangeNotifier {
     }
   }
 
-  void _parseAndSave(String chatId, String responseBody, {bool skipAgentMemory = false}) {
+  Future<void> _parseAndSave(String chatId, String responseBody, {bool skipAgentMemory = false}) async {
     try {
-      // Try to extract JSON from the response (model may wrap it in markdown)
-      var jsonStr = responseBody.trim();
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(jsonStr);
-      if (jsonMatch != null) {
-        jsonStr = jsonMatch.group(0)!;
+      final parsed = _extractJson(responseBody);
+      if (parsed == null) {
+        // JSON parsing failed — store raw text as conversation memory summary
+        final convMemory = ConversationMemory(summary: responseBody);
+        _conversationMemoryCache[chatId] = convMemory;
+        _db.updateConversationMemory(chatId, convMemory);
+        return;
       }
-
-      final parsed = jsonDecode(jsonStr) as Map<String, dynamic>;
 
       // Parse conversation memory
       final convMap = parsed['conversation_memory'] as Map<String, dynamic>?;
@@ -249,20 +331,78 @@ class MemoryService extends ChangeNotifier {
         _db.updateConversationMemory(chatId, convMemory);
       }
 
-      // Parse agent memory — skip for incognito chats
-      if (!skipAgentMemory) {
-        final agentMap = parsed['agent_memory'] as Map<String, dynamic>?;
-        if (agentMap != null) {
-          final agentMemory = AgentMemory.fromMap(agentMap);
-          _agentMemoryCache = agentMemory;
-          _db.updateAgentMemory(agentMemory);
+      if (skipAgentMemory) return;
+
+      // Parse profile updates (confidence-gated)
+      final profileUpdates = parsed['profile_updates'] as Map<String, dynamic>?;
+      if (profileUpdates != null) {
+        final existing = await getAgentMemory() ?? AgentMemory();
+        final updated = applyProfileUpdates(existing, profileUpdates);
+        if (updated.toMap().toString() != existing.toMap().toString()) {
+          _profileCache = updated;
+          await _db.updateAgentMemory(updated);
         }
       }
-    } catch (_) {
-      // JSON parsing failed — store raw text as conversation memory summary
+
+      // Parse topic updates
+      final topicUpdates = parsed['topic_updates'] as List<dynamic>?;
+      if (topicUpdates != null && topicUpdates.isNotEmpty) {
+        final existingTopics = await getTopics();
+        final actions = parseTopicUpdates(topicUpdates, existingTopics);
+        for (final action in actions) {
+          switch (action.type) {
+            case TopicActionType.create:
+              await _db.insertTopic(MemoryTopic(
+                topicKey: action.key,
+                content: action.content,
+              ));
+              break;
+            case TopicActionType.update:
+              await _db.updateTopic(MemoryTopic(
+                topicKey: action.key,
+                content: action.content,
+              ));
+              break;
+            case TopicActionType.merge:
+              await _db.mergeTopics(
+                action.fromKey!,
+                action.key,
+                action.content,
+              );
+              break;
+          }
+        }
+        _topicsCache = null; // Invalidate cache
+      }
+
+      // Parse ephemeral updates
+      final ephemeralUpdates = parsed['ephemeral_updates'] as List<dynamic>?;
+      if (ephemeralUpdates != null && ephemeralUpdates.isNotEmpty) {
+        final newEntries = parseEphemeralUpdates(ephemeralUpdates, chatId);
+        for (final entry in newEntries) {
+          await _db.insertEphemeralContext(entry);
+        }
+        _ephemeralCache = null; // Invalidate cache
+      }
+    } catch (e) {
+      debugPrint('MemoryService _parseAndSave failed: $e');
+      // Fallback: store raw text as conversation memory summary
       final convMemory = ConversationMemory(summary: responseBody);
       _conversationMemoryCache[chatId] = convMemory;
       _db.updateConversationMemory(chatId, convMemory);
+    }
+  }
+
+  Map<String, dynamic>? _extractJson(String responseBody) {
+    try {
+      var jsonStr = responseBody.trim();
+      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(jsonStr);
+      if (jsonMatch != null) {
+        jsonStr = jsonMatch.group(0)!;
+      }
+      return jsonDecode(jsonStr) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -280,6 +420,113 @@ class MemoryService extends ChangeNotifier {
   }
 
   // ============================================================
+  // Static helpers (for testability)
+  // ============================================================
+
+  /// Applies profile updates, only accepting fields with high confidence.
+  static AgentMemory applyProfileUpdates(
+    AgentMemory existing,
+    Map<String, dynamic> updates,
+  ) {
+    String? extractHigh(String fieldKey) {
+      final entry = updates[fieldKey];
+      if (entry is! Map) return null;
+      if (entry['confidence'] != 'high') return null;
+      final value = entry['value'];
+      if (value == null) return null;
+      return value.toString();
+    }
+
+    return existing.copyWith(
+      name: extractHigh('name'),
+      primaryLanguage: extractHigh('primary_language'),
+      toneAndFormality: extractHigh('tone_and_formality'),
+      roleAndBackground: extractHigh('role_and_background'),
+      communicationStyle: extractHigh('communication_style'),
+    );
+  }
+
+  /// Parses topic update instructions into a list of TopicAction objects.
+  static List<TopicAction> parseTopicUpdates(
+    List<dynamic> updates,
+    List<MemoryTopic> existingTopics,
+  ) {
+    final actions = <TopicAction>[];
+
+    for (final update in updates) {
+      if (update is! Map) continue;
+
+      final action = update['action']?.toString();
+      final key = (update['key'] ?? update['into'])?.toString();
+      final content = update['content']?.toString() ?? '';
+
+      if (action == null || key == null || key.isEmpty) continue;
+
+      switch (action) {
+        case 'create':
+          actions.add(TopicAction(
+            type: TopicActionType.create,
+            key: key,
+            content: content,
+          ));
+          break;
+        case 'update':
+          actions.add(TopicAction(
+            type: TopicActionType.update,
+            key: key,
+            content: content,
+          ));
+          break;
+        case 'merge':
+          final fromKey = update['from']?.toString();
+          if (fromKey == null || fromKey.isEmpty) continue;
+          actions.add(TopicAction(
+            type: TopicActionType.merge,
+            key: key,
+            content: content,
+            fromKey: fromKey,
+          ));
+          break;
+      }
+    }
+
+    return actions;
+  }
+
+  /// Parses ephemeral update instructions into EphemeralContext objects.
+  /// TTL is clamped to max 14 days.
+  static List<EphemeralContext> parseEphemeralUpdates(
+    List<dynamic> updates,
+    String chatId,
+  ) {
+    final results = <EphemeralContext>[];
+
+    for (final update in updates) {
+      if (update is! Map) continue;
+
+      final action = update['action']?.toString();
+      if (action != 'create') continue;
+
+      final key = update['key']?.toString();
+      final content = update['content']?.toString() ?? '';
+      if (key == null || key.isEmpty) continue;
+
+      final ttlDays = (update['ttl_days'] is int)
+          ? update['ttl_days'] as int
+          : EphemeralContext.defaultTtlDays;
+
+      results.add(EphemeralContext.withTtlDays(
+        contextKey: key,
+        content: content,
+        sourceChatId: chatId,
+        ttlDays: ttlDays,
+      ));
+    }
+
+    return results;
+  }
+
+  // ============================================================
   // Memory Management (for UI)
   // ============================================================
 
@@ -293,19 +540,79 @@ class MemoryService extends ChangeNotifier {
   }
 
   Future<void> updateAgentMemoryField(AgentMemory memory) async {
-    _agentMemoryCache = memory;
+    _profileCache = memory;
     await _db.updateAgentMemory(memory);
     notifyListeners();
   }
 
   Future<void> clearAgentMemory() async {
-    _agentMemoryCache = null;
+    _profileCache = null;
     await _db.clearAgentMemory();
     notifyListeners();
   }
 
   void invalidateConversationMemoryCache(String chatId) {
     _conversationMemoryCache.remove(chatId);
+  }
+
+  // --- Topic management ---
+
+  Future<void> saveTopic(MemoryTopic topic) async {
+    if (topic.id != null) {
+      await _db.updateTopic(topic);
+    } else {
+      await _db.insertTopic(topic);
+    }
+    _topicsCache = null;
+    notifyListeners();
+  }
+
+  Future<void> deleteTopicById(int id) async {
+    await _db.deleteTopicById(id);
+    _topicsCache = null;
+    notifyListeners();
+  }
+
+  Future<void> clearAllTopics() async {
+    await _db.clearAllTopics();
+    _topicsCache = null;
+    notifyListeners();
+  }
+
+  // --- Ephemeral management ---
+
+  Future<void> saveEphemeralContext(EphemeralContext ctx) async {
+    if (ctx.id != null) {
+      await _db.updateEphemeralContext(ctx);
+    } else {
+      await _db.insertEphemeralContext(ctx);
+    }
+    _ephemeralCache = null;
+    notifyListeners();
+  }
+
+  Future<void> deleteEphemeralContextById(int id) async {
+    await _db.deleteEphemeralContextById(id);
+    _ephemeralCache = null;
+    notifyListeners();
+  }
+
+  Future<void> clearAllEphemeral() async {
+    await _db.clearAllEphemeral();
+    _ephemeralCache = null;
+    notifyListeners();
+  }
+
+  // --- Clear all agent memory (all 3 tiers) ---
+
+  Future<void> clearAllAgentMemory() async {
+    _profileCache = null;
+    _topicsCache = null;
+    _ephemeralCache = null;
+    await _db.clearAgentMemory();
+    await _db.clearAllTopics();
+    await _db.clearAllEphemeral();
+    notifyListeners();
   }
 
   // ============================================================
@@ -326,4 +633,24 @@ class MemoryService extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+// ============================================================
+// Supporting types
+// ============================================================
+
+enum TopicActionType { create, update, merge }
+
+class TopicAction {
+  final TopicActionType type;
+  final String key;
+  final String content;
+  final String? fromKey;
+
+  TopicAction({
+    required this.type,
+    required this.key,
+    required this.content,
+    this.fromKey,
+  });
 }

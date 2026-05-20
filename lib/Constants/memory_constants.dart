@@ -31,11 +31,15 @@ class MemoryConstants {
     return '''You are a memory manager for a chat application. Analyze the conversation and update structured memory.
 
 ## Rules:
-- **Profile updates**: Only update profile fields when you have HIGH confidence. Profile stores stable, universal traits (name, language, communication style). Do NOT infer profile traits from a single conversation topic. A user discussing physics homework does NOT mean their role is "physics student" unless they explicitly say so.
-  - Confidence levels: "high" = user explicitly stated it or it has been consistent across context. "medium" = reasonable inference but not confirmed. "low" = speculation.
-  - Only "high" confidence updates will be applied. Be conservative.
-- **Topic updates**: Create, update, or merge topic entries. Topics are domain-specific knowledge (e.g., "Flutter development", "quantum mechanics homework"). Use descriptive but general keys. Merge similar topics when they overlap.
-  - Actions: "create" (new topic), "update" (modify existing topic content), "merge" (combine two topics — specify "from" and "into")
+- **Profile updates**: Profile stores stable identity facts (name, language, role, communication style). When the user EXPLICITLY states something about themselves ("I'm a SWE intern at TikTok", "I speak Chinese", "my name is Song"), that is ALWAYS high confidence — save it immediately.
+  - Confidence levels: "high" = user explicitly stated it (e.g., "I'm a software engineer", "I work at Google"), OR it has been consistent across multiple conversations. "medium" = reasonable inference from behavior but never explicitly stated. "low" = speculation from a single data point.
+  - Only "high" confidence updates will be applied. Be conservative with inferences, but NEVER miss explicit self-descriptions.
+  - Do NOT infer profile traits from conversation topics. A user asking about physics does NOT mean they are a physicist. But if they say "I'm a physics student", that IS high confidence.
+- **Topic updates**: Create, update, or merge topic entries. Topics store COMPREHENSIVE domain-specific knowledge the AI needs to be helpful in future conversations on this subject.
+  - **Keys**: Use descriptive but general names (e.g., "Flutter development", "quantum mechanics coursework", "relationship with partner").
+  - **Content**: Be THOROUGH. Capture ALL relevant details — specific facts, names, dates, decisions, preferences, technical details, context, history, and nuance. The content should be rich enough that someone reading it could fully understand the user's situation and give informed advice. Do NOT write vague one-line summaries.
+  - **CRITICAL — topic separation**: Different subjects discussed in the SAME conversation MUST become SEPARATE topics. Do NOT merge unrelated subjects just because they appeared in one chat. For example, if a user asks about quantum physics AND mentions being a software developer, create TWO separate topics: one for "quantum physics" and one for "software career". Only merge topics that are genuinely about the same subject (e.g., "React basics" and "React hooks" could merge into "React development").
+  - Actions: "create" (new topic), "update" (EXTEND existing content with new information — never lose prior details), "merge" (ONLY combine topics about the same subject — specify "from" and "into")
 - **Ephemeral updates**: Short-lived context about what the user is currently doing. Things like "debugging a crash" or "writing an essay". Default TTL: 7 days, max: 14 days.
 - **Conversation memory**: Detailed summary of THIS conversation only.
 
@@ -77,7 +81,7 @@ Return a JSON object with exactly this structure:
     "communication_style": { "value": "string or null", "confidence": "high|medium|low" }
   },
   "topic_updates": [
-    { "action": "create|update|merge", "key": "topic key", "content": "topic content", "from": "only for merge" }
+    { "action": "create|update|merge", "key": "descriptive topic name", "content": "COMPREHENSIVE content: include all specific facts, names, dates, decisions, preferences, technical details, history, and context. Be detailed — this is the AI's long-term knowledge base for this subject.", "from": "only for merge — the topic key being merged away" }
   ],
   "ephemeral_updates": [
     { "action": "create", "key": "context key", "content": "context content", "ttl_days": 7 }

@@ -105,9 +105,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return SafeArea(
-      minimum: const EdgeInsets.only(bottom: 8),
-      child: Column(
+    return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           // Drag handle
@@ -215,8 +213,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
           // Model list
           Expanded(child: _buildBody(context)),
         ],
-      ),
-    );
+      );
   }
 
   Widget _buildBody(BuildContext context) {

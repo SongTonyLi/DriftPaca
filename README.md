@@ -48,6 +48,73 @@ flutter build ios --release
 flutter install -d <device-id>
 ```
 
+## Agent Memory
+
+LlamaSeek uses a three-tier memory architecture to personalize conversations without cross-chat contamination.
+
+```
+                          +------------------+
+                          |   User Message   |
+                          +--------+---------+
+                                   |
+                    +--------------v---------------+
+                    |  1. TOPIC SELECTION (pre-msg) |
+                    |  Lightweight LLM call picks   |
+                    |  relevant keys from Tier 2+3  |
+                    +--------------+---------------+
+                                   |
+                    +--------------v---------------+
+                    |    BUILD SYSTEM PROMPT        |
+                    |                               |
+                    |  +-------------------------+  |
+                    |  | System Info (runtime)    |  |  <-- always injected
+                    |  | Current time, timezone   |  |
+                    |  +-------------------------+  |
+                    |  | Tier 1: Stable Profile   |  |  <-- always injected
+                    |  | Name, language, tone,    |  |
+                    |  | role, communication style|  |
+                    |  +-------------------------+  |
+                    |  | Tier 2+3: Selected Only  |  |  <-- selectively injected
+                    |  | [topic: Flutter dev] ... |  |
+                    |  | [recent: debugging] ...  |  |
+                    |  +-------------------------+  |
+                    |  | Conversation Memory      |  |  <-- always (per-chat)
+                    |  | Summary, key context ... |  |
+                    |  +-------------------------+  |
+                    +--------------+---------------+
+                                   |
+                    +--------------v---------------+
+                    |       LLM RESPONSE            |
+                    +--------------+---------------+
+                                   |
+                    +--------------v---------------+
+                    |  2. MEMORY UPDATE (post-msg)  |
+                    |  Fire-and-forget LLM call     |
+                    +--------------+---------------+
+                                   |
+              +--------------------+--------------------+
+              |                    |                     |
+   +----------v----------+ +------v-------+ +-----------v-----------+
+   | Tier 1: Profile     | | Tier 2: Topics | | Tier 3: Ephemeral   |
+   | HIGH confidence only| | Create/Update/ | | Auto-expires (TTL)  |
+   | Name, language,     | | Merge organic  | | "debugging crash",  |
+   | tone, role, style   | | topic entries   | | "writing essay"     |
+   +---------------------+ +----------------+ +-----------------------+
+              |                    |                     |
+              +--------------------+---------------------+
+                                   |
+                            +------v------+
+                            |   SQLite DB  |
+                            +-------------+
+```
+
+**Anti-contamination guarantees:**
+- Profile only updates on high-confidence, stable observations
+- Topic-specific knowledge is scoped and selectively injected per-conversation
+- Ephemeral context auto-expires after 7-14 days
+- If topic selection fails, only safe universal profile is injected
+- Incognito chats skip agent memory entirely
+
 ## Architecture
 
 ```

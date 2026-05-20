@@ -46,6 +46,7 @@ class _ChatBubbleBody extends StatelessWidget {
       LatexBlockSyntax(),
     ],
     [
+      _InlineHtmlBrSyntax(),
       _InlineLatexSyntax(),
       ...md.ExtensionSet.gitHubFlavored.inlineSyntaxes,
     ],
@@ -635,6 +636,19 @@ class _EditPopupContentState extends State<_EditPopupContent> {
         ),
       ),
     );
+  }
+}
+
+/// Converts <br>, <br/>, <br /> into a newline text node so that
+/// softLineBreak rendering produces a visual line break — including
+/// inside table cells where the HTML tag would otherwise show literally.
+class _InlineHtmlBrSyntax extends md.InlineSyntax {
+  _InlineHtmlBrSyntax() : super(r'<br\s*/?>');
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    parser.addNode(md.Text('\n'));
+    return true;
   }
 }
 

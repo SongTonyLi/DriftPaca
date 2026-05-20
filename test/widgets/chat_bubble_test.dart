@@ -504,6 +504,69 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Group 8b: HTML <br> tags in markdown
+  // ---------------------------------------------------------------------------
+  group('HTML br tags', () {
+    testWidgets('renders <br> as line break in table cells', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| Key | Value |
+| --- | --- |
+| Info | Line one<br>Line two |
+''',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.textContaining('<br>'), findsNothing);
+      expect(find.textContaining('Line one'), findsOneWidget);
+      expect(find.textContaining('Line two'), findsOneWidget);
+    });
+
+    testWidgets('renders <br/> and <br /> variants', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'First<br/>Second<br />Third',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.textContaining('<br'), findsNothing);
+    });
+
+    testWidgets('renders <br> in regular paragraphs', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'Hello<br>World',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.textContaining('<br>'), findsNothing);
+    });
+
+    testWidgets('renders multiple <br> with bullet points in table cell', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '| Header |\n| --- |\n| Item A<br>• bullet one<br>• bullet two |',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.textContaining('<br>'), findsNothing);
+    });
+
+    testWidgets('does not affect <br> inside code blocks', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '```\n<br>\n```',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      // Inside code blocks, <br> should remain as literal text.
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Group 9: Error handling and fallback rendering
   // ---------------------------------------------------------------------------
   group('error handling and fallbacks', () {

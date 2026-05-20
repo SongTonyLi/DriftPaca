@@ -73,6 +73,14 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
     final incognitoTheme = baseTheme.copyWith(
       brightness: Brightness.dark,
       colorScheme: _incognitoColorScheme,
+      scaffoldBackgroundColor: _incognitoColorScheme.surface,
+      iconTheme: baseTheme.iconTheme.copyWith(
+        color: _incognitoColorScheme.onSurface,
+      ),
+      textTheme: baseTheme.textTheme.apply(
+        bodyColor: _incognitoColorScheme.onSurface,
+        displayColor: _incognitoColorScheme.onSurface,
+      ),
     );
 
     return AnimatedTheme(

@@ -504,6 +504,58 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Group 8c: Pipes inside LaTeX in table cells
+  // ---------------------------------------------------------------------------
+  group('pipes inside LaTeX in tables', () {
+    testWidgets('renders |Psi|^2 in table cell without breaking table', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| Symbol | Meaning |
+| --- | --- |
+| Probability | $\rho=|\Psi|^2$ |
+''',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+      // The pipe should not appear as raw text
+      expect(find.textContaining(r'$\rho='), findsNothing);
+    });
+
+    testWidgets('renders multiple pipes in LaTeX in table', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| Formula |
+| --- |
+| $|a| + |b| = |a+b|$ |
+''',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
+
+    testWidgets('does not affect pipes outside LaTeX in table', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| A | B |
+| --- | --- |
+| $x$ | $y$ |
+''',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(2));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Group 8b: HTML <br> tags in markdown
   // ---------------------------------------------------------------------------
   group('HTML br tags', () {

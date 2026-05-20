@@ -62,6 +62,7 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
 
     final scaffold = Scaffold(
       extendBodyBehindAppBar: true,
+      backgroundColor: isIncognito ? _incognitoColorScheme.surface : null,
       appBar: const ChatAppBar(),
       body: const SafeArea(top: false, bottom: false, child: ChatPage()),
       drawer: const ChatDrawer(),

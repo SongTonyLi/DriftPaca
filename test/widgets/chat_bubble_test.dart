@@ -520,7 +520,6 @@ void main() {
 
       expect(overflowErrors(errors), isEmpty);
       expect(find.byType(Math), findsOneWidget);
-      // The pipe should not appear as raw text
       expect(find.textContaining(r'$\rho='), findsNothing);
     });
 
@@ -552,6 +551,73 @@ void main() {
 
       expect(overflowErrors(errors), isEmpty);
       expect(find.byType(Math), findsNWidgets(2));
+    });
+
+    testWidgets('currency dollar in table does not break cells', (tester) async {
+      // Unmatched $ (like currency) must NOT enter "latex mode"
+      // and convert cell delimiters to \vert.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| Item | Price |
+| --- | --- |
+| Widget | $5 |
+| Gadget | $10 |
+''',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      // Table should have 2 data rows — if pipes were corrupted,
+      // the table would fail to parse.
+    });
+
+    testWidgets('inline code in table cells renders without crash', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '| Code |\n| --- |\n| `formula` |',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.textContaining('formula'), findsOneWidget);
+    });
+
+    testWidgets('mixed LaTeX and plain cells in same row', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| Name | Formula | Notes |
+| --- | --- | --- |
+| Norm | $|\Psi|^2$ | positive |
+''',
+        surfaceSize: const Size(500, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+      expect(find.textContaining('positive'), findsOneWidget);
+    });
+
+    testWidgets('pipe in earlier row does not break later rows', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '| Name | Formula |\n| --- | --- |\n| Prob | \$\\rho=|\\Psi|^2\$ |\n| Limit | \$\\hbar\\to 0\$ |',
+        surfaceSize: const Size(500, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(2));
+    });
+
+    testWidgets('non-table line starting with pipe is not affected', (tester) async {
+      // A line with | that is not a table row should pass through unchanged.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'|x| means absolute value: $|x|$.',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
     });
   });
 

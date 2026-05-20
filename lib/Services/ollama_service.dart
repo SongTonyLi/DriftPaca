@@ -163,7 +163,8 @@ class OllamaService {
     List<OllamaMessage> messages, {
     required OllamaChat chat,
     ConversationMemory? conversationMemory,
-    AgentMemory? agentMemory,
+    AgentMemory? profile,
+    String relevantContext = '',
   }) async {
     final url = constructUrl("/api/chat");
 
@@ -175,7 +176,8 @@ class OllamaService {
         "messages": await _prepareMessagesWithSystemPrompt(
           messages, chat.systemPrompt,
           conversationMemory: conversationMemory,
-          agentMemory: agentMemory,
+          profile: profile,
+          relevantContext: relevantContext,
           currentModel: chat.model,
         ),
         if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),

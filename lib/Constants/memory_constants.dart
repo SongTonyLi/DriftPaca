@@ -1,7 +1,5 @@
 // lib/Constants/memory_constants.dart
 
-import 'dart:convert';
-
 class MemoryConstants {
   static const String defaultModel = 'gpt-oss:120b-cloud';
 
@@ -34,7 +32,7 @@ class MemoryConstants {
 
 ## Rules:
 - **Profile updates**: Only update profile fields when you have HIGH confidence. Profile stores stable, universal traits (name, language, communication style). Do NOT infer profile traits from a single conversation topic. A user discussing physics homework does NOT mean their role is "physics student" unless they explicitly say so.
-  - Confidence levels: "high" = user explicitly stated it or it\'s been consistent across context. "medium" = reasonable inference but not confirmed. "low" = speculation.
+  - Confidence levels: "high" = user explicitly stated it or it has been consistent across context. "medium" = reasonable inference but not confirmed. "low" = speculation.
   - Only "high" confidence updates will be applied. Be conservative.
 - **Topic updates**: Create, update, or merge topic entries. Topics are domain-specific knowledge (e.g., "Flutter development", "quantum mechanics homework"). Use descriptive but general keys. Merge similar topics when they overlap.
   - Actions: "create" (new topic), "update" (modify existing topic content), "merge" (combine two topics — specify "from" and "into")
@@ -120,7 +118,7 @@ Return a JSON object with exactly this structure:
 
 Rules:
 - Only include keys whose content would genuinely help answer the current conversation
-- When in doubt, exclude — it\'s better to miss a marginally relevant topic than to inject irrelevant context
+- When in doubt, exclude — it is better to miss a marginally relevant topic than to inject irrelevant context
 - Return an empty array if nothing is relevant
 
 Return ONLY the JSON object, no other text.''';

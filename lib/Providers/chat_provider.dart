@@ -345,7 +345,7 @@ class ChatProvider extends ChangeNotifier {
     String relevantContext = '';
     if (!associatedChat.isIncognito) {
       relevantContext = await _memoryService.selectRelevantContext(
-        recentMessages: messagesToSend,
+        messagesToSend,
         conversationSummary: conversationMemory?.summary,
       );
     }

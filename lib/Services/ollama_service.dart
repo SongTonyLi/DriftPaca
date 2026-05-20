@@ -199,23 +199,68 @@ class OllamaService {
     ConversationMemory? conversationMemory,
     AgentMemory? agentMemory,
   }) async* {
+    // Determine vision support: only strip images when we are confident
+    // the model lacks vision. Default to true (send images) when unknown.
+    final hasImages = messages.any((m) => m.images != null && m.images!.isNotEmpty);
+    bool supportsVision = true;
+    if (hasImages) {
+      if (!_capabilitiesCache.containsKey(chat.model)) {
+        final show = await _showModel(chat.model);
+        if (show != null && show.capabilities.isNotEmpty) {
+          _capabilitiesCache[chat.model] = ModelCapabilities.fromList(show.capabilities);
+        }
+      }
+      supportsVision = _capabilitiesCache[chat.model]?.vision ?? true;
+    }
+
+    final preparedMessages = await _prepareMessagesWithSystemPrompt(
+      messages, chat.systemPrompt,
+      conversationMemory: conversationMemory,
+      agentMemory: agentMemory,
+      currentModel: chat.model,
+      supportsVision: supportsVision,
+    );
+
     final url = constructUrl('/api/chat');
 
     final request = http.Request("POST", url);
     request.headers.addAll(headers);
     request.body = json.encode({
       "model": chat.model,
-      "messages": await _prepareMessagesWithSystemPrompt(
-        messages, chat.systemPrompt,
-        conversationMemory: conversationMemory,
-        agentMemory: agentMemory,
-        currentModel: chat.model,
-      ),
+      "messages": preparedMessages,
       if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
       "stream": true,
     });
 
     http.StreamedResponse response = await request.send();
+
+    // If the server rejects images (400), retry without them and cache
+    // the model as non-vision so future requests skip images immediately.
+    if (response.statusCode == 400 && supportsVision && hasImages) {
+      final body = await response.stream.bytesToString();
+      if (body.contains('image')) {
+        _capabilitiesCache[chat.model] = const ModelCapabilities();
+
+        final retryMessages = await _prepareMessagesWithSystemPrompt(
+          messages, chat.systemPrompt,
+          conversationMemory: conversationMemory,
+          agentMemory: agentMemory,
+          currentModel: chat.model,
+          supportsVision: false,
+        );
+
+        final retryRequest = http.Request("POST", url);
+        retryRequest.headers.addAll(headers);
+        retryRequest.body = json.encode({
+          "model": chat.model,
+          "messages": retryMessages,
+          if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
+          "stream": true,
+        });
+
+        response = await retryRequest.send();
+      }
+    }
 
     if (response.statusCode == 200) {
       await for (final message in _processStream(response.stream)) {
@@ -267,6 +312,7 @@ class OllamaService {
     ConversationMemory? conversationMemory,
     AgentMemory? agentMemory,
     String? currentModel,
+    bool supportsVision = true,
   }) async {
     // Determine which messages to send
     final hasMemory = conversationMemory != null && !conversationMemory.isEmpty;
@@ -285,9 +331,21 @@ class OllamaService {
     final jsonMessages = <Map<String, dynamic>>[];
 
     for (final m in messagesToProcess) {
-      // Always send images — non-vision models silently ignore them,
-      // and vision detection is unreliable across providers.
-      final msgJson = await m.toChatJson();
+      Map<String, dynamic> msgJson;
+
+      // For confirmed non-vision models, replace images with a text placeholder
+      // so the model knows images were attached but can still answer.
+      if (!supportsVision && m.images != null && m.images!.isNotEmpty) {
+        final count = m.images!.length;
+        final tag = '[${count} image${count > 1 ? 's' : ''} attached — not viewable by this model]';
+        msgJson = {
+          "role": m.role.name,
+          "content": '$tag\n${m.content}',
+          if (m.thinking != null) "thinking": m.thinking,
+        };
+      } else {
+        msgJson = await m.toChatJson();
+      }
 
       // Only annotate assistant messages from a DIFFERENT model in multi-model chats
       // Use system-style annotation that models are less likely to copy

@@ -1340,18 +1340,67 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               ),
               IconButton(
                 icon: Icon(Icons.delete_outline, size: 20, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
-                onPressed: () async {
-                  if (topic.id != null) {
-                    await widget.onDeleteTopic(topic.id!);
-                    setState(() => _topics.removeWhere((t) => t.id == topic.id));
-                  }
-                },
+                onPressed: () => _confirmDeleteTopic(topic),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _confirmDeleteTopic(MemoryTopic topic) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Topic?'),
+        content: Text('This will permanently delete "${topic.topicKey}".'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              if (topic.id != null) {
+                await widget.onDeleteTopic(topic.id!);
+                setState(() => _topics.removeWhere((t) => t.id == topic.id));
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteEphemeral(EphemeralContext ctx) {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Delete Context?'),
+        content: Text('This will permanently delete "${ctx.contextKey}".'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogCtx);
+              if (ctx.id != null) {
+                await widget.onDeleteEphemeral(ctx.id!);
+                setState(() => _ephemeral.removeWhere((e) => e.id == ctx.id));
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }
@@ -1364,17 +1413,14 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       context: context,
       builder: (ctx) {
         final colorScheme = Theme.of(ctx).colorScheme;
-        return AnimatedPadding(
-          duration: const Duration(milliseconds: 200),
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Dialog(
-            backgroundColor: colorScheme.surface,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-                child: Column(
+        return Dialog(
+          backgroundColor: colorScheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1465,7 +1511,6 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               ],
             ),
           ),
-        ),
           ),
         );
       },
@@ -1612,12 +1657,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               ),
               IconButton(
                 icon: Icon(Icons.delete_outline, size: 20, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
-                onPressed: () async {
-                  if (ctx.id != null) {
-                    await widget.onDeleteEphemeral(ctx.id!);
-                    setState(() => _ephemeral.removeWhere((e) => e.id == ctx.id));
-                  }
-                },
+                onPressed: () => _confirmDeleteEphemeral(ctx),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
@@ -1638,13 +1678,10 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
         final colorScheme = Theme.of(ctx).colorScheme;
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
-            return AnimatedPadding(
-              duration: const Duration(milliseconds: 200),
-              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-              child: Dialog(
-                backgroundColor: colorScheme.surface,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            return Dialog(
+              backgroundColor: colorScheme.surface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
               child: SingleChildScrollView(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
@@ -1753,8 +1790,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                   ),
                 ),
               ),
-            ),
-              );
+            );
           },
         );
       },

@@ -197,7 +197,8 @@ class OllamaService {
     List<OllamaMessage> messages, {
     required OllamaChat chat,
     ConversationMemory? conversationMemory,
-    AgentMemory? agentMemory,
+    AgentMemory? profile,
+    String relevantContext = '',
   }) async* {
     // Determine vision support: only strip images when we are confident
     // the model lacks vision. Default to true (send images) when unknown.
@@ -216,7 +217,8 @@ class OllamaService {
     final preparedMessages = await _prepareMessagesWithSystemPrompt(
       messages, chat.systemPrompt,
       conversationMemory: conversationMemory,
-      agentMemory: agentMemory,
+      profile: profile,
+      relevantContext: relevantContext,
       currentModel: chat.model,
       supportsVision: supportsVision,
     );
@@ -244,7 +246,8 @@ class OllamaService {
         final retryMessages = await _prepareMessagesWithSystemPrompt(
           messages, chat.systemPrompt,
           conversationMemory: conversationMemory,
-          agentMemory: agentMemory,
+          profile: profile,
+          relevantContext: relevantContext,
           currentModel: chat.model,
           supportsVision: false,
         );
@@ -310,7 +313,8 @@ class OllamaService {
     List<OllamaMessage> messages,
     String? systemPrompt, {
     ConversationMemory? conversationMemory,
-    AgentMemory? agentMemory,
+    AgentMemory? profile,
+    String relevantContext = '',
     String? currentModel,
     bool supportsVision = true,
   }) async {
@@ -369,12 +373,13 @@ class OllamaService {
     }
 
     // Inject memories if available
+    final profileBlock = profile?.toPromptBlock() ?? '';
     final convBlock = conversationMemory?.toPromptBlock() ?? '';
-    final agentBlock = agentMemory?.toPromptBlock() ?? '';
-    if (convBlock.isNotEmpty || agentBlock.isNotEmpty) {
+    if (profileBlock.isNotEmpty || relevantContext.isNotEmpty || convBlock.isNotEmpty) {
       systemParts.add(MemoryConstants.buildMemoryInjection(
+        profileBlock: profileBlock,
+        relevantContextBlock: relevantContext,
         conversationMemoryBlock: convBlock,
-        agentMemoryBlock: agentBlock,
       ));
     }
 

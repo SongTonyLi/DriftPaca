@@ -337,15 +337,25 @@ class ChatProvider extends ChangeNotifier {
 
     // Fetch memories for injection — incognito chats use conv memory but skip agent memory
     final conversationMemory = await _memoryService.getConversationMemory(associatedChat.id);
-    final agentMemory = associatedChat.isIncognito
+    final profile = associatedChat.isIncognito
         ? null
         : await _memoryService.getAgentMemory();
+
+    // Select relevant topics/ephemeral for this conversation
+    String relevantContext = '';
+    if (!associatedChat.isIncognito) {
+      relevantContext = await _memoryService.selectRelevantContext(
+        recentMessages: messagesToSend,
+        conversationSummary: conversationMemory?.summary,
+      );
+    }
 
     final stream = _ollamaService.chatStream(
       messagesToSend,
       chat: associatedChat,
       conversationMemory: conversationMemory,
-      agentMemory: agentMemory,
+      profile: profile,
+      relevantContext: relevantContext,
     );
 
     OllamaMessage? streamingMessage;

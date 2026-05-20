@@ -1,39 +1,29 @@
 import 'dart:convert';
 
 class AgentMemory {
-  final String userProfile;
-  final String preferences;
-  final String learnedFacts;
-  final String interestsAndExpertise;
-  final String languageAndTone;
-  final String keyPeople;
-  final String ongoingProjects;
-  final String pastConversationRefs;
+  final String name;
+  final String primaryLanguage;
+  final String toneAndFormality;
+  final String roleAndBackground;
+  final String communicationStyle;
   final DateTime updatedAt;
 
   AgentMemory({
-    this.userProfile = '',
-    this.preferences = '',
-    this.learnedFacts = '',
-    this.interestsAndExpertise = '',
-    this.languageAndTone = '',
-    this.keyPeople = '',
-    this.ongoingProjects = '',
-    this.pastConversationRefs = '',
+    this.name = '',
+    this.primaryLanguage = '',
+    this.toneAndFormality = '',
+    this.roleAndBackground = '',
+    this.communicationStyle = '',
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
   bool get isEmpty =>
-      userProfile.isEmpty &&
-      preferences.isEmpty &&
-      learnedFacts.isEmpty &&
-      interestsAndExpertise.isEmpty &&
-      languageAndTone.isEmpty &&
-      keyPeople.isEmpty &&
-      ongoingProjects.isEmpty &&
-      pastConversationRefs.isEmpty;
+      name.isEmpty &&
+      primaryLanguage.isEmpty &&
+      toneAndFormality.isEmpty &&
+      roleAndBackground.isEmpty &&
+      communicationStyle.isEmpty;
 
-  /// Converts a value that may be a String, List, or null to a String.
   static String _asString(dynamic value) {
     if (value == null) return '';
     if (value is String) return value;
@@ -43,14 +33,11 @@ class AgentMemory {
 
   factory AgentMemory.fromMap(Map<String, dynamic> map) {
     return AgentMemory(
-      userProfile: _asString(map['user_profile']),
-      preferences: _asString(map['preferences']),
-      learnedFacts: _asString(map['learned_facts']),
-      interestsAndExpertise: _asString(map['interests_and_expertise']),
-      languageAndTone: _asString(map['language_and_tone']),
-      keyPeople: _asString(map['key_people']),
-      ongoingProjects: _asString(map['ongoing_projects']),
-      pastConversationRefs: _asString(map['past_conversation_refs']),
+      name: _asString(map['name']),
+      primaryLanguage: _asString(map['primary_language']),
+      toneAndFormality: _asString(map['tone_and_formality']),
+      roleAndBackground: _asString(map['role_and_background']),
+      communicationStyle: _asString(map['communication_style']),
       updatedAt: map['updated_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['updated_at'])
           : null,
@@ -59,65 +46,49 @@ class AgentMemory {
 
   Map<String, dynamic> toMap() {
     return {
-      'user_profile': userProfile,
-      'preferences': preferences,
-      'learned_facts': learnedFacts,
-      'interests_and_expertise': interestsAndExpertise,
-      'language_and_tone': languageAndTone,
-      'key_people': keyPeople,
-      'ongoing_projects': ongoingProjects,
-      'past_conversation_refs': pastConversationRefs,
+      'name': name,
+      'primary_language': primaryLanguage,
+      'tone_and_formality': toneAndFormality,
+      'role_and_background': roleAndBackground,
+      'communication_style': communicationStyle,
       'updated_at': updatedAt.millisecondsSinceEpoch,
     };
   }
 
   AgentMemory copyWith({
-    String? userProfile,
-    String? preferences,
-    String? learnedFacts,
-    String? interestsAndExpertise,
-    String? languageAndTone,
-    String? keyPeople,
-    String? ongoingProjects,
-    String? pastConversationRefs,
+    String? name,
+    String? primaryLanguage,
+    String? toneAndFormality,
+    String? roleAndBackground,
+    String? communicationStyle,
   }) {
     return AgentMemory(
-      userProfile: userProfile ?? this.userProfile,
-      preferences: preferences ?? this.preferences,
-      learnedFacts: learnedFacts ?? this.learnedFacts,
-      interestsAndExpertise: interestsAndExpertise ?? this.interestsAndExpertise,
-      languageAndTone: languageAndTone ?? this.languageAndTone,
-      keyPeople: keyPeople ?? this.keyPeople,
-      ongoingProjects: ongoingProjects ?? this.ongoingProjects,
-      pastConversationRefs: pastConversationRefs ?? this.pastConversationRefs,
+      name: name ?? this.name,
+      primaryLanguage: primaryLanguage ?? this.primaryLanguage,
+      toneAndFormality: toneAndFormality ?? this.toneAndFormality,
+      roleAndBackground: roleAndBackground ?? this.roleAndBackground,
+      communicationStyle: communicationStyle ?? this.communicationStyle,
     );
   }
 
   int get estimatedTokens {
-    final total = userProfile.length +
-        preferences.length +
-        learnedFacts.length +
-        interestsAndExpertise.length +
-        languageAndTone.length +
-        keyPeople.length +
-        ongoingProjects.length +
-        pastConversationRefs.length;
+    final total = name.length +
+        primaryLanguage.length +
+        toneAndFormality.length +
+        roleAndBackground.length +
+        communicationStyle.length;
     return (total / 4).ceil();
   }
 
   String toPromptBlock() {
     final sections = <String>[];
-    // System-managed: always reflects current time, not stored or editable
     final now = DateTime.now();
     sections.add('- **System Info**: Current time: ${now.toString().split('.').first} (${now.timeZoneName})');
-    if (userProfile.isNotEmpty) sections.add('- **Profile**: $userProfile');
-    if (preferences.isNotEmpty) sections.add('- **Preferences**: $preferences');
-    if (learnedFacts.isNotEmpty) sections.add('- **Learned Facts**: $learnedFacts');
-    if (interestsAndExpertise.isNotEmpty) sections.add('- **Interests & Expertise**: $interestsAndExpertise');
-    if (languageAndTone.isNotEmpty) sections.add('- **Language & Tone**: $languageAndTone');
-    if (keyPeople.isNotEmpty) sections.add('- **Key People**: $keyPeople');
-    if (ongoingProjects.isNotEmpty) sections.add('- **Ongoing Projects & Goals**: $ongoingProjects');
-    if (pastConversationRefs.isNotEmpty) sections.add('- **Past Conversations**: $pastConversationRefs');
+    if (name.isNotEmpty) sections.add('- **Name**: $name');
+    if (primaryLanguage.isNotEmpty) sections.add('- **Language**: $primaryLanguage');
+    if (toneAndFormality.isNotEmpty) sections.add('- **Tone & Formality**: $toneAndFormality');
+    if (roleAndBackground.isNotEmpty) sections.add('- **Role & Background**: $roleAndBackground');
+    if (communicationStyle.isNotEmpty) sections.add('- **Communication Style**: $communicationStyle');
     return sections.join('\n');
   }
 }

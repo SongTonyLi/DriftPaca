@@ -151,17 +151,22 @@ class _ChatBubbleBody extends StatelessWidget {
     return text;
   }
 
-  /// In table rows, replaces `|` inside matched LaTeX ($...$, $$...$$)
-  /// with `\vert` so the table parser doesn't split cells on them.
+  /// In table rows, replaces `|` inside LaTeX ($...$, $$...$$) with
+  /// `\vert` so the markdown table parser doesn't split cells on them.
   ///
-  /// Uses the same regex pattern as _InlineLatexSyntax to identify LaTeX
-  /// regions, ensuring consistency. Skips inline code (backtick-delimited)
-  /// and only processes lines that start with `|` (table rows).
+  /// The challenge: `|` is both a table cell delimiter AND valid LaTeX
+  /// (absolute value). A naive regex on the full line would false-match
+  /// currency like `$5 | $10` as one LaTeX expression.
+  ///
+  /// Guard: when a match contains `|`, we check whether the inner
+  /// content (with pipes stripped) is purely numeric/currency-like
+  /// (digits, spaces, punctuation). If so, the `$` signs are currency
+  /// and the `|` is a cell delimiter — skip replacement.
   static String _escapeLatexPipesInTables(String content) {
     final lines = content.split('\n');
     final result = <String>[];
-    // Same patterns as _InlineLatexSyntax — only match confirmed pairs.
-    final latexPattern = RegExp(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$');
+    // Same pattern as _InlineLatexSyntax for consistency.
+    final latexPattern = RegExp(r'\$\$(.+?)\$\$|\$([^$\n]+?)\$');
     final codePattern = RegExp(r'`[^`\n]+`');
 
     for (final line in lines) {
@@ -170,7 +175,7 @@ class _ChatBubbleBody extends StatelessWidget {
         continue;
       }
 
-      // Skip inline code segments, only escape pipes in non-code parts.
+      // Skip inline code, only process non-code segments.
       final buf = StringBuffer();
       int pos = 0;
       for (final codeMatch in codePattern.allMatches(line)) {
@@ -186,13 +191,27 @@ class _ChatBubbleBody extends StatelessWidget {
     return result.join('\n');
   }
 
-  /// Within matched $...$ / $$...$$ regions, replace | with \vert.
+  /// Regex for content that looks like currency/numeric, NOT LaTeX.
+  /// Digits, whitespace, and common punctuation (no letters).
+  static final _currencyContentPattern = RegExp(r'^[\d\s,.\-+%/()]*$');
+
+  /// Within matched $...$ / $$...$$ regions, replace || with \Vert
+  /// and remaining | with \vert — but skip if the inner content is
+  /// purely numeric (likely currency like `$5 | $10`, not LaTeX).
   static String _replacePipesInLatex(String text, RegExp pattern) {
     return text.replaceAllMapped(pattern, (match) {
       final full = match.group(0)!;
       if (!full.contains('|')) return full;
-      // Only replace unescaped | (preserve existing \|).
-      return full.replaceAllMapped(RegExp(r'(?<!\\)\|'), (_) => '\\vert ');
+
+      // Guard: if inner content without pipes is purely numeric/currency,
+      // this is `$5 | $10` not LaTeX — leave the | as cell delimiters.
+      final inner = (match.group(1) ?? match.group(2) ?? '').replaceAll('|', '');
+      if (_currencyContentPattern.hasMatch(inner.trim())) return full;
+
+      // Real LaTeX — escape || (norm) first, then single |.
+      var escaped = full.replaceAllMapped(RegExp(r'(?<!\\)\|\|'), (_) => '\\Vert ');
+      escaped = escaped.replaceAllMapped(RegExp(r'(?<!\\)\|'), (_) => '\\vert ');
+      return escaped;
     });
   }
 }

@@ -117,6 +117,7 @@ class _ChatBubbleBody extends StatelessWidget {
       extensionSet: _markdownExtensionSet,
       builders: {
         'latex': _SmartLatexBuilder(),
+        'br': _HtmlBrBuilder(),
       },
       onTapLink: (text, href, title) => launchUrlString(href!),
     );
@@ -703,16 +704,32 @@ class _EditPopupContentState extends State<_EditPopupContent> {
   }
 }
 
-/// Converts <br>, <br/>, <br /> into a newline text node so that
-/// softLineBreak rendering produces a visual line break — including
-/// inside table cells where the HTML tag would otherwise show literally.
+/// Converts <br>, <br/>, <br /> into a `br` element rendered as a
+/// full-width line break widget. Using a WidgetSpan (via _HtmlBrBuilder)
+/// instead of a \n text node avoids a Flutter RichText issue where
+/// WidgetSpan elements don't follow \n line breaks correctly — they
+/// float to the previous line instead of staying with their text.
 class _InlineHtmlBrSyntax extends md.InlineSyntax {
   _InlineHtmlBrSyntax() : super(r'<br\s*/?>');
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {
-    parser.addNode(md.Text('\n'));
+    parser.addNode(md.Element.empty('br'));
     return true;
+  }
+}
+
+/// Renders `br` elements as a full-width zero-height widget that
+/// forces subsequent inline content to the next line.
+class _HtmlBrBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    return const SizedBox(width: double.infinity, height: 0);
   }
 }
 

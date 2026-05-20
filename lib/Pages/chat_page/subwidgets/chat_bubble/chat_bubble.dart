@@ -107,7 +107,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
   static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
     return MarkdownBody(
-      data: _preprocessLatex(data),
+      data: _escapeLatexPipesInTables(_preprocessLatex(data)),
       selectable: selectable,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
@@ -149,6 +149,56 @@ class _ChatBubbleBody extends StatelessWidget {
       (m) => '\$${m[1]}\$',
     );
     return text;
+  }
+
+  /// In table rows, replaces `|` inside LaTeX ($...$) with `\vert`
+  /// so the markdown table parser doesn't treat them as cell delimiters.
+  static String _escapeLatexPipesInTables(String content) {
+    final lines = content.split('\n');
+    final result = <String>[];
+
+    for (final line in lines) {
+      if (!line.trimLeft().startsWith('|')) {
+        result.add(line);
+        continue;
+      }
+
+      // Track whether we're inside $...$ or $$...$$ and replace | → \vert.
+      final buf = StringBuffer();
+      bool inSingle = false;
+      bool inDouble = false;
+
+      for (int i = 0; i < line.length; i++) {
+        final c = line[i];
+
+        // Check for $$ before single $
+        if (c == '\$' && i + 1 < line.length && line[i + 1] == '\$' && !inSingle) {
+          inDouble = !inDouble;
+          buf.write('\$\$');
+          i++;
+          continue;
+        }
+
+        // Single $ toggle (skip escaped \$)
+        if (c == '\$' && !inDouble && !(i > 0 && line[i - 1] == '\\')) {
+          inSingle = !inSingle;
+          buf.write(c);
+          continue;
+        }
+
+        // Replace | with \vert inside LaTeX
+        if (c == '|' && (inSingle || inDouble)) {
+          buf.write('\\vert ');
+          continue;
+        }
+
+        buf.write(c);
+      }
+
+      result.add(buf.toString());
+    }
+
+    return result.join('\n');
   }
 }
 

@@ -553,9 +553,7 @@ void main() {
       expect(find.byType(Math), findsNWidgets(2));
     });
 
-    testWidgets('currency dollar in table does not break cells', (tester) async {
-      // Unmatched $ (like currency) must NOT enter "latex mode"
-      // and convert cell delimiters to \vert.
+    testWidgets('currency dollar in separate table rows does not break cells', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
         r'''
@@ -568,8 +566,27 @@ void main() {
       );
 
       expect(overflowErrors(errors), isEmpty);
-      // Table should have 2 data rows — if pipes were corrupted,
-      // the table would fail to parse.
+    });
+
+    testWidgets('two currency values in same table row do not break table', (tester) async {
+      // Critical: $5 in one cell must NOT pair with $10 in the next
+      // cell as a LaTeX expression, which would corrupt the | delimiter.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'''
+| Item | Price | Tax |
+| --- | --- | --- |
+| Widget | $5 | $10 |
+''',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      // If pipes were corrupted, the table would only have 2 columns
+      // instead of 3. Check that all 3 data cells rendered.
+      expect(find.textContaining('Widget'), findsOneWidget);
+      expect(find.textContaining('5'), findsWidgets);
+      expect(find.textContaining('10'), findsWidgets);
     });
 
     testWidgets('inline code in table cells renders without crash', (tester) async {

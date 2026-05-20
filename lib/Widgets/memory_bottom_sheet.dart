@@ -1360,168 +1360,105 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
     final keyController = TextEditingController(text: existing?.topicKey ?? '');
     final contentController = TextEditingController(text: existing?.content ?? '');
 
-    final result = await showModalBottomSheet<bool>(
+    final result = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        final colorScheme = Theme.of(sheetContext).colorScheme;
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
-          ),
-          child: Container(
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Drag handle
-                  Container(
-                    margin: const EdgeInsets.only(top: 10),
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(2),
+      builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        return Dialog(
+          backgroundColor: colorScheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header with inline topic name
+                Row(
+                  children: [
+                    Icon(
+                      existing != null ? Icons.edit_outlined : Icons.add_circle_outline,
+                      size: 20,
+                      color: colorScheme.primary,
                     ),
-                  ),
-                  // Header
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 4),
-                    child: Row(
-                      children: [
-                        Icon(
-                          existing != null ? Icons.edit_outlined : Icons.add_circle_outline,
-                          size: 20,
-                          color: colorScheme.primary,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: keyController,
+                        textCapitalization: TextCapitalization.sentences,
+                        autofocus: existing == null,
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          color: colorScheme.onSurface,
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            existing != null ? 'Edit Topic' : 'New Topic',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 17,
-                              color: colorScheme.onSurface,
-                            ),
+                        decoration: InputDecoration(
+                          hintText: 'Topic name...',
+                          hintStyle: TextStyle(
+                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
                           ),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                          isDense: true,
                         ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(sheetContext, false),
-                          icon: Icon(Icons.close, size: 20, color: colorScheme.onSurfaceVariant),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Fields
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Topic Name',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        TextField(
-                          controller: keyController,
-                          textCapitalization: TextCapitalization.sentences,
-                          autofocus: existing == null,
-                          style: TextStyle(fontSize: 15, color: colorScheme.onSurface),
-                          decoration: InputDecoration(
-                            hintText: 'e.g. Flutter Development',
-                            hintStyle: TextStyle(
-                              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
-                              fontSize: 15,
-                            ),
-                            filled: true,
-                            fillColor: colorScheme.surfaceContainerLowest,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: colorScheme.primary.withValues(alpha: 0.5),
-                                width: 1.5,
-                              ),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Content',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        TextField(
-                          controller: contentController,
-                          textCapitalization: TextCapitalization.sentences,
-                          maxLines: 6,
-                          minLines: 4,
-                          style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
-                          decoration: InputDecoration(
-                            hintText: 'What should the AI remember about this topic?',
-                            hintStyle: TextStyle(
-                              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
-                              fontSize: 14,
-                            ),
-                            filled: true,
-                            fillColor: colorScheme.surfaceContainerLowest,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: colorScheme.primary.withValues(alpha: 0.5),
-                                width: 1.5,
-                              ),
-                            ),
-                            contentPadding: const EdgeInsets.all(14),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Actions
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(sheetContext, true),
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                       ),
                     ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      icon: Icon(Icons.close, size: 20, color: colorScheme.onSurfaceVariant),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                // Content
+                Text(
+                  'Content',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                    letterSpacing: 0.2,
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: contentController,
+                  textCapitalization: TextCapitalization.sentences,
+                  maxLines: 6,
+                  minLines: 4,
+                  style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
+                  decoration: InputDecoration(
+                    hintText: 'What should the AI remember about this topic?',
+                    hintStyle: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35), fontSize: 14),
+                    filled: true,
+                    fillColor: colorScheme.surfaceContainerLowest,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.all(14),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                // Save button
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -1689,168 +1626,120 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
     final contentController = TextEditingController(text: existing.content);
     double ttlDays = existing.daysRemaining.clamp(1, EphemeralContext.maxTtlDays).toDouble();
 
-    final result = await showModalBottomSheet<bool>(
+    final result = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        final colorScheme = Theme.of(sheetContext).colorScheme;
+      builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
         return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: colorScheme.surface,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                ),
-                child: SafeArea(
-                  top: false,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Drag handle
-                      Container(
-                        margin: const EdgeInsets.only(top: 10),
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      // Header
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 12, 4),
-                        child: Row(
-                          children: [
-                            Icon(Icons.schedule_outlined, size: 20, color: colorScheme.primary),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    existing.contextKey,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 17,
-                                      color: colorScheme.onSurface,
-                                    ),
-                                  ),
-                                ],
-                              ),
+          builder: (ctx, setDialogState) {
+            return Dialog(
+              backgroundColor: colorScheme.surface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Row(
+                      children: [
+                        Icon(Icons.schedule_outlined, size: 20, color: colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            existing.contextKey,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 17,
+                              color: colorScheme.onSurface,
                             ),
-                            IconButton(
-                              onPressed: () => Navigator.pop(sheetContext, false),
-                              icon: Icon(Icons.close, size: 20, color: colorScheme.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Fields
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Content',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                                letterSpacing: 0.2,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            TextField(
-                              controller: contentController,
-                              textCapitalization: TextCapitalization.sentences,
-                              maxLines: 6,
-                              minLines: 4,
-                              style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
-                              decoration: InputDecoration(
-                                filled: true,
-                                fillColor: colorScheme.surfaceContainerLowest,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide.none,
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(
-                                    color: colorScheme.primary.withValues(alpha: 0.5),
-                                    width: 1.5,
-                                  ),
-                                ),
-                                contentPadding: const EdgeInsets.all(14),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            // TTL control
-                            Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: colorScheme.surfaceContainerLowest,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.timer_outlined,
-                                        size: 16,
-                                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Expires in ${ttlDays.round()} day${ttlDays.round() == 1 ? '' : 's'}',
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w500,
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  Slider(
-                                    value: ttlDays,
-                                    min: 1,
-                                    max: EphemeralContext.maxTtlDays.toDouble(),
-                                    divisions: EphemeralContext.maxTtlDays - 1,
-                                    label: '${ttlDays.round()}d',
-                                    onChanged: (v) => setSheetState(() => ttlDays = v),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Actions
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            onPressed: () => Navigator.pop(sheetContext, true),
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                           ),
                         ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          icon: Icon(Icons.close, size: 20, color: colorScheme.onSurfaceVariant),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // Content
+                    Text(
+                      'Content',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                        letterSpacing: 0.2,
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: contentController,
+                      textCapitalization: TextCapitalization.sentences,
+                      maxLines: 6,
+                      minLines: 4,
+                      style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: colorScheme.surfaceContainerLowest,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+                        ),
+                        contentPadding: const EdgeInsets.all(14),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // TTL control
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerLowest,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.timer_outlined, size: 16, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Expires in ${ttlDays.round()} day${ttlDays.round() == 1 ? '' : 's'}',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: ttlDays,
+                            min: 1,
+                            max: EphemeralContext.maxTtlDays.toDouble(),
+                            divisions: EphemeralContext.maxTtlDays - 1,
+                            label: '${ttlDays.round()}d',
+                            onChanged: (v) => setDialogState(() => ttlDays = v),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // Save button
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );

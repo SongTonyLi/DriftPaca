@@ -73,7 +73,6 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
     final incognitoTheme = baseTheme.copyWith(
       brightness: Brightness.dark,
       colorScheme: _incognitoColorScheme,
-      scaffoldBackgroundColor: _incognitoColorScheme.surface,
       iconTheme: baseTheme.iconTheme.copyWith(
         color: _incognitoColorScheme.onSurface,
       ),

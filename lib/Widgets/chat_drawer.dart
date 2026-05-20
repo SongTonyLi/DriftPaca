@@ -540,48 +540,50 @@ class _AgentMemoryTile extends StatelessWidget {
 
   void _showAgentMemory(BuildContext context) async {
     final memoryService = Provider.of<MemoryService>(context, listen: false);
-    final agentMemory = await memoryService.getAgentMemory() ?? AgentMemory();
+    final profile = await memoryService.getAgentMemory() ?? AgentMemory();
+    final topics = await memoryService.getTopics();
+    final ephemeral = await memoryService.getEphemeralContexts();
 
     if (!context.mounted) return;
 
     showMemoryBottomSheet(
       context,
       title: 'Agent Memory',
-      maxTotalTokens: MemoryConstants.maxAgentMemoryTokens,
+      maxTotalTokens: MemoryConstants.maxProfileTokens,
       isUpdating: memoryService.isAgentMemoryUpdating,
       updatingModelName: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
-      lastUpdatedAt: agentMemory.updatedAt,
+      lastUpdatedAt: profile.updatedAt,
       lastUpdatedByModel: Hive.box('settings').get('memoryModel', defaultValue: MemoryConstants.defaultModel),
-      sections: [
+      profileSections: [
         MemorySection(
           label: 'System Info',
           key: 'system_info',
           value: 'Current time: ${DateTime.now().toString().split('.').first} (${DateTime.now().timeZoneName})',
           readOnly: true,
         ),
-        MemorySection(label: 'User Profile', key: 'user_profile', value: agentMemory.userProfile),
-        MemorySection(label: 'Preferences', key: 'preferences', value: agentMemory.preferences),
-        MemorySection(label: 'Learned Facts', key: 'learned_facts', value: agentMemory.learnedFacts),
-        MemorySection(label: 'Interests & Expertise', key: 'interests_and_expertise', value: agentMemory.interestsAndExpertise),
-        MemorySection(label: 'Language & Tone', key: 'language_and_tone', value: agentMemory.languageAndTone),
-        MemorySection(label: 'Key People', key: 'key_people', value: agentMemory.keyPeople),
-        MemorySection(label: 'Ongoing Projects & Goals', key: 'ongoing_projects', value: agentMemory.ongoingProjects),
-        MemorySection(label: 'Past Conversations', key: 'past_conversation_refs', value: agentMemory.pastConversationRefs),
+        MemorySection(label: 'Name', key: 'name', value: profile.name),
+        MemorySection(label: 'Language', key: 'primary_language', value: profile.primaryLanguage),
+        MemorySection(label: 'Tone & Formality', key: 'tone_and_formality', value: profile.toneAndFormality),
+        MemorySection(label: 'Role & Background', key: 'role_and_background', value: profile.roleAndBackground),
+        MemorySection(label: 'Communication Style', key: 'communication_style', value: profile.communicationStyle),
       ],
-      onSave: (sections) {
+      topics: topics,
+      ephemeralContexts: ephemeral.where((e) => !e.isExpired).toList(),
+      onSaveProfile: (sections) {
         final updated = AgentMemory(
-          userProfile: sections.firstWhere((s) => s.key == 'user_profile').value,
-          preferences: sections.firstWhere((s) => s.key == 'preferences').value,
-          learnedFacts: sections.firstWhere((s) => s.key == 'learned_facts').value,
-          interestsAndExpertise: sections.firstWhere((s) => s.key == 'interests_and_expertise').value,
-          languageAndTone: sections.firstWhere((s) => s.key == 'language_and_tone').value,
-          keyPeople: sections.firstWhere((s) => s.key == 'key_people').value,
-          ongoingProjects: sections.firstWhere((s) => s.key == 'ongoing_projects').value,
-          pastConversationRefs: sections.firstWhere((s) => s.key == 'past_conversation_refs').value,
+          name: sections.firstWhere((s) => s.key == 'name').value,
+          primaryLanguage: sections.firstWhere((s) => s.key == 'primary_language').value,
+          toneAndFormality: sections.firstWhere((s) => s.key == 'tone_and_formality').value,
+          roleAndBackground: sections.firstWhere((s) => s.key == 'role_and_background').value,
+          communicationStyle: sections.firstWhere((s) => s.key == 'communication_style').value,
         );
         memoryService.updateAgentMemoryField(updated);
       },
-      onClear: () => memoryService.clearAgentMemory(),
+      onSaveTopic: (topic) => memoryService.saveTopic(topic),
+      onDeleteTopic: (id) => memoryService.deleteTopicById(id),
+      onSaveEphemeral: (ctx) => memoryService.saveEphemeralContext(ctx),
+      onDeleteEphemeral: (id) => memoryService.deleteEphemeralContextById(id),
+      onClear: () => memoryService.clearAllAgentMemory(),
       onResummarize: (content, limit) => memoryService.resummarize(content, limit),
     );
   }

@@ -719,33 +719,25 @@ class _SmartLatexWidget extends StatelessWidget {
       ),
     );
 
-    final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
-    final renderedMath = inTableCell ? _buildScrollableTableMath(mathWidget) : mathWidget;
-
-    if (isDisplay) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: inTableCell
-            ? Align(
-                alignment: Alignment.center,
-                child: renderedMath,
-              )
-            : SizedBox(
-                width: double.infinity,
-                child: Center(child: renderedMath),
-              ),
-      );
-    }
-
-    return renderedMath;
-  }
-
-  Widget _buildScrollableTableMath(Math mathWidget) {
-    return SingleChildScrollView(
+    // Wrap in horizontal scroll so equations that exceed container width
+    // become slidable instead of overflowing.
+    final scrollableMath = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       clipBehavior: Clip.antiAlias,
       child: mathWidget,
     );
+
+    if (isDisplay) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: SizedBox(
+          width: double.infinity,
+          child: Center(child: scrollableMath),
+        ),
+      );
+    }
+
+    return scrollableMath;
   }
 }
 

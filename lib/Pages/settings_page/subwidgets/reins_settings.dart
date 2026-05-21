@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher_string.dart';
-import 'package:in_app_review/in_app_review.dart';
-import 'dart:io' show Platform;
 
 import 'package:llamaseek/Widgets/flexible_text.dart';
 
@@ -21,46 +18,6 @@ class ReinsSettings extends StatelessWidget {
               ),
         ),
         ListTile(
-          leading: Icon(Icons.rate_review),
-          title: Text('Review DriftPaca'),
-          subtitle: Text('Share your feedback'),
-          onTap: () async {
-            if (await InAppReview.instance.isAvailable() && Platform.isIOS) {
-              InAppReview.instance.openStoreListing(appStoreId: "6739738501");
-            } else {
-              launchUrlString('https://github.com/ibrahimcetin/reins');
-            }
-          },
-        ),
-        Builder(
-          builder: (builderContext) => ListTile(
-            leading: Icon(Icons.share),
-            title: Text('Share DriftPaca'),
-            subtitle: Text('Share DriftPaca with your friends'),
-            onTap: () {
-              _openShareSheet(builderContext);
-            },
-          ),
-        ),
-        if (Platform.isAndroid || Platform.isIOS)
-          ListTile(
-            leading: Icon(Icons.desktop_mac_outlined),
-            title: Text('Try Desktop App'),
-            subtitle: Text('Available on macOS and Linux'),
-            onTap: () {
-              launchUrlString('https://reins.ibrahimcetin.dev');
-            },
-          ),
-        if (Platform.isMacOS || Platform.isLinux || Platform.isWindows)
-          ListTile(
-            leading: Icon(Icons.phone_iphone_outlined),
-            title: Text('Try Mobile App'),
-            subtitle: Text('Available on iOS'),
-            onTap: () {
-              launchUrlString('https://reins.ibrahimcetin.dev');
-            },
-          ),
-        ListTile(
           leading: Icon(Icons.privacy_tip_outlined),
           title: Text('Privacy Policy'),
           subtitle: Text('How your data is handled'),
@@ -72,14 +29,6 @@ class ReinsSettings extends StatelessWidget {
           leading: Icon(Icons.code),
           title: Text('Go to Source Code'),
           subtitle: Text('View on GitHub'),
-          onTap: () {
-            launchUrlString('https://github.com/SongTonyLi/DriftPaca');
-          },
-        ),
-        ListTile(
-          leading: Icon(Icons.star),
-          title: Text('Give a Star on GitHub'),
-          subtitle: Text('Support the project'),
           onTap: () {
             launchUrlString('https://github.com/SongTonyLi/DriftPaca');
           },
@@ -97,17 +46,5 @@ class ReinsSettings extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  void _openShareSheet(BuildContext context) {
-    final box = context.findRenderObject() as RenderBox?;
-    if (box != null) {
-      SharePlus.instance.share(
-        ShareParams(
-          text: 'Check out DriftPaca: https://github.com/SongTonyLi/DriftPaca',
-          sharePositionOrigin: box.localToGlobal(Offset.zero) & box.size,
-        ),
-      );
-    }
   }
 }

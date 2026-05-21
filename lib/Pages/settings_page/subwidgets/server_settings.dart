@@ -376,23 +376,22 @@ class _ServerSettingsState extends State<ServerSettings> {
         throw OllamaException('Please enter an API key.');
       }
 
-      final url = Uri.parse('https://ollama.com/api/tags');
-      final response = await http.get(url, headers: {
+      // Use /api/chat to validate the key — /api/tags returns 200 for any key
+      final url = Uri.parse('https://ollama.com/api/chat');
+      final response = await http.post(url, headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
-      }).timeout(const Duration(seconds: 5));
+      }, body: '{"model":"","messages":[]}').timeout(const Duration(seconds: 5));
 
       if (!mounted) return;
 
-      if (response.statusCode == 200) {
-        _cloudRequestState = OllamaRequestState.success;
-        _settingsBox.put('cloudApiKey', apiKey);
-      } else if (response.statusCode == 401 || response.statusCode == 403) {
+      if (response.statusCode == 401 || response.statusCode == 403) {
         _cloudErrorText = 'Invalid API key.';
         _cloudRequestState = OllamaRequestState.error;
       } else {
-        _cloudErrorText = 'Connection failed (${response.statusCode}).';
-        _cloudRequestState = OllamaRequestState.error;
+        // Any non-401 response means the key is valid (even 400 for bad model)
+        _cloudRequestState = OllamaRequestState.success;
+        _settingsBox.put('cloudApiKey', apiKey);
       }
     } on OllamaException catch (error) {
       _cloudErrorText = error.message;

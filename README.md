@@ -1,4 +1,4 @@
-# LlamaSeek
+# DriftPaca
 
 Demo:
 
@@ -28,8 +28,8 @@ A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a 
 ### Run
 
 ```bash
-git clone https://github.com/SongTonyLi/LlamaSeek.git
-cd LlamaSeek
+git clone https://github.com/SongTonyLi/DriftPaca.git
+cd DriftPaca
 flutter pub get
 flutter run
 ```
@@ -50,7 +50,7 @@ flutter install -d <device-id>
 
 ## Agent Memory
 
-LlamaSeek uses a three-tier memory architecture to personalize conversations without cross-chat contamination.
+DriftPaca uses a three-tier memory architecture to personalize conversations without cross-chat contamination.
 
 ```
                           +------------------+
@@ -58,53 +58,53 @@ LlamaSeek uses a three-tier memory architecture to personalize conversations wit
                           +--------+---------+
                                    |
                     +--------------v---------------+
-                    |  1. TOPIC SELECTION (pre-msg) |
-                    |  Lightweight LLM call picks   |
-                    |  relevant keys from Tier 2+3  |
+                    |  1. TOPIC SELECTION (pre-msg)|
+                    |  Lightweight LLM call picks  |
+                    |  relevant keys from Tier 2+3 |
                     +--------------+---------------+
                                    |
                     +--------------v---------------+
-                    |    BUILD SYSTEM PROMPT        |
-                    |                               |
-                    |  +-------------------------+  |
-                    |  | System Info (runtime)    |  |  <-- always injected
-                    |  | Current time, timezone   |  |
-                    |  +-------------------------+  |
-                    |  | Tier 1: Stable Profile   |  |  <-- always injected
-                    |  | Name, language, tone,    |  |
-                    |  | role, communication style|  |
-                    |  +-------------------------+  |
-                    |  | Tier 2+3: Selected Only  |  |  <-- selectively injected
-                    |  | [topic: Flutter dev] ... |  |
-                    |  | [recent: debugging] ...  |  |
-                    |  +-------------------------+  |
-                    |  | Conversation Memory      |  |  <-- always (per-chat)
-                    |  | Summary, key context ... |  |
-                    |  +-------------------------+  |
+                    |    BUILD SYSTEM PROMPT       |
+                    |                              |
+                    |  +-------------------------+ |
+                    |  | System Info (runtime)   | |  <-- always injected
+                    |  | Current time, timezone  | |
+                    |  +-------------------------+ |
+                    |  | Tier 1: Stable Profile  | |  <-- always injected
+                    |  | Name, language, tone,   | |
+                    |  | role, talking style     | |
+                    |  +-------------------------+ |
+                    |  | Tier 2+3: Selected Only | |  <-- selectively injected
+                    |  | [topic: Flutter dev] ...| |
+                    |  | [recent: debugging] ... | |
+                    |  +-------------------------+ |
+                    |  | Conversation Memory     | |  <-- always (per-chat)
+                    |  | Summary, key context ...| |
+                    |  +-------------------------+ |
                     +--------------+---------------+
                                    |
                     +--------------v---------------+
-                    |       LLM RESPONSE            |
+                    |       LLM RESPONSE           |
                     +--------------+---------------+
                                    |
                     +--------------v---------------+
-                    |  2. MEMORY UPDATE (post-msg)  |
-                    |  Fire-and-forget LLM call     |
+                    |  2. MEMORY UPDATE (post-msg) |
+                    |  Fire-and-forget LLM call    |
                     +--------------+---------------+
                                    |
-              +--------------------+--------------------+
+              +--------------------+---------------------+
               |                    |                     |
-   +----------v----------+ +------v-------+ +-----------v-----------+
-   | Tier 1: Profile     | | Tier 2: Topics | | Tier 3: Ephemeral   |
-   | HIGH confidence only| | Create/Update/ | | Auto-expires (TTL)  |
-   | Name, language,     | | Merge organic  | | "debugging crash",  |
-   | tone, role, style   | | topic entries   | | "writing essay"     |
-   +---------------------+ +----------------+ +-----------------------+
+   +----------v----------+ +-------v--------+ +----------v---------+
+   | Tier 1: Profile     | | Tier 2: Topics | | Tier 3: Ephemeral  |
+   | HIGH confidence only| | Create/Update/ | | Auto-expires (TTL) |
+   | Name, language,     | | Merge organic  | | "debugging crash", |
+   | tone, role, style   | | topic entries  | | "writing essay"    |
+   +---------------------+ +----------------+ +--------------------+
               |                    |                     |
               +--------------------+---------------------+
                                    |
                             +------v------+
-                            |   SQLite DB  |
+                            |   SQLite DB |
                             +-------------+
 ```
 

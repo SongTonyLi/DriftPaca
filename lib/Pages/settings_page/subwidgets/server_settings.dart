@@ -54,14 +54,14 @@ class _ServerSettingsState extends State<ServerSettings> {
     if (serverAddress != null) {
       _serverAddressController.text = serverAddress;
       if (_serverMode == 'local') {
-        _handleConnectButton();
+        _handleConnectButton(silent: true);
       }
     }
 
     if (cloudApiKey != null) {
       _apiKeyController.text = cloudApiKey;
       if (_serverMode == 'cloud') {
-        _handleCloudConnectButton();
+        _handleCloudConnectButton(silent: true);
       }
     }
 
@@ -365,10 +365,12 @@ class _ServerSettingsState extends State<ServerSettings> {
     );
   }
 
-  _handleCloudConnectButton() async {
+  _handleCloudConnectButton({bool silent = false}) async {
     setState(() {
       _cloudErrorText = null;
-      _cloudRequestState = OllamaRequestState.loading;
+      if (!silent) {
+        _cloudRequestState = OllamaRequestState.loading;
+      }
     });
 
     try {
@@ -405,10 +407,12 @@ class _ServerSettingsState extends State<ServerSettings> {
     }
   }
 
-  _handleConnectButton() async {
+  _handleConnectButton({bool silent = false}) async {
     setState(() {
       _serverAddressErrorText = null;
-      _requestState = OllamaRequestState.loading;
+      if (!silent) {
+        _requestState = OllamaRequestState.loading;
+      }
     });
 
     try {

@@ -61,11 +61,19 @@ class ReinsSettings extends StatelessWidget {
             },
           ),
         ListTile(
+          leading: Icon(Icons.privacy_tip_outlined),
+          title: Text('Privacy Policy'),
+          subtitle: Text('How your data is handled'),
+          onTap: () {
+            launchUrlString('https://github.com/SongTonyLi/LlamaSeek/blob/main/PRIVACY_POLICY.md');
+          },
+        ),
+        ListTile(
           leading: Icon(Icons.code),
           title: Text('Go to Source Code'),
           subtitle: Text('View on GitHub'),
           onTap: () {
-            launchUrlString('https://github.com/ibrahimcetin/reins');
+            launchUrlString('https://github.com/SongTonyLi/LlamaSeek');
           },
         ),
         ListTile(
@@ -73,7 +81,7 @@ class ReinsSettings extends StatelessWidget {
           title: Text('Give a Star on GitHub'),
           subtitle: Text('Support the project'),
           onTap: () {
-            launchUrlString('https://github.com/ibrahimcetin/reins');
+            launchUrlString('https://github.com/SongTonyLi/LlamaSeek');
           },
         ),
         Row(

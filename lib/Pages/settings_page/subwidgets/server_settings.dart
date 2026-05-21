@@ -226,6 +226,7 @@ class _ServerSettingsState extends State<ServerSettings> {
             setState(() {
               _cloudErrorText = null;
               _cloudRequestState = OllamaRequestState.uninitialized;
+              _settingsBox.put('cloudDataConsented', false);
             });
           },
           decoration: InputDecoration(

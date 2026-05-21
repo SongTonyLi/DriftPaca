@@ -337,14 +337,14 @@ class _ServerSettingsState extends State<ServerSettings> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Data Sharing Disclosure'),
+        title: const Text('Data Sharing'),
         content: const Text(
           'By connecting to Ollama Cloud, the following data will be sent to ollama.com for AI processing:\n\n'
           '• Your chat messages and conversation history\n'
           '• System prompts you configure\n'
           '• Images you attach to messages\n\n'
-          'If you enable the memory feature, conversation summaries will also be sent for personalization.\n\n'
-          'Your API key is stored only on your device and is never shared with DriftPaca or any other party. No data is collected by this app. DriftPaca is open source — you can verify this in the source code.',
+          'Your API key is stored only on your device and is never shared with DriftPaca or any other party. No data is collected by this app. DriftPaca is fully open source, and you can verify the implementation in the source code.\n\n'
+          'If you have questions, reach out at:\nhttps://github.com/SongTonyLi/DriftPaca/issues',
         ),
         actions: [
           TextButton(

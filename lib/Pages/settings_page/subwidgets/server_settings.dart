@@ -291,7 +291,7 @@ class _ServerSettingsState extends State<ServerSettings> {
           width: double.infinity,
           child: ElevatedButton(
             onPressed:
-                _isCloudLoading || _apiKeyController.text.isEmpty ? null : _handleCloudConnectButton,
+                _isCloudLoading || _apiKeyController.text.isEmpty ? null : () => _handleCloudConnectWithConsent(context),
             child: _ConnectionStatusIndicator(
               color: _cloudConnectionStatusColor,
             ),
@@ -325,6 +325,43 @@ class _ServerSettingsState extends State<ServerSettings> {
       case OllamaRequestState.uninitialized:
         return Colors.grey;
     }
+  }
+
+  void _handleCloudConnectWithConsent(BuildContext context) {
+    final consented = _settingsBox.get('cloudDataConsented', defaultValue: false);
+    if (consented) {
+      _handleCloudConnectButton();
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Data Sharing Disclosure'),
+        content: const Text(
+          'By connecting to Ollama Cloud, the following data will be sent to ollama.com for AI processing:\n\n'
+          '• Your chat messages and conversation history\n'
+          '• System prompts you configure\n'
+          '• Images you attach to messages\n\n'
+          'If you enable the memory feature, conversation summaries will also be sent for personalization.\n\n'
+          'Your API key is stored only on your device and is never shared with DriftPaca or any other party. No data is collected by this app. DriftPaca is open source — you can verify this in the source code.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              _settingsBox.put('cloudDataConsented', true);
+              Navigator.pop(ctx);
+              _handleCloudConnectButton();
+            },
+            child: const Text('Agree & Connect'),
+          ),
+        ],
+      ),
+    );
   }
 
   _handleCloudConnectButton() async {

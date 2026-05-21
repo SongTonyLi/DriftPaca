@@ -2,7 +2,9 @@
 
 Demo:
 
-https://github.com/user-attachments/assets/f3e96b36-12ca-4aac-8e4a-7b1f0285a692
+
+https://github.com/user-attachments/assets/f60ef227-7b68-48e5-a498-4ae43a2741a7
+
 
 
 A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a modern glass-inspired UI.

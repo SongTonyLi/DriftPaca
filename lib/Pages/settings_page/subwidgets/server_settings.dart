@@ -157,6 +157,37 @@ class _ServerSettingsState extends State<ServerSettings> {
             FocusManager.instance.primaryFocus?.unfocus();
           },
         ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Your conversations will be sent to the Ollama server you configure. No data is collected by DriftPaca.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSecondaryContainer,
+                        height: 1.4,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
@@ -223,6 +254,37 @@ class _ServerSettingsState extends State<ServerSettings> {
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Your conversations will be sent to Ollama Cloud (ollama.com) for AI processing. Only data you enter in chats is transmitted. No data is collected by DriftPaca.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSecondaryContainer,
+                        height: 1.4,
+                      ),
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 16),
         SizedBox(

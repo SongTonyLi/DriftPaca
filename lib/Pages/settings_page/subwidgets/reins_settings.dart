@@ -65,7 +65,7 @@ class ReinsSettings extends StatelessWidget {
           title: Text('Privacy Policy'),
           subtitle: Text('How your data is handled'),
           onTap: () {
-            launchUrlString('https://github.com/SongTonyLi/LlamaSeek/blob/main/PRIVACY_POLICY.md');
+            launchUrlString('https://github.com/SongTonyLi/DriftPaca/blob/main/PRIVACY_POLICY.md');
           },
         ),
         ListTile(
@@ -73,7 +73,7 @@ class ReinsSettings extends StatelessWidget {
           title: Text('Go to Source Code'),
           subtitle: Text('View on GitHub'),
           onTap: () {
-            launchUrlString('https://github.com/SongTonyLi/LlamaSeek');
+            launchUrlString('https://github.com/SongTonyLi/DriftPaca');
           },
         ),
         ListTile(
@@ -81,7 +81,7 @@ class ReinsSettings extends StatelessWidget {
           title: Text('Give a Star on GitHub'),
           subtitle: Text('Support the project'),
           onTap: () {
-            launchUrlString('https://github.com/SongTonyLi/LlamaSeek');
+            launchUrlString('https://github.com/SongTonyLi/DriftPaca');
           },
         ),
         Row(
@@ -104,7 +104,7 @@ class ReinsSettings extends StatelessWidget {
     if (box != null) {
       SharePlus.instance.share(
         ShareParams(
-          text: 'Check out DriftPaca: https://github.com/SongTonyLi/LlamaSeek',
+          text: 'Check out DriftPaca: https://github.com/SongTonyLi/DriftPaca',
           sharePositionOrigin: box.localToGlobal(Offset.zero) & box.size,
         ),
       );

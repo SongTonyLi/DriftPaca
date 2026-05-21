@@ -8,8 +8,8 @@ import 'package:llamaseek/Widgets/chat_drawer.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
-class LlamaSeekMainPage extends StatelessWidget {
-  const LlamaSeekMainPage({super.key});
+class DriftPacaMainPage extends StatelessWidget {
+  const DriftPacaMainPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -26,17 +26,17 @@ class LlamaSeekMainPage extends StatelessWidget {
         }
 
         if (ResponsiveBreakpoints.of(context).isMobile) {
-          return const _LlamaSeekMobileMainPage();
+          return const _DriftPacaMobileMainPage();
         } else {
-          return const _LlamaSeekLargeMainPage();
+          return const _DriftPacaLargeMainPage();
         }
       },
     );
   }
 }
 
-class _LlamaSeekMobileMainPage extends StatelessWidget {
-  const _LlamaSeekMobileMainPage();
+class _DriftPacaMobileMainPage extends StatelessWidget {
+  const _DriftPacaMobileMainPage();
 
   static const _incognitoColorScheme = ColorScheme.dark(
     surface: Color(0xFF0D0D1A),
@@ -92,8 +92,8 @@ class _LlamaSeekMobileMainPage extends StatelessWidget {
   }
 }
 
-class _LlamaSeekLargeMainPage extends StatelessWidget {
-  const _LlamaSeekLargeMainPage();
+class _DriftPacaLargeMainPage extends StatelessWidget {
+  const _DriftPacaLargeMainPage();
 
   @override
   Widget build(BuildContext context) {

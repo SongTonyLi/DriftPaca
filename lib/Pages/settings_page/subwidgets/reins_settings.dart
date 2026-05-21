@@ -15,14 +15,14 @@ class ReinsSettings extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'LlamaSeek',
+          'DriftPaca',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
         ),
         ListTile(
           leading: Icon(Icons.rate_review),
-          title: Text('Review LlamaSeek'),
+          title: Text('Review DriftPaca'),
           subtitle: Text('Share your feedback'),
           onTap: () async {
             if (await InAppReview.instance.isAvailable() && Platform.isIOS) {
@@ -35,8 +35,8 @@ class ReinsSettings extends StatelessWidget {
         Builder(
           builder: (builderContext) => ListTile(
             leading: Icon(Icons.share),
-            title: Text('Share LlamaSeek'),
-            subtitle: Text('Share LlamaSeek with your friends'),
+            title: Text('Share DriftPaca'),
+            subtitle: Text('Share DriftPaca with your friends'),
             onTap: () {
               _openShareSheet(builderContext);
             },
@@ -82,7 +82,7 @@ class ReinsSettings extends StatelessWidget {
           children: [
             Icon(Icons.favorite, color: Colors.red, size: 16),
             FlexibleText(
-              "Thanks for using LlamaSeek!",
+              "Thanks for using DriftPaca!",
               textAlign: TextAlign.center,
             ),
           ],
@@ -96,7 +96,7 @@ class ReinsSettings extends StatelessWidget {
     if (box != null) {
       SharePlus.instance.share(
         ShareParams(
-          text: 'Check out LlamaSeek: https://reins.ibrahimcetin.dev',
+          text: 'Check out DriftPaca: https://github.com/SongTonyLi/LlamaSeek',
           sharePositionOrigin: box.localToGlobal(Offset.zero) & box.size,
         ),
       );

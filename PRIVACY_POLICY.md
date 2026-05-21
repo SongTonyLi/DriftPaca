@@ -4,11 +4,11 @@
 
 ## Overview
 
-LlamaSeek is an open-source AI chat client. Your privacy is important to us. This policy explains what data LlamaSeek handles and how.
+DriftPaca is an open-source AI chat client. Your privacy is important to us. This policy explains what data DriftPaca handles and how.
 
 ## Data Collection
 
-LlamaSeek does **not** collect, store, or transmit any personal data to us or any third parties. We have no servers, no analytics, and no tracking.
+DriftPaca does **not** collect, store, or transmit any personal data to us or any third parties. We have no servers, no analytics, and no tracking.
 
 ## Data Storage
 
@@ -16,15 +16,15 @@ All data — including chat history, settings, and preferences — is stored **l
 
 ## Network Communication
 
-LlamaSeek communicates only with the Ollama server URL that **you** configure. We do not intercept, log, or have access to any of these communications. You are responsible for the privacy practices of the Ollama server you connect to.
+DriftPaca communicates only with the Ollama server URL that **you** configure. We do not intercept, log, or have access to any of these communications. You are responsible for the privacy practices of the Ollama server you connect to.
 
 ## Third-Party Services
 
-LlamaSeek does not integrate any third-party analytics, advertising, or tracking services.
+DriftPaca does not integrate any third-party analytics, advertising, or tracking services.
 
 ## Open Source
 
-LlamaSeek is open source. You can inspect the full source code to verify our privacy practices at: https://github.com/SongTonyLi/LlamaSeek
+DriftPaca is open source. You can inspect the full source code to verify our privacy practices at: https://github.com/SongTonyLi/DriftPaca
 
 ## Contact
 

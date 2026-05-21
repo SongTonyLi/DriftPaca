@@ -76,13 +76,13 @@ void main() async {
           ),
         ),
       ],
-      child: const LlamaSeekApp(),
+      child: const DriftPacaApp(),
     ),
   );
 }
 
-class LlamaSeekApp extends StatelessWidget {
-  const LlamaSeekApp({super.key});
+class DriftPacaApp extends StatelessWidget {
+  const DriftPacaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +114,7 @@ class LlamaSeekApp extends StatelessWidget {
           onGenerateRoute: (settings) {
             if (settings.name == '/') {
               return MaterialPageRoute(
-                builder: (context) => const LlamaSeekMainPage(),
+                builder: (context) => const DriftPacaMainPage(),
               );
             }
 

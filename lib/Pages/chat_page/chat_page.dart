@@ -373,7 +373,33 @@ class _ChatPageState extends State<ChatPage> {
                               backgroundColor: Theme.of(context).colorScheme.primary,
                             )
                           : null,
-                      onPressed: () => _viewModel.toggleWebSearch(),
+                      onPressed: () {
+                        final needsConsent = _viewModel.toggleWebSearch();
+                        if (needsConsent) {
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Web Search'),
+                              content: const Text(
+                                'When enabled, your search queries will be sent to DuckDuckGo (duckduckgo.com) to retrieve web results. Web page content may also be fetched to provide context for AI responses.\n\nNo data is collected by DriftPaca.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx),
+                                  child: const Text('Cancel'),
+                                ),
+                                FilledButton(
+                                  onPressed: () {
+                                    _viewModel.acceptWebSearchConsent();
+                                    Navigator.pop(ctx);
+                                  },
+                                  child: const Text('Enable'),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                      },
                       tooltip: 'Web Search',
                     ),
                     Expanded(

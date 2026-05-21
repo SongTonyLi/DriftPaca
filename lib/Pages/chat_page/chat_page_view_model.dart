@@ -38,9 +38,23 @@ class ChatPageViewModel extends ChangeNotifier {
   bool _webSearchEnabled = false;
   bool get webSearchEnabled => _webSearchEnabled;
 
-  /// Toggles web search on/off
-  void toggleWebSearch() {
+  /// Whether the user has accepted the web search disclosure
+  bool get webSearchConsented => Hive.box('settings').get('webSearchConsented', defaultValue: false);
+
+  /// Toggles web search on/off. Returns true if consent dialog should be shown.
+  bool toggleWebSearch() {
+    if (!_webSearchEnabled && !webSearchConsented) {
+      return true; // needs consent first
+    }
     _webSearchEnabled = !_webSearchEnabled;
+    notifyListeners();
+    return false;
+  }
+
+  /// Accept web search consent and enable it
+  void acceptWebSearchConsent() {
+    Hive.box('settings').put('webSearchConsented', true);
+    _webSearchEnabled = true;
     notifyListeners();
   }
 

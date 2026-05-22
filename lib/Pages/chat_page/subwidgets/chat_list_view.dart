@@ -145,9 +145,7 @@ class _ChatListViewState extends State<ChatListView> {
               ),
           ],
         ),
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOutCubic,
+        Positioned(
           right: 16,
           bottom: _scrollToBottomButtonBottomOffset(),
           child: AnimatedScale(

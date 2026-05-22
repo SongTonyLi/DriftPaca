@@ -180,18 +180,8 @@ class MemoryService extends ChangeNotifier {
     required List<OllamaMessage> messages,
     bool skipAgentMemory = false,
   }) {
-    // ignore: avoid_print
-    print('[MemoryService] triggerMemoryUpdate: enabled=$isEnabled, updating=$_isUpdating, apiKey=${_apiKey != null ? "set(${_apiKey!.length}chars)" : "null"}, messages=${messages.length}, skipAgent=$skipAgentMemory');
-    if (!isEnabled) {
-      // ignore: avoid_print
-      print('[MemoryService] SKIPPED — no API key configured');
-      return;
-    }
-    if (_isUpdating) {
-      // ignore: avoid_print
-      print('[MemoryService] SKIPPED — already updating');
-      return;
-    }
+    if (!isEnabled) return;
+    if (_isUpdating) return;
 
     // Fire and forget
     _performUpdate(chatId: chatId, messages: messages, skipAgentMemory: skipAgentMemory);
@@ -239,20 +229,12 @@ class MemoryService extends ChangeNotifier {
             : null,
       );
 
-      // ignore: avoid_print
-      print('[MemoryService] sending to model=$_model, prompt length=${prompt.length}');
-
       // Call cloud model
       final responseBody = await _callCloudModel(prompt);
       if (responseBody == null) {
-        // ignore: avoid_print
-        print('[MemoryService] got NULL response from cloud model');
         return;
       }
       _lastError = null;
-
-      // ignore: avoid_print
-      print('[MemoryService] got response: ${responseBody.substring(0, responseBody.length.clamp(0, 200))}...');
 
       // Parse and save
       await _parseAndSave(chatId, responseBody, skipAgentMemory: skipAgentMemory);
@@ -268,8 +250,6 @@ class MemoryService extends ChangeNotifier {
 
   Future<String?> _callCloudModel(String prompt) async {
     final url = Uri.parse('$_cloudBaseUrl/api/chat');
-    // ignore: avoid_print
-    print('[MemoryService] POST $url model=$_model');
 
     try {
       final response = await http.post(
@@ -287,27 +267,19 @@ class MemoryService extends ChangeNotifier {
         }),
       ).timeout(const Duration(seconds: 60));
 
-      // ignore: avoid_print
-      print('[MemoryService] HTTP ${response.statusCode}');
       if (response.statusCode == 200) {
         final responseBody = utf8.decode(response.bodyBytes);
         final json = jsonDecode(responseBody);
         return json['message']?['content'] as String?;
       } else if (response.statusCode == 404) {
         _lastError = 'Model "$_model" not found. Change it in Settings → Memory Model.';
-        // ignore: avoid_print
-        print('[MemoryService] 404: model "$_model" not found');
         return null;
       } else {
         _lastError = 'API error ${response.statusCode}';
-        // ignore: avoid_print
-        print('[MemoryService] API error: ${response.statusCode}');
         return null;
       }
     } catch (e) {
       _lastError = 'Network error: $e';
-      // ignore: avoid_print
-      print('[MemoryService] network error: $e');
       return null;
     }
   }

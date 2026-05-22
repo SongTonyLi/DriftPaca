@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
@@ -107,7 +108,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
   static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
     return MarkdownBody(
-      data: _escapeLatexPipesInTables(_preprocessLatex(data)),
+      data: _escapeLatexPipesInTables(_preprocessLatex(_unwrapLatexCodeFences(data))),
       selectable: selectable,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
@@ -120,6 +121,16 @@ class _ChatBubbleBody extends StatelessWidget {
         'br': _HtmlBrBuilder(),
       },
       onTapLink: (text, href, title) => launchUrlString(href!),
+    );
+  }
+
+  /// Unwraps code fences with language tag `latex`, `math`, or `markdown`
+  /// so their content is rendered as markdown/LaTeX instead of raw code.
+  /// Some models (e.g. gemma3, qwen3) wrap LaTeX output in these fences.
+  static String _unwrapLatexCodeFences(String content) {
+    return content.replaceAllMapped(
+      RegExp(r'```(?:latex|math|markdown)\s*\n([\s\S]*?)```', multiLine: true),
+      (m) => m.group(1)!,
     );
   }
 
@@ -816,6 +827,15 @@ class _SmartLatexWidget extends StatelessWidget {
 
     if (isDisplay) {
       // Display math: centered, horizontally scrollable for long equations.
+      // When inside a table cell, use _IntrinsicFriendlyClip to avoid
+      // IntrinsicColumnWidth crashing on flutter_math_fork's LayoutBuilder.
+      final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
+      if (inTableCell) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: _IntrinsicFriendlyClip(child: mathWidget),
+        );
+      }
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: SizedBox(
@@ -831,20 +851,118 @@ class _SmartLatexWidget extends StatelessWidget {
       );
     }
 
-    // Inline math in table cells: wrap in scroll to prevent overflow.
+    // Inline math in table cells: wrap in a scroll view that provides
+    // stub intrinsic dimensions. flutter_math_fork's internal LayoutBuilder
+    // cannot report intrinsics, but Table with IntrinsicColumnWidth requires
+    // them — _IntrinsicFriendlyClip resolves this conflict.
     final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
     if (inTableCell) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        clipBehavior: Clip.antiAlias,
-        child: mathWidget,
-      );
+      return _IntrinsicFriendlyClip(child: mathWidget);
     }
 
     // Inline math in text: return directly so it flows with surrounding
     // text. Wrapping in SingleChildScrollView breaks WidgetSpan intrinsic
     // width calculation, causing line breaks (e.g. "$N$ 体" splits).
     return mathWidget;
+  }
+}
+
+/// A horizontally scrollable wrapper that provides stub intrinsic dimensions.
+///
+/// flutter_math_fork uses LayoutBuilder internally for certain complex
+/// constructs (aligned, cases, matrices). LayoutBuilder cannot report intrinsic
+/// dimensions. When these widgets are in a Table with IntrinsicColumnWidth,
+/// the table's layout algorithm asks for intrinsic widths and crashes.
+///
+/// This widget solves the conflict by:
+/// 1. Reporting a fixed intrinsic width (so the table gets a usable value)
+/// 2. Allowing its child to scroll horizontally when wider than the cell
+class _IntrinsicFriendlyClip extends SingleChildRenderObjectWidget {
+  const _IntrinsicFriendlyClip({required Widget child}) : super(child: child);
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderIntrinsicFriendlyClip();
+}
+
+class _RenderIntrinsicFriendlyClip extends RenderProxyBox {
+  // Fallback intrinsic width when the child (flutter_math_fork) can't report.
+  static const double _fallbackWidth = 50.0;
+
+  double _safeChildIntrinsic(double height, {required bool min}) {
+    try {
+      final v = min
+          ? child?.getMinIntrinsicWidth(height)
+          : child?.getMaxIntrinsicWidth(height);
+      return (v != null && v > 0) ? v : _fallbackWidth;
+    } catch (_) {
+      return _fallbackWidth;
+    }
+  }
+
+  @override
+  double computeMinIntrinsicWidth(double height) =>
+      _safeChildIntrinsic(height, min: true);
+
+  @override
+  double computeMaxIntrinsicWidth(double height) {
+    final minW = computeMinIntrinsicWidth(height);
+    final maxW = _safeChildIntrinsic(height, min: false);
+    // Table asserts max >= min.
+    return maxW >= minW ? maxW : minW;
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) {
+    try {
+      return child?.getMinIntrinsicHeight(width) ?? 0;
+    } catch (_) {
+      return 20;
+    }
+  }
+
+  @override
+  double computeMaxIntrinsicHeight(double width) {
+    try {
+      return child?.getMaxIntrinsicHeight(width) ?? 0;
+    } catch (_) {
+      return 20;
+    }
+  }
+
+  @override
+  void performLayout() {
+    if (child == null) {
+      size = constraints.smallest;
+      return;
+    }
+    // Let child lay out with unbounded width so math isn't clipped.
+    child!.layout(
+      BoxConstraints(
+        maxWidth: double.infinity,
+        maxHeight: constraints.maxHeight,
+      ),
+      parentUsesSize: true,
+    );
+    // Our own size respects the incoming constraints (table cell width).
+    size = constraints.constrain(child!.size);
+  }
+
+  @override
+  bool get isRepaintBoundary => true;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null) return;
+    // Clip to our size — child may be wider.
+    context.pushClipRect(needsCompositing, offset, Offset.zero & size, (context, offset) {
+      context.paintChild(child!, offset);
+    });
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    if (child == null) return false;
+    return child!.hitTest(result, position: position);
   }
 }
 
@@ -879,29 +997,29 @@ class _LatexSourceFallback extends StatelessWidget {
         );
 
     if (isDisplay) {
+      // Do NOT use width: double.infinity here — this fallback can be rendered
+      // inside a horizontal SingleChildScrollView (from _SmartLatexWidget's
+      // display mode), which provides unbounded width constraints.
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Container(
-          width: double.infinity,
-          padding: markdownStyleSheet.codeblockPadding ?? const EdgeInsets.all(14),
-          decoration: markdownStyleSheet.codeblockDecoration,
-          child: Text(rawSource, style: textStyle),
+        child: DecoratedBox(
+          decoration: markdownStyleSheet.codeblockDecoration ?? const BoxDecoration(),
+          child: Padding(
+            padding: markdownStyleSheet.codeblockPadding ?? const EdgeInsets.all(14),
+            child: Text(rawSource, style: textStyle),
+          ),
         ),
       );
     }
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      clipBehavior: Clip.antiAlias,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-          child: Text(rawSource, style: textStyle),
-        ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Text(rawSource, style: textStyle),
       ),
     );
   }

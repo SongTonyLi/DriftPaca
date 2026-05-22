@@ -30,6 +30,7 @@ class MemoryService extends ChangeNotifier {
 
   /// In-memory caches to avoid DB reads on every message send.
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
+  static const int _maxConversationCacheSize = 20;
   AgentMemory? _profileCache;
   List<MemoryTopic>? _topicsCache;
   List<EphemeralContext>? _ephemeralCache;
@@ -65,12 +66,19 @@ class MemoryService extends ChangeNotifier {
 
   Future<ConversationMemory?> getConversationMemory(String chatId) async {
     if (_conversationMemoryCache.containsKey(chatId)) {
-      return _conversationMemoryCache[chatId];
+      // Move to end (most recently used)
+      final value = _conversationMemoryCache.remove(chatId)!;
+      _conversationMemoryCache[chatId] = value;
+      return value;
     }
 
     final memory = await _db.getConversationMemory(chatId);
     if (memory != null) {
       _conversationMemoryCache[chatId] = memory;
+      // Evict oldest if over capacity
+      while (_conversationMemoryCache.length > _maxConversationCacheSize) {
+        _conversationMemoryCache.remove(_conversationMemoryCache.keys.first);
+      }
     }
     return memory;
   }
@@ -506,7 +514,11 @@ class MemoryService extends ChangeNotifier {
     String chatId,
     ConversationMemory memory,
   ) async {
-    _conversationMemoryCache[chatId] = memory;
+    _conversationMemoryCache.remove(chatId); // Remove old position
+    _conversationMemoryCache[chatId] = memory; // Add at end (most recent)
+    while (_conversationMemoryCache.length > _maxConversationCacheSize) {
+      _conversationMemoryCache.remove(_conversationMemoryCache.keys.first);
+    }
     await _db.updateConversationMemory(chatId, memory);
     notifyListeners();
   }

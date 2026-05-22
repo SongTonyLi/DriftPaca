@@ -60,6 +60,11 @@ class _ChatListViewState extends State<ChatListView> {
   void didUpdateWidget(covariant ChatListView oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    // Clear bubble cache when switching chats (message list replaced entirely)
+    if (!identical(widget.messages, oldWidget.messages)) {
+      _bubbleCache.clear();
+    }
+
     // Add to the post frame callback to ensure that the scroll offset is
     // read after the widget has been updated.
     WidgetsBinding.instance.addPostFrameCallback((_) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Models/settings_route_arguments.dart';
@@ -121,7 +122,7 @@ class DriftPacaApp extends StatelessWidget {
             if (settings.name == '/settings') {
               final args = settings.arguments as SettingsRouteArguments?;
 
-              return MaterialPageRoute(
+              return CupertinoPageRoute(
                 builder: (context) => SettingsPage(arguments: args),
               );
             }

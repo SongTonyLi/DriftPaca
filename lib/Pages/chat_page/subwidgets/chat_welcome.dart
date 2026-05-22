@@ -22,13 +22,14 @@ class ChatWelcome extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedCrossFade(
       crossFadeState: showingState,
-      duration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 300),
       firstChild: _ChatWelcomeText(
         onFinished: onFirstChildFinished,
       ),
       secondChild: AnimatedScale(
         scale: secondChildScale,
-        duration: const Duration(milliseconds: 100),
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
         onEnd: onSecondChildScaleEnd,
         child: _ChatConfigureServerAddressButton(),
       ),

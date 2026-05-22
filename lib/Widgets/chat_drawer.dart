@@ -208,8 +208,8 @@ class ChatNavigationDrawer extends StatelessWidget {
       transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
         final curvedAnimation = CurvedAnimation(
           parent: animation,
-          curve: Curves.easeOutBack,
-          reverseCurve: Curves.easeIn,
+          curve: const Cubic(0.16, 1.0, 0.3, 1.0),
+          reverseCurve: const Cubic(0.4, 0.0, 0.7, 0.2),
         );
 
         return Stack(

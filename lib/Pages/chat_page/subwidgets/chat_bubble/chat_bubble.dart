@@ -828,6 +828,11 @@ class _InlineLatexSyntax extends md.InlineSyntax {
 }
 
 /// Renders LaTeX: inline ($...$) normally, display ($$...$$) centered.
+///
+/// For inline math, we return a [RichText] containing a [WidgetSpan] so that
+/// flutter_markdown's `_mergeInlineChildren` merges it with adjacent text
+/// spans into a single flowing [RichText]. Without this, the Math widget
+/// becomes a separate child in a [Wrap] and breaks to its own line.
 class _SmartLatexBuilder extends MarkdownElementBuilder {
   @override
   Widget? visitElementAfterWithContext(
@@ -847,11 +852,26 @@ class _SmartLatexBuilder extends MarkdownElementBuilder {
     final effectiveColor = preferredStyle?.color ?? Theme.of(context).textTheme.bodyMedium?.color;
     final mathTextStyle = (preferredStyle ?? const TextStyle()).copyWith(color: effectiveColor);
 
-    return _SmartLatexWidget(
+    final mathWidget = _SmartLatexWidget(
       text: text,
       isDisplay: isDisplay,
       rawSource: rawSource,
       mathTextStyle: mathTextStyle,
+    );
+
+    if (isDisplay) return mathWidget;
+
+    // Wrap inline math in RichText+WidgetSpan so it flows with surrounding
+    // text instead of breaking to a new line in the Wrap layout.
+    return RichText(
+      text: TextSpan(
+        children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: mathWidget,
+          ),
+        ],
+      ),
     );
   }
 }

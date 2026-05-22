@@ -36,6 +36,11 @@ class _ChatListViewState extends State<ChatListView> {
 
   final _messageSizeProxy = WidgetSizeProxy();
 
+  /// Cached bubble widgets keyed by message ID. Returning the exact same
+  /// Widget reference lets Flutter skip the entire subtree rebuild,
+  /// avoiding expensive markdown re-parsing during streaming updates.
+  final Map<String, Widget> _bubbleCache = {};
+
   @override
   void initState() {
     super.initState();
@@ -108,14 +113,24 @@ class _ChatListViewState extends State<ChatListView> {
                   return ObserveSize(
                     key: Key(message.id),
                     onSizeChanged: _onMessageSizeChanged,
-                    child: ChatBubble(
-                      message: message,
-                      isStreaming: isStreamingMessage,
+                    child: RepaintBoundary(
+                      child: ChatBubble(
+                        message: message,
+                        isStreaming: isStreamingMessage,
+                      ),
                     ),
                   );
                 }
 
-                return ChatBubble(message: message);
+                // Cached widget reference — Flutter skips the entire subtree
+                // rebuild when the same Widget instance is returned, avoiding
+                // expensive markdown re-parsing during streaming updates.
+                return _bubbleCache.putIfAbsent(
+                  message.id,
+                  () => RepaintBoundary(
+                    child: ChatBubble(message: message),
+                  ),
+                );
               },
             ),
             // Top padding for glass AppBar overlap (end of reversed list = visual top)

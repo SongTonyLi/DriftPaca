@@ -418,6 +418,11 @@ class ChatProvider extends ChangeNotifier {
     // Update created at time to the current time when the stream is finished
     streamingMessage?.createdAt = DateTime.now();
 
+    // Release base64 image data from all messages to free memory
+    for (final m in _messages) {
+      m.clearBase64Cache();
+    }
+
     // Strip model annotation prefix that may have been echoed by the model
     if (streamingMessage != null) {
       streamingMessage.content = streamingMessage.content.replaceFirst(
@@ -606,36 +611,40 @@ class ChatProvider extends ChangeNotifier {
     );
 
     try {
-    // Generate a title for the message
-    final stream = _ollamaService.generateStream(
-      GenerateTitleConstants.prompt + message.content,
-      chat: chat,
-    );
+      // Generate a title for the message
+      final stream = _ollamaService.generateStream(
+        GenerateTitleConstants.prompt + message.content,
+        chat: chat,
+      );
 
-    var title = "";
-    await for (final titleMessage in stream) {
-      // Ignore empty initial messages, preventing empty title
-      if (title.isEmpty && titleMessage.content.isEmpty) {
-        continue;
+      var title = "";
+      final titleThrottle = Stopwatch()..start();
+      await for (final titleMessage in stream) {
+        // Ignore empty initial messages, preventing empty title
+        if (title.isEmpty && titleMessage.content.isEmpty) {
+          continue;
+        }
+
+        title += titleMessage.content;
+
+        // Throttle title updates to at most every 100ms
+        if (titleThrottle.elapsedMilliseconds >= 100) {
+          titleThrottle.reset();
+          if (title.startsWith("<think>")) {
+            await updateChat(associatedChat, newTitle: "Thinking for a title...");
+          } else {
+            await updateChat(associatedChat, newTitle: title);
+          }
+        }
       }
 
-      title += titleMessage.content;
-
-      // If <think> tag exists, do not stream chat title
+      // Remove <think> tag and its content
       if (title.startsWith("<think>")) {
-        await updateChat(associatedChat, newTitle: "Thinking for a title...");
-      } else {
-        await updateChat(associatedChat, newTitle: title);
+        title = title.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '');
       }
-    }
 
-    // Remove <think> tag and its content
-    if (title.startsWith("<think>")) {
-      title = title.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '');
-    }
-
-    // Save the title as the chat title
-    await updateChat(associatedChat, newTitle: title.trim());
+      // Final update with complete title
+      await updateChat(associatedChat, newTitle: title.trim());
     } catch (_) {
       // Silently ignore title generation failures (e.g., cloud model errors)
     }

@@ -158,6 +158,12 @@ class OllamaMessage {
     return _cachedBase64Images;
   }
 
+  /// Releases the cached base64-encoded image data to free memory.
+  /// The cache will be rebuilt on the next API call if needed.
+  void clearBase64Cache() {
+    _cachedBase64Images = null;
+  }
+
   static List<File>? _constructImages(String? raw) {
     if (raw != null) {
       final List<dynamic> decoded = jsonDecode(raw);

@@ -242,23 +242,23 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildBottomOverlay() {
     final footer = _buildChatFooter();
-    final bgColor = _isIncognito ? _incognitoBg : Theme.of(context).colorScheme.surface;
+    // Use theme surface — AnimatedTheme interpolates this in sync with
+    // the gradient overlay, so the bottom area transitions at the same
+    // rate as the main content area.
+    final bgColor = Theme.of(context).colorScheme.surface;
     final bottomSafeArea = MediaQuery.of(context).padding.bottom;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Composer — AnimatedContainer provides the incognito background
-        // behind the rounded corners so the Scaffold's light color won't
-        // peek through.
-        AnimatedContainer(
-          duration: _transitionDuration,
-          curve: _transitionCurve,
+        // Composer — transparent so the full-screen incognito gradient
+        // overlay (behind this Stack layer) shows through, keeping the
+        // transition in sync with the area above.
+        Padding(
           padding: EdgeInsets.only(
             left: _composerHorizontalInset,
             right: _composerHorizontalInset,
           ),
-          color: _isIncognito ? _incognitoBg : Colors.transparent,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -274,9 +274,7 @@ class _ChatPageState extends State<ChatPage> {
         // Gradient fade below the input bar — content fades out in safe area
         if (bottomSafeArea > 0)
           IgnorePointer(
-            child: AnimatedContainer(
-              duration: _transitionDuration,
-              curve: _transitionCurve,
+            child: Container(
               height: bottomSafeArea,
               decoration: BoxDecoration(
                 gradient: LinearGradient(

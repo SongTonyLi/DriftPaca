@@ -272,36 +272,91 @@ class _AssistantBubble extends StatefulWidget {
   State<_AssistantBubble> createState() => _AssistantBubbleState();
 }
 
-class _AssistantBubbleState extends State<_AssistantBubble> {
+class _AssistantBubbleState extends State<_AssistantBubble>
+    with SingleTickerProviderStateMixin {
   bool _wasStreaming = false;
-  String _throttledContent = '';
-  bool _updatePending = false;
+
+  // ── Typewriter reveal state ──
+  /// The full accumulated content from the provider (grows as tokens arrive).
+  String _targetContent = '';
+
+  /// How many characters of [_targetContent] are currently visible.
+  int _revealedLength = 0;
+
+  /// Ticker driving the character-by-character reveal animation.
+  Ticker? _revealTicker;
+
+  /// Fractional character position — allows sub-character-per-frame pacing
+  /// for smoother speed transitions.
+  double _revealProgress = 0.0;
+
+  /// Base characters to reveal per frame at 60fps (~40 chars/sec).
+  /// Slow enough to see the typing effect, fast enough to feel responsive.
+  static const double _baseCharsPerFrame = 0.7;
+
+  /// When the unrevealed buffer exceeds this threshold, the reveal speed
+  /// ramps up proportionally to prevent falling behind.
+  static const int _catchUpThreshold = 80;
 
   @override
   void didUpdateWidget(_AssistantBubble old) {
     super.didUpdateWidget(old);
     if (old.isStreaming && !widget.isStreaming) {
+      // Streaming just ended — reveal all remaining content instantly.
       _wasStreaming = true;
-      _throttledContent = widget.message.content;
-      _updatePending = false;
+      _targetContent = widget.message.content;
+      _revealedLength = _targetContent.length;
+      _revealProgress = _revealedLength.toDouble();
+      _stopRevealTicker();
     } else if (widget.isStreaming) {
-      _scheduleContentUpdate();
+      // New tokens arrived — update target and ensure ticker is running.
+      _targetContent = widget.message.content;
+      _ensureRevealTicker();
     } else {
-      _throttledContent = widget.message.content;
+      _targetContent = widget.message.content;
+      _revealedLength = _targetContent.length;
+      _revealProgress = _revealedLength.toDouble();
     }
   }
 
-  void _scheduleContentUpdate() {
-    if (_updatePending) return;
-    _updatePending = true;
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() {
-          _throttledContent = widget.message.content;
-          _updatePending = false;
-        });
-      }
-    });
+  void _ensureRevealTicker() {
+    if (_revealTicker != null) return;
+    _revealTicker = createTicker(_onRevealTick)..start();
+  }
+
+  void _stopRevealTicker() {
+    _revealTicker?.stop();
+    _revealTicker?.dispose();
+    _revealTicker = null;
+  }
+
+  void _onRevealTick(Duration elapsed) {
+    if (_revealedLength >= _targetContent.length) {
+      // Caught up — pause ticker until new content arrives.
+      _stopRevealTicker();
+      return;
+    }
+
+    final remaining = _targetContent.length - _revealedLength;
+    // Adaptive speed: ramp up when buffer is large to prevent falling behind.
+    final speed = remaining > _catchUpThreshold
+        ? _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5
+        : _baseCharsPerFrame;
+
+    _revealProgress += speed;
+    final newLength = _revealProgress.floor().clamp(0, _targetContent.length);
+
+    if (newLength != _revealedLength) {
+      setState(() {
+        _revealedLength = newLength;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopRevealTicker();
+    super.dispose();
   }
 
   @override
@@ -356,7 +411,9 @@ class _AssistantBubbleState extends State<_AssistantBubble> {
   }
 
   Widget _buildMessageContent(BuildContext context) {
-    final content = widget.isStreaming ? _throttledContent : widget.message.content;
+    final content = widget.isStreaming
+        ? _targetContent.substring(0, _revealedLength)
+        : widget.message.content;
 
     if (widget.message.thinking != null && widget.message.thinking!.isNotEmpty) {
       return Column(

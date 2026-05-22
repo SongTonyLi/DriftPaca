@@ -96,6 +96,13 @@ class ChatPageViewModel extends ChangeNotifier {
   /// The Hive settings subscription
   late final StreamSubscription _settingsSubscription;
 
+  // Tracked state for skipping redundant notifications from ChatProvider
+  int _lastMessageCount = 0;
+  String? _lastChatId;
+  bool _lastIsStreaming = false;
+  bool _lastIsThinking = false;
+  String? _lastErrorMessage;
+
   bool get isServerConfigured {
     final box = Hive.box('settings');
     final serverMode = box.get('serverMode', defaultValue: 'local');
@@ -138,7 +145,24 @@ class ChatPageViewModel extends ChangeNotifier {
   }
 
   void _onChatProviderChanged() {
-    notifyListeners();
+    final messageCount = _chatProvider.messages.length;
+    final chatId = _chatProvider.currentChat?.id;
+    final isStreaming = _chatProvider.isCurrentChatStreaming;
+    final isThinking = _chatProvider.isCurrentChatThinking;
+    final errorMessage = _chatProvider.currentChatError?.message;
+
+    if (messageCount != _lastMessageCount ||
+        chatId != _lastChatId ||
+        isStreaming != _lastIsStreaming ||
+        isThinking != _lastIsThinking ||
+        errorMessage != _lastErrorMessage) {
+      _lastMessageCount = messageCount;
+      _lastChatId = chatId;
+      _lastIsStreaming = isStreaming;
+      _lastIsThinking = isThinking;
+      _lastErrorMessage = errorMessage;
+      notifyListeners();
+    }
   }
 
   void _onTextFieldChanged() {

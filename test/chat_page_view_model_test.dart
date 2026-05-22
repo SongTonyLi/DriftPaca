@@ -192,6 +192,10 @@ void main() {
       var notified = false;
       viewModel.addListener(() => notified = true);
 
+      // Change state so the notification proxy detects a difference
+      fakeChatProvider.setMessages([
+        OllamaMessage('Hello', role: OllamaMessageRole.user),
+      ]);
       fakeChatProvider.triggerNotifyListeners();
 
       expect(notified, isTrue);

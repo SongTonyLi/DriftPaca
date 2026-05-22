@@ -297,25 +297,19 @@ class _ChatPageState extends State<ChatPage> {
       borderRadius: BorderRadius.circular(24.0),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
-        child: AnimatedContainer(
-          duration: _transitionDuration,
-          curve: _transitionCurve,
+        child: Container(
           decoration: BoxDecoration(
-            color: _isIncognito
-                ? _incognitoSurface.withValues(alpha: 0.85)
-                : Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
+            // Use theme colors so AnimatedTheme drives the transition
+            // at the same rate as the gradient overlay behind.
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
             borderRadius: BorderRadius.circular(24.0),
             border: Border.all(
-              color: _isIncognito
-                  ? _incognitoBorder.withValues(alpha: 0.4)
-                  : Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.12),
               width: 0.5,
             ),
             boxShadow: [
               BoxShadow(
-                color: _isIncognito
-                    ? _incognitoAccent.withValues(alpha: 0.04)
-                    : Colors.black.withValues(alpha: 0.06),
+                color: Colors.black.withValues(alpha: 0.06),
                 blurRadius: 12,
                 offset: const Offset(0, 2),
               ),

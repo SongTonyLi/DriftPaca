@@ -62,7 +62,9 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
 
     final scaffold = Scaffold(
       extendBodyBehindAppBar: true,
-      backgroundColor: isIncognito ? _incognitoColorScheme.surface : null,
+      // backgroundColor is intentionally NOT set — AnimatedTheme
+      // interpolates colorScheme.surface smoothly. An explicit override
+      // here would snap instantly, desyncing from the gradient overlay.
       appBar: const ChatAppBar(),
       body: const SafeArea(top: false, bottom: false, child: ChatPage()),
       drawer: const ChatDrawer(),

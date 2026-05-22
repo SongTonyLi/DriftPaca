@@ -72,9 +72,7 @@ class OllamaMessage {
         // Metadata fields
         done: json["done"],
         doneReason: json["done_reason"],
-        context: json["context"] != null
-            ? List<int>.from(json["context"].map((x) => x))
-            : null,
+        // context array skipped — large token ID list unused in chat mode
         totalDuration: json["total_duration"],
         loadDuration: json["load_duration"],
         promptEvalCount: json["prompt_eval_count"],

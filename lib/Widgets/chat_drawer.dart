@@ -32,7 +32,7 @@ class ChatDrawer extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(20.0),
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: Container(
                 decoration: BoxDecoration(
                   color: colorScheme.surface.withValues(alpha: 0.40),
@@ -387,7 +387,7 @@ class _GlassContextMenu extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(16.0),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Material(
           color: colorScheme.surface.withValues(alpha: 0.82),
           borderRadius: BorderRadius.circular(16.0),

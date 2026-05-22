@@ -296,7 +296,7 @@ class _ChatPageState extends State<ChatPage> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(24.0),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           decoration: BoxDecoration(
             // Use theme colors so AnimatedTheme drives the transition

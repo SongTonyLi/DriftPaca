@@ -126,13 +126,29 @@ void main() {
       expect(viewModel.hasText, isFalse);
     });
 
-    test('textFieldController changes should notify listeners', () {
+    test('textFieldController changes should notify only on empty/non-empty transitions', () {
       var notifyCount = 0;
       viewModel.addListener(() => notifyCount++);
 
-      viewModel.textFieldController.text = 'Test';
-
+      // Empty -> non-empty: should notify
+      viewModel.textFieldController.text = 'T';
       expect(notifyCount, 1);
+
+      // Non-empty -> non-empty: should NOT notify
+      viewModel.textFieldController.text = 'Te';
+      expect(notifyCount, 1);
+
+      // Non-empty -> non-empty: should NOT notify
+      viewModel.textFieldController.text = 'Test';
+      expect(notifyCount, 1);
+
+      // Non-empty -> empty: should notify
+      viewModel.textFieldController.text = '';
+      expect(notifyCount, 2);
+
+      // Empty -> empty: should NOT notify
+      viewModel.textFieldController.text = '';
+      expect(notifyCount, 2);
     });
   });
 
@@ -428,7 +444,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   }
 
   @override
-  Future<void> createNewChat(OllamaModel model) async {
+  Future<void> createNewChat(OllamaModel model, {bool isIncognito = false}) async {
     createNewChatCalled = true;
     _currentChat = createTestChat('new-chat-id');
   }

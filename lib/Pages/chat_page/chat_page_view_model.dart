@@ -88,6 +88,8 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Whether the text field has text
   bool get hasText => textFieldController.text.trim().isNotEmpty;
 
+  bool _lastHasText = false;
+
   /// The app lifecycle listener for cleanup
   late final AppLifecycleListener _appLifecycleListener;
 
@@ -140,7 +142,11 @@ class ChatPageViewModel extends ChangeNotifier {
   }
 
   void _onTextFieldChanged() {
-    notifyListeners();
+    final currentHasText = hasText;
+    if (currentHasText != _lastHasText) {
+      _lastHasText = currentHasText;
+      notifyListeners();
+    }
   }
 
   @override

@@ -284,7 +284,7 @@ class ChatProvider extends ChangeNotifier {
       ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext);
       // Replace [N] citations with clickable markdown links
       if (ollamaMessage != null && sourceUrls != null && sourceUrls.isNotEmpty) {
-        ollamaMessage.content = _replaceCitationsWithLinks(ollamaMessage.content, sourceUrls);
+        ollamaMessage.content = replaceCitationsWithLinks(ollamaMessage.content, sourceUrls);
       }
     } on OllamaException catch (error) {
       _chatErrors[associatedChat.id] = error;
@@ -507,14 +507,21 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Replaces [N] citations in content with clickable markdown links.
-  String _replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
+  ///
+  /// Uses negative lookahead `(?!\()` so that `[N]` already followed by
+  /// `(url)` (i.e. an existing markdown link) is not double-wrapped.
+  ///
+  /// Output format: `[[N]](url)` — CommonMark parses `[N]` as the link
+  /// text (with visible brackets) and `(url)` as the destination.
+  @visibleForTesting
+  static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
     return content.replaceAllMapped(
-      RegExp(r'\[(\d+)\]'),
+      RegExp(r'\[(\d+)\](?!\()'),
       (match) {
         final id = int.tryParse(match.group(1)!);
         if (id != null && sourceUrls.containsKey(id)) {
           final url = sourceUrls[id]!;
-          return '[[$id]($url)]';
+          return '[[$id]]($url)';
         }
         return match.group(0)!;
       },

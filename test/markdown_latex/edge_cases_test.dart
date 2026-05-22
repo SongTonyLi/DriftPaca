@@ -716,4 +716,120 @@ void main() {
       expect(find.byType(Math), findsOneWidget);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Inline LaTeX should flow with surrounding text, not break to a new line
+  // ---------------------------------------------------------------------------
+  group('inline LaTeX flows with text (not block-level)', () {
+    testWidgets('short inline LaTeX stays on same line as surrounding text', (tester) async {
+      // The exact pattern from the reported bug: F=ma surrounded by text.
+      // The Math widget must be on the same line as "Newton's" and ". That",
+      // not on its own line.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r"Newton's $F=ma$ is famous.",
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+
+      // Verify the Math widget and surrounding text share the same vertical
+      // position (same line). If Math is on a new line, its top will be
+      // significantly below the text top.
+      final mathWidget = tester.widget<Math>(find.byType(Math));
+      final mathRect = tester.getRect(find.byType(Math));
+      final textFinder = find.textContaining("Newton's");
+      expect(textFinder, findsOneWidget);
+      final textRect = tester.getRect(textFinder);
+
+      // Both should overlap vertically (same line).
+      // If inline is working, the math widget's vertical center should be
+      // within the text line's vertical extent.
+      expect(
+        mathRect.center.dy,
+        closeTo(textRect.center.dy, textRect.height),
+        reason: 'Inline LaTeX should be on the same line as surrounding text, '
+            'but Math widget center (${mathRect.center.dy}) is far from '
+            'text center (${textRect.center.dy})',
+      );
+    });
+
+    testWidgets('multiple inline LaTeX in paragraph stay inline', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'Given $a = 1$ and $b = 2$, compute $a + b$.',
+        surfaceSize: const Size(500, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(3));
+    });
+
+    testWidgets(r'backslash-paren \(F=ma\) flows inline after conversion', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r"using Newton's \(F=ma\). That works for cars.",
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+
+      final mathRect = tester.getRect(find.byType(Math));
+      final textRect = tester.getRect(find.textContaining("Newton's"));
+      expect(
+        mathRect.center.dy,
+        closeTo(textRect.center.dy, textRect.height),
+        reason: r'\(F=ma\) should flow inline, not break to new line',
+      );
+    });
+
+    testWidgets('inline LaTeX in bold context stays inline', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'**Important: $E = mc^2$ is key.**',
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
+
+    testWidgets('long inline LaTeX that exceeds line width does not crash', (tester) async {
+      // If inline LaTeX is wider than the screen, it should still render
+      // without crashes (may overflow visually).
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'Result: $a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_{10} + a_{11} + a_{12} = S$',
+        surfaceSize: const Size(300, 800),
+      );
+
+      expect(nonOverflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
+
+    testWidgets('real model output: F=ma inline in paragraph (reported bug)', (tester) async {
+      // Exact pattern from deepseek-v4-pro that triggered the new-line bug.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r"Alright, imagine you're playing a game of pool. You hit the cue ball, and you can perfectly predict where it will go and how fast, using Newton's \(F=ma\). That works for cars, planets, baseballs – anything big enough to see.",
+        surfaceSize: const Size(400, 800),
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+
+      final mathRect = tester.getRect(find.byType(Math));
+      final textFinder = find.textContaining("Newton's");
+      if (textFinder.evaluate().isNotEmpty) {
+        final textRect = tester.getRect(textFinder);
+        expect(
+          mathRect.center.dy,
+          closeTo(textRect.center.dy, textRect.height),
+          reason: 'F=ma should be inline with "Newton\'s", not on a new line',
+        );
+      }
+    });
+  });
 }

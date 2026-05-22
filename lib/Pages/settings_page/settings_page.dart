@@ -27,6 +27,7 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
       body: SafeArea(
+        bottom: false,
         child: _SettingsPageContent(arguments: arguments),
       ),
     );

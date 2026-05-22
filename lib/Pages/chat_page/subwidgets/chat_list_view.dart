@@ -125,40 +125,51 @@ class _ChatListViewState extends State<ChatListView> {
               ),
           ],
         ),
-        if (_isScrollToBottomButtonVisible)
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 400),
-            curve: Curves.easeInOutCubic,
-            right: 16,
-            bottom: _scrollToBottomButtonBottomOffset(),
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.78),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.1),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Theme.of(context).shadowColor.withValues(alpha: 0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOutCubic,
+          right: 16,
+          bottom: _scrollToBottomButtonBottomOffset(),
+          child: AnimatedScale(
+            scale: _isScrollToBottomButtonVisible ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 250),
+            curve: _isScrollToBottomButtonVisible ? Curves.easeOutBack : Curves.easeIn,
+            child: AnimatedOpacity(
+              opacity: _isScrollToBottomButtonVisible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !_isScrollToBottomButtonVisible,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.78),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.1),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Theme.of(context).shadowColor.withValues(alpha: 0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: IconButton(
-                onPressed: _scrollToBottom,
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
-                tooltip: 'Scroll to latest',
-                style: IconButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.82),
-                  minimumSize: const Size(40, 40),
-                  maximumSize: const Size(40, 40),
-                  padding: EdgeInsets.zero,
+                  child: IconButton(
+                    onPressed: _scrollToBottom,
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+                    tooltip: 'Scroll to latest',
+                    style: IconButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.82),
+                      minimumSize: const Size(40, 40),
+                      maximumSize: const Size(40, 40),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
+        ),
       ],
     );
   }
@@ -219,8 +230,8 @@ class _ChatListViewState extends State<ChatListView> {
   void _scrollToBottom() {
     _scrollController.animateTo(
       0.0,
-      duration: const Duration(milliseconds: 150),
-      curve: Curves.easeOut,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
     );
   }
 

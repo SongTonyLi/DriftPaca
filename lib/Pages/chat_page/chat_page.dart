@@ -107,8 +107,8 @@ class _ChatPageState extends State<ChatPage> {
                 child: Center(
                   child: AnimatedOpacity(
                     opacity: isIncognito ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
+                    duration: _transitionDuration,
+                    curve: _transitionCurve,
                     child: AnimatedSlide(
                       offset: isIncognito ? Offset.zero : const Offset(0, -0.5),
                       duration: _transitionDuration,
@@ -334,7 +334,8 @@ class _ChatPageState extends State<ChatPage> {
                   heightFactor: _shouldShowExpanded ? 1.0 : 0.0,
                   child: AnimatedOpacity(
                     opacity: _shouldShowExpanded ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 350),
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.easeIn,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: ChatTextField(

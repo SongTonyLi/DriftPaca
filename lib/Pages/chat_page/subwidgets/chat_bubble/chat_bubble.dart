@@ -22,24 +22,27 @@ import 'streaming_llama.dart';
 class ChatBubble extends StatelessWidget {
   final OllamaMessage message;
   final bool isStreaming;
+  final bool animate;
 
   const ChatBubble({
     super.key,
     required this.message,
     this.isStreaming = false,
+    this.animate = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return _ChatBubbleBody(message: message, isStreaming: isStreaming);
+    return _ChatBubbleBody(message: message, isStreaming: isStreaming, animate: animate);
   }
 }
 
 class _ChatBubbleBody extends StatelessWidget {
   final OllamaMessage message;
   final bool isStreaming;
+  final bool animate;
 
-  const _ChatBubbleBody({required this.message, required this.isStreaming});
+  const _ChatBubbleBody({required this.message, required this.isStreaming, this.animate = false});
 
   static final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
     [
@@ -82,20 +85,28 @@ class _ChatBubbleBody extends StatelessWidget {
                 )).toList(),
               ),
             ),
-          if (isSentFromUser) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                TimeOfDay.fromDateTime(message.createdAt).format(context),
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                  fontSize: 11,
-                ),
+          if (isSentFromUser)
+            _UserBubbleEntrance(
+              animate: animate,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      TimeOfDay.fromDateTime(message.createdAt).format(context),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  _UserBubble(message: message, buildMarkdown: _buildMarkdown),
+                  _UserActionButtons(message: message),
+                ],
               ),
-            ),
-            _UserBubble(message: message, buildMarkdown: _buildMarkdown),
-            _UserActionButtons(message: message),
-          ] else
+            )
+          else
             _AssistantBubble(
               message: message,
               isStreaming: isStreaming,
@@ -228,6 +239,69 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 }
 
+/// Animates user bubble entrance with a scale pop + fade.
+class _UserBubbleEntrance extends StatefulWidget {
+  final bool animate;
+  final Widget child;
+
+  const _UserBubbleEntrance({this.animate = false, required this.child});
+
+  @override
+  State<_UserBubbleEntrance> createState() => _UserBubbleEntranceState();
+}
+
+class _UserBubbleEntranceState extends State<_UserBubbleEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+      value: widget.animate ? 0.0 : 1.0,
+    );
+    _scale = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Cubic(0.34, 1.56, 0.64, 1.0),
+      ),
+    );
+    _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+      ),
+    );
+    if (widget.animate) {
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted) _controller.forward();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: ScaleTransition(
+        scale: _scale,
+        alignment: Alignment.bottomRight,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 class _UserBubble extends StatelessWidget {
   final OllamaMessage message;
   final Widget Function(BuildContext, String, {bool selectable}) buildMarkdown;
@@ -277,85 +351,89 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   bool _wasStreaming = false;
 
   // ── Typewriter reveal state ──
-  /// The full accumulated content from the provider (grows as tokens arrive).
   String _targetContent = '';
-
-  /// How many characters of [_targetContent] are currently visible.
+  String _targetThinking = '';
   int _revealedLength = 0;
-
-  /// Ticker driving the character-by-character reveal animation.
+  int _revealedThinkingLength = 0;
   Ticker? _revealTicker;
-
-  /// Fractional character position — allows sub-character-per-frame pacing
-  /// for smoother speed transitions.
   double _revealProgress = 0.0;
+  double _thinkingRevealProgress = 0.0;
 
-  /// Base characters to reveal per frame at 60fps (~40 chars/sec).
-  /// Slow enough to see the typing effect, fast enough to feel responsive.
   static const double _baseCharsPerFrame = 0.7;
-
-  /// When the unrevealed buffer exceeds this threshold, the reveal speed
-  /// ramps up proportionally to prevent falling behind.
   static const int _catchUpThreshold = 80;
 
   @override
   void didUpdateWidget(_AssistantBubble old) {
     super.didUpdateWidget(old);
     if (old.isStreaming && !widget.isStreaming) {
-      // Streaming just ended — reveal all remaining content instantly.
       _wasStreaming = true;
       _targetContent = widget.message.content;
+      _targetThinking = widget.message.thinking ?? '';
       _revealedLength = _targetContent.length;
+      _revealedThinkingLength = _targetThinking.length;
       _revealProgress = _revealedLength.toDouble();
+      _thinkingRevealProgress = _revealedThinkingLength.toDouble();
       _stopRevealTicker();
     } else if (widget.isStreaming) {
-      // New tokens arrived — update target and ensure ticker is running.
       _targetContent = widget.message.content;
+      _targetThinking = widget.message.thinking ?? '';
       _ensureRevealTicker();
     } else {
       _targetContent = widget.message.content;
+      _targetThinking = widget.message.thinking ?? '';
       _revealedLength = _targetContent.length;
+      _revealedThinkingLength = _targetThinking.length;
       _revealProgress = _revealedLength.toDouble();
+      _thinkingRevealProgress = _revealedThinkingLength.toDouble();
     }
   }
 
+  /// Lazily creates the reveal ticker on first use; restarts it when paused.
+  /// Uses a single Ticker for the widget's lifetime to avoid violating
+  /// SingleTickerProviderStateMixin's one-ticker contract.
   void _ensureRevealTicker() {
-    if (_revealTicker != null) return;
-    _revealTicker = createTicker(_onRevealTick)..start();
+    if (_revealTicker == null) {
+      _revealTicker = createTicker(_onRevealTick);
+    }
+    if (!_revealTicker!.isActive) {
+      _revealTicker!.start();
+    }
   }
 
   void _stopRevealTicker() {
     _revealTicker?.stop();
-    _revealTicker?.dispose();
-    _revealTicker = null;
   }
 
   void _onRevealTick(Duration elapsed) {
-    if (_revealedLength >= _targetContent.length) {
-      // Caught up — pause ticker until new content arrives.
+    // Reveal thinking tokens first, then response content.
+    if (_revealedThinkingLength < _targetThinking.length) {
+      final remaining = _targetThinking.length - _revealedThinkingLength;
+      final speed = remaining > _catchUpThreshold
+          ? _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5
+          : _baseCharsPerFrame;
+      _thinkingRevealProgress += speed;
+      final newLen = _thinkingRevealProgress.floor().clamp(0, _targetThinking.length);
+      if (newLen != _revealedThinkingLength) {
+        setState(() => _revealedThinkingLength = newLen);
+      }
+    } else if (_revealedLength < _targetContent.length) {
+      final remaining = _targetContent.length - _revealedLength;
+      final speed = remaining > _catchUpThreshold
+          ? _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5
+          : _baseCharsPerFrame;
+      _revealProgress += speed;
+      final newLen = _revealProgress.floor().clamp(0, _targetContent.length);
+      if (newLen != _revealedLength) {
+        setState(() => _revealedLength = newLen);
+      }
+    } else {
       _stopRevealTicker();
-      return;
-    }
-
-    final remaining = _targetContent.length - _revealedLength;
-    // Adaptive speed: ramp up when buffer is large to prevent falling behind.
-    final speed = remaining > _catchUpThreshold
-        ? _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5
-        : _baseCharsPerFrame;
-
-    _revealProgress += speed;
-    final newLength = _revealProgress.floor().clamp(0, _targetContent.length);
-
-    if (newLength != _revealedLength) {
-      setState(() {
-        _revealedLength = newLength;
-      });
     }
   }
 
   @override
   void dispose() {
-    _stopRevealTicker();
+    _revealTicker?.dispose();
     super.dispose();
   }
 
@@ -416,12 +494,15 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         : widget.message.content;
 
     if (widget.message.thinking != null && widget.message.thinking!.isNotEmpty) {
+      final thinkingContent = widget.isStreaming
+          ? _targetThinking.substring(0, _revealedThinkingLength)
+          : widget.message.thinking!;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildModelLabel(context),
           ThinkBlockWidget(
-            content: widget.message.thinking!,
+            content: thinkingContent,
             isComplete: content.isNotEmpty,
             isStreaming: widget.isStreaming,
           ),

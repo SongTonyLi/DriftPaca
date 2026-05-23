@@ -151,7 +151,11 @@ class ChatPageViewModel extends ChangeNotifier {
     final isThinking = _chatProvider.isCurrentChatThinking;
     final errorMessage = _chatProvider.currentChatError?.message;
 
-    if (messageCount != _lastMessageCount ||
+    // Always forward during streaming/thinking — message content is mutated
+    // in place so tracked values won't change, but the UI (typewriter reveal)
+    // depends on each notification to advance.
+    if (isStreaming || isThinking ||
+        messageCount != _lastMessageCount ||
         chatId != _lastChatId ||
         isStreaming != _lastIsStreaming ||
         isThinking != _lastIsThinking ||

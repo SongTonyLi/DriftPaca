@@ -40,6 +40,7 @@ class _ChatListViewState extends State<ChatListView> {
   /// Widget reference lets Flutter skip the entire subtree rebuild,
   /// avoiding expensive markdown re-parsing during streaming updates.
   final Map<String, Widget> _bubbleCache = {};
+  final Set<String> _animatedMessageIds = {};
 
   @override
   void initState() {
@@ -52,7 +53,9 @@ class _ChatListViewState extends State<ChatListView> {
     NotificationCenter().addObserver(
       NotificationNames.generationBegin,
       this,
-      (n) => _scrollToBottom(),
+      (n) => Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) _scrollToBottom();
+      }),
     );
   }
 
@@ -63,6 +66,7 @@ class _ChatListViewState extends State<ChatListView> {
     // Clear bubble cache when switching chats (message list replaced entirely)
     if (!identical(widget.messages, oldWidget.messages)) {
       _bubbleCache.clear();
+      _animatedMessageIds.clear();
     }
 
     // Add to the post frame callback to ensure that the scroll offset is
@@ -115,6 +119,10 @@ class _ChatListViewState extends State<ChatListView> {
                 final isStreamingMessage = index == 0 && widget.isStreaming;
 
                 if (index == 0) {
+                  final shouldAnimate = !isStreamingMessage &&
+                      message.role == OllamaMessageRole.user &&
+                      _animatedMessageIds.add(message.id);
+
                   return ObserveSize(
                     key: Key(message.id),
                     onSizeChanged: _onMessageSizeChanged,
@@ -122,6 +130,7 @@ class _ChatListViewState extends State<ChatListView> {
                       child: ChatBubble(
                         message: message,
                         isStreaming: isStreamingMessage,
+                        animate: shouldAnimate,
                       ),
                     ),
                   );

@@ -1003,7 +1003,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       key: const ValueKey('profile_all'),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       itemCount: _profileSections.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 20),
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) => _buildProfileSection(index, colorScheme),
     );
   }
@@ -1141,85 +1141,176 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
     final section = _profileSections[index];
     final hasContent = section.value.isNotEmpty;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: section.readOnly ? null : () => _showProfileSectionEditor(context, index),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Text(
+                          section.label,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        if (section.readOnly) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.lock_outline, size: 12, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (hasContent && !section.readOnly)
+                    Text(
+                      '~${section.estimatedTokens} tokens',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                      ),
+                    ),
+                ],
+              ),
+              if (hasContent) ...[
+                const SizedBox(height: 4),
                 Text(
-                  section.label,
+                  section.value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontWeight: FontWeight.w500,
                     fontSize: 13,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-                    letterSpacing: 0.2,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
                   ),
                 ),
-                if (section.readOnly) ...[
-                  const SizedBox(width: 6),
-                  Icon(Icons.lock_outline, size: 12, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
-                ],
-              ],
-            ),
-            if (hasContent && !section.readOnly)
-              Text(
-                '~${section.estimatedTokens} tokens',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+              ] else if (!section.readOnly) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Tap to add ${section.label.toLowerCase()}...',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        TextFormField(
-          initialValue: section.value,
-          readOnly: section.readOnly,
-          onChanged: section.readOnly
-              ? null
-              : (value) {
-                  setState(() => section.value = value);
-                },
-          maxLines: null,
-          minLines: 2,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: section.readOnly
-                ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
-                : colorScheme.surface.withValues(alpha: 0.5),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: section.readOnly
-                  ? BorderSide.none
-                  : BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
-            ),
-            contentPadding: const EdgeInsets.all(14),
-            hintText: section.readOnly ? null : 'Tap to add ${section.label.toLowerCase()}...',
-            hintStyle: TextStyle(
-              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
-              fontSize: 14,
-            ),
-          ),
-          style: TextStyle(
-            fontSize: 14,
-            color: section.readOnly
-                ? colorScheme.onSurfaceVariant.withValues(alpha: 0.7)
-                : colorScheme.onSurface,
+              ],
+            ],
           ),
         ),
-      ],
+      ),
     );
+  }
+
+  Future<void> _showProfileSectionEditor(BuildContext context, int index) async {
+    final section = _profileSections[index];
+    final contentController = TextEditingController(text: section.value);
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        return Dialog(
+          backgroundColor: colorScheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Row(
+                    children: [
+                      Icon(Icons.edit_outlined, size: 20, color: colorScheme.primary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          section.label,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        icon: Icon(Icons.close, size: 20, color: colorScheme.onSurfaceVariant),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Content
+                  Text(
+                    'Content',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: contentController,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.sentences,
+                    maxLines: 10,
+                    minLines: 6,
+                    style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
+                    decoration: InputDecoration(
+                      hintText: 'Describe your ${section.label.toLowerCase()}...',
+                      hintStyle: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35), fontSize: 14),
+                      filled: true,
+                      fillColor: colorScheme.surfaceContainerLowest,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+                      ),
+                      contentPadding: const EdgeInsets.all(14),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  // Save button
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result == true) {
+      setState(() => section.value = contentController.text);
+    }
   }
 
   // ---- Topics tab ----

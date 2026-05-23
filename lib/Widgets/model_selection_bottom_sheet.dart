@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:async/async.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -60,8 +61,35 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
   List<OllamaModel> get _filteredModels {
     if (_searchQuery.isEmpty) return _models;
     final query = _searchQuery.toLowerCase();
-    return _models.where((m) => m.name.toLowerCase().contains(query)).toList();
+
+    // Short queries: exact substring only (fuzzy would be too noisy)
+    if (query.length < 3) {
+      return _models.where((m) => m.name.toLowerCase().contains(query)).toList();
+    }
+
+    // Fuzzy: allow ~1 typo per 3 characters
+    final maxDist = (query.length / 3).ceil();
+    final exact = <OllamaModel>[];
+    final fuzzy = <(OllamaModel, int)>[];
+
+    for (final model in _models) {
+      final name = model.name.toLowerCase();
+      if (name.contains(query)) {
+        exact.add(model);
+      } else {
+        final dist = _fuzzySubstringDistance(query, name);
+        if (dist <= maxDist) {
+          fuzzy.add((model, dist));
+        }
+      }
+    }
+
+    fuzzy.sort((a, b) => a.$2.compareTo(b.$2));
+    return [...exact, ...fuzzy.map((e) => e.$1)];
   }
+
+  static int _fuzzySubstringDistance(String query, String target) =>
+      fuzzySubstringDistance(query, target);
 
   @override
   void dispose() {
@@ -1000,6 +1028,56 @@ class _Badge extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Minimum edit distance to match [query] as a substring anywhere in
+/// [target] (semi-global alignment with adjacent transpositions).
+/// Uses O(3 * m) memory via rolling rows instead of a full n * m matrix.
+@visibleForTesting
+int fuzzySubstringDistance(String query, String target) {
+  final n = query.length;
+  final m = target.length;
+  if (n == 0) return 0;
+  if (m == 0) return n;
+
+  // Three rolling rows: prev2 = i-2, prev = i-1, curr = i.
+  // Transposition needs i-2, so we keep 3 rows.
+  // Row 0 is all 0 (free start position in target).
+  var prev2 = List.filled(m + 1, 0);
+  var prev = List.filled(m + 1, 0);
+  var curr = List.filled(m + 1, 0);
+
+  for (var i = 1; i <= n; i++) {
+    // Rotate rows
+    final tmp = prev2;
+    prev2 = prev;
+    prev = curr;
+    curr = tmp;
+
+    curr[0] = i;
+    for (var j = 1; j <= m; j++) {
+      final cost = query[i - 1] == target[j - 1] ? 0 : 1;
+      var best = prev[j - 1] + cost;
+      final ins = curr[j - 1] + 1;
+      if (ins < best) best = ins;
+      final del = prev[j] + 1;
+      if (del < best) best = del;
+      // Adjacent transposition (Damerau)
+      if (i > 1 && j > 1 &&
+          query[i - 1] == target[j - 2] &&
+          query[i - 2] == target[j - 1]) {
+        final trans = prev2[j - 2] + 1;
+        if (trans < best) best = trans;
+      }
+      curr[j] = best;
+    }
+  }
+
+  var min = curr[0];
+  for (var j = 1; j <= m; j++) {
+    if (curr[j] < min) min = curr[j];
+  }
+  return min;
 }
 
 /// Shows a model selection bottom sheet and returns the selected model.

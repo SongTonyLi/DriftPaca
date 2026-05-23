@@ -122,8 +122,7 @@ class _MemoryEditorSheet extends StatefulWidget {
 class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   late List<MemorySection> _sections;
 
-  // null = chips/overview, non-null = focused on that section index
-  // -1 = show all sections (when memory has content)
+  // null = empty/chips overview, -1 = show all sections as cards
   int? _viewMode;
 
   @override
@@ -132,7 +131,6 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
     _sections = widget.sections
         .map((s) => MemorySection(label: s.label, key: s.key, value: s.value, readOnly: s.readOnly))
         .toList();
-    // If any editable section has content, show all sections
     if (_hasContent) {
       _viewMode = -1;
     }
@@ -144,14 +142,6 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   bool get _exceedsLimit => _totalTokens > widget.maxTotalTokens;
 
   bool get _hasContent => _sections.any((s) => !s.readOnly && s.value.isNotEmpty);
-
-  void _openSection(int index) {
-    setState(() => _viewMode = index);
-  }
-
-  void _goBack() {
-    setState(() => _viewMode = _hasContent ? -1 : null);
-  }
 
   String _formatTime(DateTime dt) {
     final now = DateTime.now();
@@ -194,40 +184,29 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                     padding: const EdgeInsets.fromLTRB(8, 14, 20, 4),
                     child: Row(
                       children: [
-                        if (_viewMode != null && _viewMode! >= 0)
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-                            onPressed: _goBack,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                          )
-                        else ...[
-                          const SizedBox(width: 12),
-                          Consumer<MemoryService>(
-                            builder: (context, memoryService, _) {
-                              if (memoryService.isUpdating) {
-                                return _PulsingStarIcon(size: 20, color: colorScheme.primary);
-                              }
-                              return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
-                            },
-                          ),
-                        ],
+                        const SizedBox(width: 12),
+                        Consumer<MemoryService>(
+                          builder: (context, memoryService, _) {
+                            if (memoryService.isUpdating) {
+                              return _PulsingStarIcon(size: 20, color: colorScheme.primary);
+                            }
+                            return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
+                          },
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                _viewMode != null && _viewMode! >= 0
-                                    ? _sections[_viewMode!].label
-                                    : widget.title,
+                                widget.title,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w600,
                                   fontSize: 17,
                                   color: colorScheme.onSurface,
                                 ),
                               ),
-                              if (widget.lastUpdatedAt != null && _viewMode == null || _viewMode == -1)
+                              if (widget.lastUpdatedAt != null)
                                 Text(
                                   'by ${widget.lastUpdatedByModel ?? 'unknown'} at ${_formatTime(widget.lastUpdatedAt!)}',
                                   style: TextStyle(
@@ -332,13 +311,11 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                       },
                       child: _viewMode == null
                           ? _buildEmptyState(colorScheme)
-                          : _viewMode! >= 0
-                              ? _buildFocusedSection(_viewMode!, colorScheme)
-                              : ListView.separated(
+                          : ListView.separated(
                                   key: const ValueKey('all'),
                                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
                                   itemCount: _sections.length,
-                                  separatorBuilder: (_, __) => const SizedBox(height: 20),
+                                  separatorBuilder: (_, __) => const SizedBox(height: 8),
                                   itemBuilder: (context, index) => _buildSection(index, colorScheme),
                                 ),
                     ),
@@ -427,7 +404,10 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                   if (!_sections[i].readOnly)
                     ActionChip(
                       label: Text(_sections[i].label, style: const TextStyle(fontSize: 12)),
-                      onPressed: () => _openSection(i),
+                      onPressed: () async {
+                        await _showSectionEditor(context, i);
+                        if (_hasContent) setState(() => _viewMode = -1);
+                      },
                     ),
               ],
             ),
@@ -437,169 +417,177 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
     );
   }
 
-  Widget _buildFocusedSection(int index, ColorScheme colorScheme) {
-    final section = _sections[index];
-
-    return Padding(
-      key: ValueKey('focused_$index'),
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (section.readOnly)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Managed by system — not editable',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                ),
-              ),
-            )
-          else if (section.value.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                '~${section.estimatedTokens} tokens',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
-                ),
-              ),
-            ),
-          Expanded(
-            child: TextFormField(
-              initialValue: section.value,
-              autofocus: !section.readOnly,
-              readOnly: section.readOnly,
-              onChanged: section.readOnly ? null : (value) {
-                setState(() {
-                  section.value = value;
-                });
-              },
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: section.readOnly
-                    ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
-                    : colorScheme.surfaceContainerLowest,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: section.readOnly
-                      ? BorderSide.none
-                      : BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
-                ),
-                contentPadding: const EdgeInsets.all(16),
-                hintText: section.readOnly ? null : 'Describe your ${section.label.toLowerCase()}...',
-                hintStyle: TextStyle(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
-                  fontSize: 14,
-                ),
-              ),
-              style: TextStyle(
-                fontSize: 14,
-                color: section.readOnly
-                    ? colorScheme.onSurfaceVariant.withValues(alpha: 0.7)
-                    : colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSection(int index, ColorScheme colorScheme) {
     final section = _sections[index];
     final hasContent = section.value.isNotEmpty;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: section.readOnly ? null : () => _showSectionEditor(context, index),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Text(
+                          section.label,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        if (section.readOnly) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.lock_outline, size: 12, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (hasContent && !section.readOnly)
+                    Text(
+                      '~${section.estimatedTokens} tokens',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+                      ),
+                    ),
+                ],
+              ),
+              if (hasContent) ...[
+                const SizedBox(height: 4),
                 Text(
-                  section.label,
+                  section.value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontWeight: FontWeight.w500,
                     fontSize: 13,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-                    letterSpacing: 0.2,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
                   ),
                 ),
-                if (section.readOnly) ...[
-                  const SizedBox(width: 6),
-                  Icon(Icons.lock_outline, size: 12, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
-                ],
-              ],
-            ),
-            if (hasContent && !section.readOnly)
-              Text(
-                '~${section.estimatedTokens} tokens',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+              ] else if (!section.readOnly) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Tap to add ${section.label.toLowerCase()}...',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        TextFormField(
-          initialValue: section.value,
-          readOnly: section.readOnly,
-          onChanged: section.readOnly ? null : (value) {
-            setState(() {
-              section.value = value;
-            });
-          },
-          maxLines: null,
-          minLines: 2,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: section.readOnly
-                ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
-                : colorScheme.surface.withValues(alpha: 0.5),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: section.readOnly
-                  ? BorderSide.none
-                  : BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
-            ),
-            contentPadding: const EdgeInsets.all(14),
-            hintText: section.readOnly ? null : 'Tap to add ${section.label.toLowerCase()}...',
-            hintStyle: TextStyle(
-              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
-              fontSize: 14,
-            ),
-          ),
-          style: TextStyle(
-            fontSize: 14,
-            color: section.readOnly
-                ? colorScheme.onSurfaceVariant.withValues(alpha: 0.7)
-                : colorScheme.onSurface,
+              ],
+            ],
           ),
         ),
-      ],
+      ),
     );
+  }
+
+  Future<void> _showSectionEditor(BuildContext context, int index) async {
+    final section = _sections[index];
+    final contentController = TextEditingController(text: section.value);
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        return Dialog(
+          backgroundColor: colorScheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.edit_outlined, size: 20, color: colorScheme.primary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          section.label,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        icon: Icon(Icons.close, size: 20, color: colorScheme.onSurfaceVariant),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Content',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: contentController,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.sentences,
+                    maxLines: 10,
+                    minLines: 6,
+                    style: TextStyle(fontSize: 14, color: colorScheme.onSurface, height: 1.4),
+                    decoration: InputDecoration(
+                      hintText: 'Describe your ${section.label.toLowerCase()}...',
+                      hintStyle: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35), fontSize: 14),
+                      filled: true,
+                      fillColor: colorScheme.surfaceContainerLowest,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
+                      ),
+                      contentPadding: const EdgeInsets.all(14),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text('Save', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result == true) {
+      setState(() => section.value = contentController.text);
+    }
   }
 
   Future<void> _handleSave() async {
@@ -725,7 +713,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
   late List<MemoryTopic> _topics;
   late List<EphemeralContext> _ephemeral;
 
-  // Profile view: null = chips, -1 = all, >=0 = focused
+  // null = empty/chips overview, -1 = show all sections as cards
   int? _profileViewMode;
 
   @override
@@ -797,42 +785,29 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                 padding: const EdgeInsets.fromLTRB(8, 14, 20, 4),
                 child: Row(
                   children: [
-                    if (_profileViewMode != null && _profileViewMode! >= 0 && _tabController.index == 0)
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-                        onPressed: () {
-                          setState(() => _profileViewMode = _profileHasContent ? -1 : null);
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                      )
-                    else ...[
-                      const SizedBox(width: 12),
-                      Consumer<MemoryService>(
-                        builder: (context, memoryService, _) {
-                          if (memoryService.isUpdating) {
-                            return _PulsingStarIcon(size: 20, color: colorScheme.primary);
-                          }
-                          return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
-                        },
-                      ),
-                    ],
+                    const SizedBox(width: 12),
+                    Consumer<MemoryService>(
+                      builder: (context, memoryService, _) {
+                        if (memoryService.isUpdating) {
+                          return _PulsingStarIcon(size: 20, color: colorScheme.primary);
+                        }
+                        return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
+                      },
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _profileViewMode != null && _profileViewMode! >= 0 && _tabController.index == 0
-                                ? _profileSections[_profileViewMode!].label
-                                : widget.title,
+                            widget.title,
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 17,
                               color: colorScheme.onSurface,
                             ),
                           ),
-                          if (widget.lastUpdatedAt != null && (_profileViewMode == null || _profileViewMode == -1))
+                          if (widget.lastUpdatedAt != null)
                             Text(
                               'by ${widget.lastUpdatedByModel ?? 'unknown'} at ${_formatTime(widget.lastUpdatedAt!)}',
                               style: TextStyle(
@@ -995,9 +970,6 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
     if (_profileViewMode == null) {
       return _buildProfileEmptyState(colorScheme);
     }
-    if (_profileViewMode! >= 0) {
-      return _buildProfileFocusedSection(_profileViewMode!, colorScheme);
-    }
     // -1 = show all
     return ListView.separated(
       key: const ValueKey('profile_all'),
@@ -1048,91 +1020,15 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                   if (!_profileSections[i].readOnly)
                     ActionChip(
                       label: Text(_profileSections[i].label, style: const TextStyle(fontSize: 12)),
-                      onPressed: () => setState(() => _profileViewMode = i),
+                      onPressed: () async {
+                        await _showProfileSectionEditor(context, i);
+                        if (_profileHasContent) setState(() => _profileViewMode = -1);
+                      },
                     ),
               ],
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildProfileFocusedSection(int index, ColorScheme colorScheme) {
-    final section = _profileSections[index];
-    return Padding(
-      key: ValueKey('profile_focused_$index'),
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (section.readOnly)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Managed by system — not editable',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontStyle: FontStyle.italic,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                ),
-              ),
-            )
-          else if (section.value.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                '~${section.estimatedTokens} tokens',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
-                ),
-              ),
-            ),
-          Expanded(
-            child: TextFormField(
-              initialValue: section.value,
-              autofocus: !section.readOnly,
-              readOnly: section.readOnly,
-              onChanged: section.readOnly
-                  ? null
-                  : (value) {
-                      setState(() => section.value = value);
-                    },
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: section.readOnly
-                    ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
-                    : colorScheme.surfaceContainerLowest,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: section.readOnly
-                      ? BorderSide.none
-                      : BorderSide(color: colorScheme.primary.withValues(alpha: 0.5), width: 1.5),
-                ),
-                contentPadding: const EdgeInsets.all(16),
-                hintText: section.readOnly ? null : 'Describe your ${section.label.toLowerCase()}...',
-                hintStyle: TextStyle(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
-                  fontSize: 14,
-                ),
-              ),
-              style: TextStyle(
-                fontSize: 14,
-                color: section.readOnly
-                    ? colorScheme.onSurfaceVariant.withValues(alpha: 0.7)
-                    : colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

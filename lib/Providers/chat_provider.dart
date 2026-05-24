@@ -328,7 +328,7 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking}) async {
     if (_messages.isEmpty) return null;
 
-    final searchThinkingValue = preThinking?.trim();
+    final searchThinking = preThinking?.trim();
     var modelThinkingBuffer = '';
 
     // If search context is provided, inject it as a system message before the conversation
@@ -386,16 +386,16 @@ class ChatProvider extends ChangeNotifier {
         // Keep the first received message to add the content of the following messages
         streamingMessage = receivedMessage;
 
-        if (searchThinkingValue != null && searchThinkingValue.isNotEmpty) {
+        if (searchThinking != null && searchThinking.isNotEmpty) {
           final initialThinking = receivedMessage.thinking ?? '';
           if (initialThinking.isNotEmpty) {
             modelThinkingBuffer = initialThinking;
             streamingMessage.thinking = mergeSearchThinking(
-              searchThinking: searchThinkingValue,
+              searchThinking: searchThinking,
               modelThinking: modelThinkingBuffer,
             );
           } else {
-            streamingMessage.thinking = searchThinkingValue;
+            streamingMessage.thinking = searchThinking;
           }
         }
 
@@ -414,10 +414,10 @@ class ChatProvider extends ChangeNotifier {
         streamingMessage.content += receivedMessage.content;
         // Accumulate thinking tokens alongside content
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
-          if (searchThinkingValue != null && searchThinkingValue.isNotEmpty) {
+          if (searchThinking != null && searchThinking.isNotEmpty) {
             modelThinkingBuffer += receivedMessage.thinking!;
             streamingMessage.thinking = mergeSearchThinking(
-              searchThinking: searchThinkingValue,
+              searchThinking: searchThinking,
               modelThinking: modelThinkingBuffer,
             );
           } else {

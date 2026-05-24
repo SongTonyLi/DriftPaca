@@ -12,8 +12,9 @@ String mergeSearchThinking({
   return '$searchThinking$searchThinkingSeparator$modelThinking';
 }
 
-/// Extracts model thinking from a combined string.
-/// If no separator is found, returns the original string unchanged.
+/// Extracts the model thinking portion from a combined string.
+/// [combined] should be produced by [mergeSearchThinking].
+/// If no separator is found, returns [combined] unchanged.
 String modelThinkingFromCombined(String combined) {
   final separatorIndex = combined.indexOf(searchThinkingSeparator);
   if (separatorIndex == -1) return combined;

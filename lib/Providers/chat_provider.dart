@@ -329,7 +329,7 @@ class ChatProvider extends ChangeNotifier {
     if (_messages.isEmpty) return null;
 
     final searchThinkingText = preThinking?.trim();
-    final hasSearchThinking = searchThinkingText != null && searchThinkingText.isNotEmpty;
+    final hasSearchThinking = searchThinkingText?.isNotEmpty ?? false;
     var modelThinkingBuffer = '';
 
     // If search context is provided, inject it as a system message before the conversation

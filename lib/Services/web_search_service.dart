@@ -73,28 +73,17 @@ class WebSearchService {
       {int maxResults = 5}) async {
     try {
       return await _searchOnce(query, maxResults: maxResults);
-    } on TimeoutException {
-      await Future.delayed(_retryBackoff);
-      try {
-        return await _searchOnce(query, maxResults: maxResults);
-      } catch (_) {
-        return [];
-      }
-    } on SocketException {
-      await Future.delayed(_retryBackoff);
-      try {
-        return await _searchOnce(query, maxResults: maxResults);
-      } catch (_) {
-        return [];
-      }
-    } on http.ClientException {
-      await Future.delayed(_retryBackoff);
-      try {
-        return await _searchOnce(query, maxResults: maxResults);
-      } catch (_) {
-        return [];
-      }
     } catch (e) {
+      if (e is TimeoutException ||
+          e is SocketException ||
+          e is http.ClientException) {
+        await Future.delayed(_retryBackoff);
+        try {
+          return await _searchOnce(query, maxResults: maxResults);
+        } catch (_) {
+          return [];
+        }
+      }
       return [];
     }
   }

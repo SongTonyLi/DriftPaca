@@ -328,8 +328,8 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking}) async {
     if (_messages.isEmpty) return null;
 
-    final searchThinking = preThinking?.trim();
-    final hasSearchThinking = searchThinking != null && searchThinking.isNotEmpty;
+    final searchThinkingText = preThinking?.trim();
+    final hasSearchThinking = searchThinkingText != null && searchThinkingText.isNotEmpty;
     var modelThinkingBuffer = '';
 
     // If search context is provided, inject it as a system message before the conversation
@@ -392,11 +392,11 @@ class ChatProvider extends ChangeNotifier {
           if (initialThinking.isNotEmpty) {
             modelThinkingBuffer = initialThinking;
             streamingMessage.thinking = mergeSearchThinking(
-              searchThinking: searchThinking!,
+              searchThinking: searchThinkingText!,
               modelThinking: modelThinkingBuffer,
             );
           } else {
-            streamingMessage.thinking = searchThinking;
+            streamingMessage.thinking = searchThinkingText;
           }
         }
 
@@ -422,7 +422,7 @@ class ChatProvider extends ChangeNotifier {
               modelThinkingBuffer += receivedMessage.thinking!;
             }
             streamingMessage.thinking = mergeSearchThinking(
-              searchThinking: searchThinking!,
+              searchThinking: searchThinkingText!,
               modelThinking: modelThinkingBuffer,
             );
           } else {

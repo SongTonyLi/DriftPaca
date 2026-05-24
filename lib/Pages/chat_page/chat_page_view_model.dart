@@ -495,7 +495,7 @@ class ChatPageViewModel extends ChangeNotifier {
           } else if (segment is SearchCardSegment && segment.query.isNotEmpty) {
             final urls = segment.urls
                 .where((u) => u.state == SearchURLState.success)
-                .map((u) => u.url.isNotEmpty ? u.url : u.domain)
+                .map((u) => u.url)
                 .toList();
             if (urls.isNotEmpty) {
               thinkingParts.add('Searched: "${segment.query}" → ${urls.join(', ')}');

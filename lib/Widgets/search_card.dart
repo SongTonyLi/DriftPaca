@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Widgets/search_detail_dialog.dart';
 
 /// Displays the status of a web search iteration.
 /// Shows query, per-URL fetch status, and completion state.
@@ -90,7 +91,13 @@ class _SearchCardState extends State<SearchCard>
           children: [
             // Header
             InkWell(
-              onTap: segment.urls.isNotEmpty ? _toggleExpand : null,
+              onTap: () {
+                if (widget.segment.isComplete) {
+                  SearchDetailDialog.show(context, widget.segment);
+                } else if (widget.segment.urls.isNotEmpty) {
+                  _toggleExpand();
+                }
+              },
               borderRadius: BorderRadius.circular(10),
               child: Padding(
                 padding:

@@ -469,7 +469,7 @@ class ChatPageViewModel extends ChangeNotifier {
         // Build source URL map from context source tags
         if (searchContext != null) {
           final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
-          for (final match in urlPattern.allMatches(searchContext!)) {
+          for (final match in urlPattern.allMatches(searchContext)) {
             final id = int.tryParse(match.group(1)!);
             final url = match.group(2);
             if (id != null && url != null) {

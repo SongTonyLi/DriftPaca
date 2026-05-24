@@ -18,9 +18,14 @@ class _SearchCardState extends State<SearchCard>
   late final AnimationController _expandController;
   late final Animation<double> _expandAnimation;
 
+  // Track previous isComplete state locally because SearchCardSegment is
+  // mutable and mutated in-place, so oldWidget.segment === widget.segment.
+  bool _prevIsComplete = false;
+
   @override
   void initState() {
     super.initState();
+    _prevIsComplete = widget.segment.isComplete;
     _expandController = AnimationController(
       duration: const Duration(milliseconds: 200),
       vsync: this,
@@ -34,7 +39,8 @@ class _SearchCardState extends State<SearchCard>
   @override
   void didUpdateWidget(SearchCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.segment.isComplete && !oldWidget.segment.isComplete) {
+    if (widget.segment.isComplete && !_prevIsComplete) {
+      _prevIsComplete = true;
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted && _expanded) _toggleExpand();
       });

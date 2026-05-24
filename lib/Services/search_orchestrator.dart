@@ -155,13 +155,14 @@ User question: $userMessage''';
         _emit(ThinkingUpdateEvent(accumulated));
       }
 
-      // Extract last line as query, strip it from displayed thinking
+      // Extract last line as query, strip it and trailing --- from thinking
       final lines = accumulated.trim().split('\n');
       final lastLine = lines.last.trim();
       final query = sanitizeQuery(lastLine);
-      final reasoning = lines.length > 1
+      var reasoning = lines.length > 1
           ? lines.sublist(0, lines.length - 1).join('\n').trim()
           : '';
+      reasoning = reasoning.replaceAll(RegExp(r'\n*-{3,}\s*$'), '').trim();
       if (reasoning.isNotEmpty && reasoning != accumulated.trim()) {
         _emit(ThinkingUpdateEvent(reasoning));
       }
@@ -218,9 +219,12 @@ User question: $userMessage''';
       }
 
       final result = parseEvaluation(accumulated);
-      // Strip the SEARCH:/DONE decision line from displayed thinking
-      if (result.reasoning.isNotEmpty && result.reasoning != accumulated.trim()) {
-        _emit(ThinkingUpdateEvent(result.reasoning));
+      // Strip the SEARCH:/DONE decision line and trailing --- separator
+      var cleanReasoning = result.reasoning
+          .replaceAll(RegExp(r'\n*-{3,}\s*$'), '')
+          .trim();
+      if (cleanReasoning.isNotEmpty && cleanReasoning != accumulated.trim()) {
+        _emit(ThinkingUpdateEvent(cleanReasoning));
       }
       return result;
     } catch (e) {

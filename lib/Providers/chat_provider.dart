@@ -537,19 +537,19 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Replaces [N] citations in content with clickable markdown links.
+  /// Replaces [N] and 【N】 citations in content with clickable markdown links.
   ///
-  /// Uses negative lookahead `(?!\()` so that `[N]` already followed by
-  /// `(url)` (i.e. an existing markdown link) is not double-wrapped.
+  /// Handles both standard brackets [1] and fullwidth brackets 【1】
+  /// (some models like qwen/deepseek output fullwidth brackets for citations).
   ///
-  /// Output format: `[[N]](url)` — CommonMark parses `[N]` as the link
-  /// text (with visible brackets) and `(url)` as the destination.
+  /// Uses negative lookahead `(?!\()` so existing markdown links aren't double-wrapped.
   @visibleForTesting
   static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
+    // Match both [N] and 【N】 citation formats
     return content.replaceAllMapped(
-      RegExp(r'\[(\d+)\](?!\()'),
+      RegExp(r'(?:\[(\d+)\]|\u3010(\d+)\u3011)(?!\()'),
       (match) {
-        final id = int.tryParse(match.group(1)!);
+        final id = int.tryParse(match.group(1) ?? match.group(2) ?? '');
         if (id != null && sourceUrls.containsKey(id)) {
           final url = sourceUrls[id]!;
           return '[[$id]]($url)';

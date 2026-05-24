@@ -1022,6 +1022,10 @@ class _InlineLatexSyntax extends md.InlineSyntax {
   // No restrictive lookahead — allows LaTeX inside bold, before dashes, etc.
   _InlineLatexSyntax() : super(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$', startCharacter: 0x24);
 
+  /// Currency pattern: content starts with digits optionally preceded by space,
+  /// e.g. "$514 billion", "$2.203 trillion". These are NOT LaTeX.
+  static final _currencyPattern = RegExp(r'^\s*[\d,.]');
+
   @override
   bool onMatch(md.InlineParser parser, Match match) {
     final displayContent = match.group(1);
@@ -1031,6 +1035,13 @@ class _InlineLatexSyntax extends md.InlineSyntax {
     // MUST always return true when regex matched — returning false
     // without consuming causes InlineParser to loop infinitely.
     if (equation == null || equation.isEmpty) {
+      parser.addNode(md.Text(match.group(0)!));
+      return true;
+    }
+
+    // Guard: inline $...$ starting with digits is currency, not LaTeX.
+    // Display $$...$$ is always treated as LaTeX (currency never uses $$).
+    if (inlineContent != null && _currencyPattern.hasMatch(equation)) {
       parser.addNode(md.Text(match.group(0)!));
       return true;
     }

@@ -432,6 +432,9 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   static const double _baseCharsPerFrame = 0.7;
   static const int _catchUpThreshold = 80;
 
+  /// Returns the thinking text to display for this bubble.
+  /// When search segments are shown, only the model thinking portion is shown
+  /// since search thinking is rendered separately above.
   String _displayThinking(String? thinking) {
     if (thinking == null || thinking.isEmpty) return '';
     if (widget.searchSegments.isEmpty) return thinking;

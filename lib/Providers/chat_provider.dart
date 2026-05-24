@@ -328,9 +328,7 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking}) async {
     if (_messages.isEmpty) return null;
 
-    final searchThinkingText = preThinking?.trim();
-    final searchThinkingValue =
-        (searchThinkingText?.isNotEmpty ?? false) ? searchThinkingText : null;
+    final searchThinkingValue = preThinking?.trim();
     var modelThinkingBuffer = '';
 
     // If search context is provided, inject it as a system message before the conversation
@@ -388,7 +386,7 @@ class ChatProvider extends ChangeNotifier {
         // Keep the first received message to add the content of the following messages
         streamingMessage = receivedMessage;
 
-        if (searchThinkingValue != null) {
+        if (searchThinkingValue != null && searchThinkingValue.isNotEmpty) {
           final initialThinking = receivedMessage.thinking ?? '';
           if (initialThinking.isNotEmpty) {
             modelThinkingBuffer = initialThinking;
@@ -416,12 +414,8 @@ class ChatProvider extends ChangeNotifier {
         streamingMessage.content += receivedMessage.content;
         // Accumulate thinking tokens alongside content
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
-          if (searchThinkingValue != null) {
-            if (modelThinkingBuffer.isEmpty) {
-              modelThinkingBuffer = receivedMessage.thinking!;
-            } else {
-              modelThinkingBuffer += receivedMessage.thinking!;
-            }
+          if (searchThinkingValue != null && searchThinkingValue.isNotEmpty) {
+            modelThinkingBuffer += receivedMessage.thinking!;
             streamingMessage.thinking = mergeSearchThinking(
               searchThinking: searchThinkingValue,
               modelThinking: modelThinkingBuffer,

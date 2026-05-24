@@ -245,6 +245,7 @@ class ChatProvider extends ChangeNotifier {
   Future<void> sendPrompt(OllamaMessage prompt, {
     String? searchContext,
     Map<int, String>? sourceUrls,
+    String? preThinking,
   }) async {
     final associatedChat = currentChat!;
 
@@ -252,10 +253,10 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.addMessage(prompt, chat: associatedChat);
 
     // Initialize the chat stream with the messages in the chat
-    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls);
+    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls, preThinking: preThinking);
   }
 
-  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls}) async {
+  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking}) async {
     // Send a notification to inform generation begin
     NotificationCenter().postNotification(NotificationNames.generationBegin);
 
@@ -281,7 +282,7 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? ollamaMessage;
 
     try {
-      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext);
+      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext, preThinking: preThinking);
       // Replace [N] citations with clickable markdown links
       if (ollamaMessage != null && sourceUrls != null && sourceUrls.isNotEmpty) {
         ollamaMessage.content = replaceCitationsWithLinks(ollamaMessage.content, sourceUrls);
@@ -323,7 +324,7 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext}) async {
+  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking}) async {
     if (_messages.isEmpty) return null;
 
     // If search context is provided, inject it as a system message before the conversation
@@ -429,6 +430,14 @@ class ChatProvider extends ChangeNotifier {
         RegExp(r'^\(Response from [^)]+\)\n?'),
         '',
       );
+    }
+
+    // Prepend orchestrator thinking to model thinking
+    if (preThinking != null && preThinking.isNotEmpty && streamingMessage != null) {
+      final modelThinking = streamingMessage.thinking ?? '';
+      streamingMessage.thinking = modelThinking.isEmpty
+          ? preThinking
+          : '$preThinking\n\n---\n\n$modelThinking';
     }
 
     return streamingMessage;

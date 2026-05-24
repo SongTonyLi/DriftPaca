@@ -14,6 +14,7 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
+import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
@@ -327,6 +328,10 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking}) async {
     if (_messages.isEmpty) return null;
 
+    final searchThinking = preThinking?.trim();
+    final hasSearchThinking = searchThinking != null && searchThinking.isNotEmpty;
+    var modelThinkingBuffer = '';
+
     // If search context is provided, inject it as a system message before the conversation
     List<OllamaMessage> messagesToSend = _messages;
     if (searchContext != null && searchContext.isNotEmpty) {
@@ -382,6 +387,19 @@ class ChatProvider extends ChangeNotifier {
         // Keep the first received message to add the content of the following messages
         streamingMessage = receivedMessage;
 
+        if (hasSearchThinking) {
+          final initialThinking = receivedMessage.thinking ?? '';
+          if (initialThinking.isNotEmpty) {
+            modelThinkingBuffer = initialThinking;
+            streamingMessage.thinking = mergeSearchThinking(
+              searchThinking: searchThinking!,
+              modelThinking: modelThinkingBuffer,
+            );
+          } else {
+            streamingMessage.thinking = searchThinking;
+          }
+        }
+
         // Update the active chat streams key with the ollama message
         // to be able to show the stream in the chat.
         // We also use this when the user switches between chats while streaming.
@@ -397,7 +415,19 @@ class ChatProvider extends ChangeNotifier {
         streamingMessage.content += receivedMessage.content;
         // Accumulate thinking tokens alongside content
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
-          streamingMessage.thinking = (streamingMessage.thinking ?? '') + receivedMessage.thinking!;
+          if (hasSearchThinking) {
+            if (modelThinkingBuffer.isEmpty) {
+              modelThinkingBuffer = receivedMessage.thinking!;
+            } else {
+              modelThinkingBuffer += receivedMessage.thinking!;
+            }
+            streamingMessage.thinking = mergeSearchThinking(
+              searchThinking: searchThinking!,
+              modelThinking: modelThinkingBuffer,
+            );
+          } else {
+            streamingMessage.thinking = (streamingMessage.thinking ?? '') + receivedMessage.thinking!;
+          }
         }
 
         // Throttle UI updates during streaming (~30fps)
@@ -430,14 +460,6 @@ class ChatProvider extends ChangeNotifier {
         RegExp(r'^\(Response from [^)]+\)\n?'),
         '',
       );
-    }
-
-    // Prepend orchestrator thinking to model thinking
-    if (preThinking != null && preThinking.isNotEmpty && streamingMessage != null) {
-      final modelThinking = streamingMessage.thinking ?? '';
-      streamingMessage.thinking = modelThinking.isEmpty
-          ? preThinking
-          : '$preThinking\n\n---\n\n$modelThinking';
     }
 
     return streamingMessage;

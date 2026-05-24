@@ -13,6 +13,7 @@ import 'package:llamaseek/Extensions/code_syntax_highlighter.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
@@ -431,13 +432,21 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   static const double _baseCharsPerFrame = 0.7;
   static const int _catchUpThreshold = 80;
 
+  String _displayThinking(String? thinking) {
+    if (thinking == null || thinking.isEmpty) return '';
+    if (widget.searchSegments.isEmpty) return thinking;
+    final modelThinking = modelThinkingFromCombined(thinking);
+    return modelThinking.isEmpty ? '' : modelThinking.trimLeft();
+  }
+
   @override
   void didUpdateWidget(_AssistantBubble old) {
     super.didUpdateWidget(old);
+    final nextThinking = _displayThinking(widget.message.thinking);
     if (old.isStreaming && !widget.isStreaming) {
       _wasStreaming = true;
       _targetContent = widget.message.content;
-      _targetThinking = widget.message.thinking ?? '';
+      _targetThinking = nextThinking;
       _revealedLength = _targetContent.length;
       _revealedThinkingLength = _targetThinking.length;
       _revealProgress = _revealedLength.toDouble();
@@ -445,11 +454,11 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       _stopRevealTicker();
     } else if (widget.isStreaming) {
       _targetContent = widget.message.content;
-      _targetThinking = widget.message.thinking ?? '';
+      _targetThinking = nextThinking;
       _ensureRevealTicker();
     } else {
       _targetContent = widget.message.content;
-      _targetThinking = widget.message.thinking ?? '';
+      _targetThinking = nextThinking;
       _revealedLength = _targetContent.length;
       _revealedThinkingLength = _targetThinking.length;
       _revealProgress = _revealedLength.toDouble();
@@ -558,8 +567,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   /// Builds search segment widgets (thinking blocks + search cards) from orchestrator events.
-  /// Thinking segments render as open text (not collapsible ThinkBlockWidget)
-  /// since they stream in live and should stay visible.
+  /// Thinking segments use ThinkBlockWidget but stay expanded by default
+  /// so streamed reasoning remains visible.
   List<Widget> _buildSearchSegments() {
     final widgets = <Widget>[];
     final isLastSegmentThinking = widget.searchSegments.lastOrNull is ThinkingSegment;
@@ -567,15 +576,16 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
     for (var i = 0; i < segmentCount; i++) {
       final segment = widget.searchSegments[i];
-      final isLast = i == segmentCount - 1;
+      final isActiveThinking = isLastSegmentThinking && i == segmentCount - 1;
       switch (segment) {
         case ThinkingSegment():
           if (segment.text.isEmpty) continue;
           // Use ThinkBlockWidget but keep it expanded (isStreaming while active)
           widgets.add(ThinkBlockWidget(
             content: segment.text,
-            isComplete: !isLast || !isLastSegmentThinking,
-            isStreaming: isLast && isLastSegmentThinking,
+            isComplete: !isActiveThinking,
+            isStreaming: isActiveThinking,
+            keepExpandedWhenComplete: true,
           ));
         case SearchCardSegment():
           widgets.add(SearchCard(segment: segment));
@@ -593,10 +603,11 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
     final searchWidgets = _buildSearchSegments();
 
-    if (widget.message.thinking != null && widget.message.thinking!.isNotEmpty) {
+    final displayThinking = _displayThinking(widget.message.thinking);
+    if (displayThinking.isNotEmpty) {
       final thinkingContent = widget.isStreaming
           ? _targetThinking.substring(0, _revealedThinkingLength)
-          : widget.message.thinking!;
+          : displayThinking;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -86,12 +86,18 @@ class SearchOrchestrator {
         if (_cancelled) break;
         queriesUsed.add(query);
 
+        // Yield to event loop so planning thinking renders before search card appears
+        await Future.delayed(Duration.zero);
+
         _emit(SearchStartEvent(query));
 
         // --- SEARCH ---
         final results = await _search(query);
 
         if (_cancelled) break;
+
+        // Yield to event loop so search card completion renders before evaluation starts
+        await Future.delayed(Duration.zero);
 
         // Store extracted content in the search card segment for persistence
         if (results.isNotEmpty) {

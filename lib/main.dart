@@ -74,6 +74,7 @@ void main() async {
             chatProvider: context.read(),
             permissionService: context.read(),
             imageService: context.read(),
+            ollamaService: context.read(),
           ),
         ),
       ],

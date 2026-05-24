@@ -12,6 +12,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
 
@@ -19,14 +20,17 @@ class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
   final PermissionService _permissionService;
   final ImageService _imageService;
+  final OllamaService _ollamaService;
 
   ChatPageViewModel({
     required ChatProvider chatProvider,
     required PermissionService permissionService,
     required ImageService imageService,
+    required OllamaService ollamaService,
   })  : _chatProvider = chatProvider,
         _permissionService = permissionService,
-        _imageService = imageService {
+        _imageService = imageService,
+        _ollamaService = ollamaService {
     _initialize();
   }
 
@@ -37,6 +41,17 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Whether web search is enabled for the next message
   bool _webSearchEnabled = false;
   bool get webSearchEnabled => _webSearchEnabled;
+
+  /// Whether a search orchestrator is currently running
+  bool _isSearching = false;
+  bool get isSearching => _isSearching;
+
+  /// Message segments for the current search-augmented response (ephemeral)
+  final List<MessageSegment> _searchSegments = [];
+  List<MessageSegment> get searchSegments => List.unmodifiable(_searchSegments);
+
+  /// Active orchestrator reference for cancellation
+  SearchOrchestrator? _activeOrchestrator;
 
   /// Whether the user has accepted the web search disclosure
   bool get webSearchConsented => Hive.box('settings').get('webSearchConsented', defaultValue: false);
@@ -57,6 +72,52 @@ class ChatPageViewModel extends ChangeNotifier {
     _webSearchEnabled = true;
     notifyListeners();
   }
+
+  // ============================================================
+  // Search Segment Management
+  // ============================================================
+
+  void _appendThinkingSegment(String text) {
+    if (text.isEmpty) return;
+    _searchSegments.add(ThinkingSegment(text));
+  }
+
+  void _addSearchCard(String query) {
+    _searchSegments.add(SearchCardSegment(query: query));
+  }
+
+  void _updateSearchCard(List<SearchURLStatus> urls) {
+    final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+    if (card != null) {
+      card.urls = urls;
+    }
+  }
+
+  void _collapseSearchCard(int resultCount) {
+    final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+    if (card != null) {
+      card.resultCount = resultCount;
+      card.isComplete = true;
+    }
+  }
+
+  void _showSearchError(String message) {
+    final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+    if (card != null && !card.isComplete) {
+      card.error = message;
+      card.isComplete = true;
+    } else {
+      _searchSegments.add(SearchCardSegment(
+        query: '',
+        error: message,
+        isComplete: true,
+      ));
+    }
+  }
+
+  // ============================================================
+  // Other Page State
+  // ============================================================
 
   /// Whether the next new chat should be incognito
   bool _incognitoRequested = false;
@@ -210,8 +271,11 @@ class ChatPageViewModel extends ChangeNotifier {
   // ChatProvider Actions (Delegated)
   // ============================================================
 
-  /// Cancels the current streaming response
+  /// Cancels the current streaming response and any active search
   void cancelStreaming() {
+    _activeOrchestrator?.cancel();
+    _activeOrchestrator = null;
+    _isSearching = false;
     _chatProvider.cancelCurrentStreaming();
   }
 
@@ -323,8 +387,8 @@ class ChatPageViewModel extends ChangeNotifier {
     required Future<void> Function() onModelSelectionRequired,
     required void Function() onServerNotConfigured,
   }) async {
-    // Early return if nothing to send or currently streaming
-    if (!hasText || isStreaming) {
+    // Early return if nothing to send or currently streaming/searching
+    if (!hasText || isStreaming || _isSearching) {
       return false;
     }
 
@@ -363,23 +427,82 @@ class ChatPageViewModel extends ChangeNotifier {
     // Perform web search if enabled (user already sees their message)
     String? searchContext;
     Map<int, String>? sourceUrls;
+    String? searchThinking;
+
     if (_webSearchEnabled) {
+      _isSearching = true;
+      _searchSegments.clear();
+      notifyListeners();
+
+      SearchOrchestrator? orchestrator;
       try {
-        final searchService = WebSearchService();
-        final searchResults = await searchService.searchAndFetch(prompt);
-        if (searchResults.isNotEmpty) {
-          searchContext = WebSearchService.formatResultsAsContext(searchResults);
-          sourceUrls = {
-            for (var i = 0; i < searchResults.length; i++)
-              i + 1: searchResults[i].url,
-          };
+        orchestrator = SearchOrchestrator(
+          ollamaService: _ollamaService,
+          chat: _chatProvider.currentChat!,
+        );
+        _activeOrchestrator = orchestrator;
+
+        // Listen to events for UI updates
+        final subscription = orchestrator.events.listen((event) {
+          switch (event) {
+            case ThinkingEvent():
+              _appendThinkingSegment(event.text);
+            case SearchStartEvent():
+              _addSearchCard(event.query);
+            case SearchProgressEvent():
+              _updateSearchCard(event.urls);
+            case SearchCompleteEvent():
+              _collapseSearchCard(event.resultCount);
+            case SearchErrorEvent():
+              _showSearchError(event.message);
+            case AnswerStartEvent():
+              _searchSegments.add(AnswerSegment());
+          }
+          notifyListeners();
+        });
+
+        // Run the agentic loop
+        searchContext = await orchestrator.run(prompt);
+
+        await subscription.cancel();
+
+        // Build source URL map from context source tags
+        if (searchContext != null) {
+          final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
+          for (final match in urlPattern.allMatches(searchContext!)) {
+            final id = int.tryParse(match.group(1)!);
+            final url = match.group(2);
+            if (id != null && url != null) {
+              sourceUrls ??= {};
+              sourceUrls[id] = url;
+            }
+          }
+        }
+
+        // Collect thinking text from search segments for persistence
+        final thinkingParts = _searchSegments
+            .whereType<ThinkingSegment>()
+            .map((s) => s.text)
+            .where((t) => t.isNotEmpty)
+            .toList();
+        if (thinkingParts.isNotEmpty) {
+          searchThinking = thinkingParts.join('\n\n');
         }
       } catch (_) {
+        // Orchestrator failed — continue without search
+      } finally {
+        orchestrator?.dispose();
+        _activeOrchestrator = null;
+        _isSearching = false;
+        notifyListeners();
       }
     }
 
     // Persist message and start the AI response stream
-    await _chatProvider.sendPrompt(message, searchContext: searchContext, sourceUrls: sourceUrls);
+    await _chatProvider.sendPrompt(message,
+        searchContext: searchContext,
+        sourceUrls: sourceUrls,
+        preThinking: searchThinking);
 
     // Generate title for new chats
     if (isNewChat) {

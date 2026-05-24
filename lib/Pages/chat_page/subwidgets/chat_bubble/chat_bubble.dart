@@ -14,6 +14,9 @@ import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
+import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Widgets/search_card.dart';
+
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
@@ -23,17 +26,19 @@ class ChatBubble extends StatelessWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final bool animate;
+  final List<MessageSegment> searchSegments;
 
   const ChatBubble({
     super.key,
     required this.message,
     this.isStreaming = false,
     this.animate = false,
+    this.searchSegments = const [],
   });
 
   @override
   Widget build(BuildContext context) {
-    return _ChatBubbleBody(message: message, isStreaming: isStreaming, animate: animate);
+    return _ChatBubbleBody(message: message, isStreaming: isStreaming, animate: animate, searchSegments: searchSegments);
   }
 }
 
@@ -41,8 +46,9 @@ class _ChatBubbleBody extends StatelessWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final bool animate;
+  final List<MessageSegment> searchSegments;
 
-  const _ChatBubbleBody({required this.message, required this.isStreaming, this.animate = false});
+  const _ChatBubbleBody({required this.message, required this.isStreaming, this.animate = false, this.searchSegments = const []});
 
   static final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
     [
@@ -111,6 +117,7 @@ class _ChatBubbleBody extends StatelessWidget {
               message: message,
               isStreaming: isStreaming,
               buildMarkdown: _buildMarkdown,
+              searchSegments: searchSegments,
             ),
         ],
       ),
@@ -395,11 +402,13 @@ class _AssistantBubble extends StatefulWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final Widget Function(BuildContext, String, {bool selectable}) buildMarkdown;
+  final List<MessageSegment> searchSegments;
 
   const _AssistantBubble({
     required this.message,
     required this.isStreaming,
     required this.buildMarkdown,
+    this.searchSegments = const [],
   });
 
   @override
@@ -548,10 +557,32 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     );
   }
 
+  /// Builds search segment widgets (thinking blocks + search cards) from orchestrator events.
+  List<Widget> _buildSearchSegments() {
+    final widgets = <Widget>[];
+    for (final segment in widget.searchSegments) {
+      switch (segment) {
+        case ThinkingSegment():
+          widgets.add(ThinkBlockWidget(
+            content: segment.text,
+            isComplete: true,
+            isStreaming: false,
+          ));
+        case SearchCardSegment():
+          widgets.add(SearchCard(segment: segment));
+        case AnswerSegment():
+          break;
+      }
+    }
+    return widgets;
+  }
+
   Widget _buildMessageContent(BuildContext context) {
     final content = widget.isStreaming
         ? _targetContent.substring(0, _revealedLength)
         : widget.message.content;
+
+    final searchWidgets = _buildSearchSegments();
 
     if (widget.message.thinking != null && widget.message.thinking!.isNotEmpty) {
       final thinkingContent = widget.isStreaming
@@ -561,6 +592,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildModelLabel(context),
+          ...searchWidgets,
           ThinkBlockWidget(
             content: thinkingContent,
             isComplete: content.isNotEmpty,
@@ -581,6 +613,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildModelLabel(context),
+          ...searchWidgets,
           ThinkBlockWidget(
             content: parsed.thinkContent,
             isComplete: parsed.isThinkingComplete,
@@ -598,7 +631,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildModelLabel(context),
-        _buildContent(context, content),
+        ...searchWidgets,
+        if (content.isNotEmpty) _buildContent(context, content),
       ],
     );
   }

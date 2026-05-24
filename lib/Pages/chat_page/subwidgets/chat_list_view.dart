@@ -3,6 +3,8 @@ import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:notification_centre/notification_centre.dart';
 
+import 'package:llamaseek/Models/search_event.dart';
+
 import 'chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Utils/observe_size.dart';
@@ -15,6 +17,7 @@ class ChatListView extends StatefulWidget {
   final Widget? error;
   final double? bottomPadding;
   final double? topPadding;
+  final List<MessageSegment> searchSegments;
 
   const ChatListView({
     super.key,
@@ -24,6 +27,7 @@ class ChatListView extends StatefulWidget {
     this.error,
     this.bottomPadding,
     this.topPadding,
+    this.searchSegments = const [],
   });
 
   @override
@@ -131,6 +135,7 @@ class _ChatListViewState extends State<ChatListView> {
                         message: message,
                         isStreaming: isStreamingMessage,
                         animate: shouldAnimate,
+                        searchSegments: widget.searchSegments,
                       ),
                     ),
                   );

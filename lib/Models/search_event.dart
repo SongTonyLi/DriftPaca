@@ -1,10 +1,13 @@
 /// Events emitted by SearchOrchestrator for UI updates.
 sealed class SearchEvent {}
 
-/// Model reasoning text to display in thinking block.
-class ThinkingEvent extends SearchEvent {
-  final String text;
-  ThinkingEvent(this.text);
+/// A new thinking block has started streaming.
+class ThinkingStartEvent extends SearchEvent {}
+
+/// Incremental update to the current thinking block (accumulated text so far).
+class ThinkingUpdateEvent extends SearchEvent {
+  final String accumulated;
+  ThinkingUpdateEvent(this.accumulated);
 }
 
 /// Search has started for a query.
@@ -54,7 +57,7 @@ enum SearchURLState { loading, success, failed, timedOut }
 sealed class MessageSegment {}
 
 class ThinkingSegment extends MessageSegment {
-  final String text;
+  String text; // mutable — updated in-place during streaming
   ThinkingSegment(this.text);
 }
 

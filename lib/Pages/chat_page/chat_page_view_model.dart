@@ -487,12 +487,21 @@ class ChatPageViewModel extends ChangeNotifier {
           }
         }
 
-        // Collect thinking text from search segments for persistence
-        final thinkingParts = _searchSegments
-            .whereType<ThinkingSegment>()
-            .map((s) => s.text)
-            .where((t) => t.isNotEmpty)
-            .toList();
+        // Collect thinking text + searched URLs for persistence
+        final thinkingParts = <String>[];
+        for (final segment in _searchSegments) {
+          if (segment is ThinkingSegment && segment.text.isNotEmpty) {
+            thinkingParts.add(segment.text);
+          } else if (segment is SearchCardSegment && segment.query.isNotEmpty) {
+            final urls = segment.urls
+                .where((u) => u.state == SearchURLState.success)
+                .map((u) => u.domain)
+                .toList();
+            if (urls.isNotEmpty) {
+              thinkingParts.add('Searched: "${segment.query}" → ${urls.join(', ')}');
+            }
+          }
+        }
         if (thinkingParts.isNotEmpty) {
           searchThinking = thinkingParts.join('\n\n');
         }

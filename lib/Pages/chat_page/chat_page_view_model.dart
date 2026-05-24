@@ -368,7 +368,7 @@ class ChatPageViewModel extends ChangeNotifier {
         final searchService = WebSearchService();
         final searchResults = await searchService.searchAndFetch(prompt);
         if (searchResults.isNotEmpty) {
-          searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
+          searchContext = WebSearchService.formatResultsAsContext(searchResults);
           sourceUrls = {
             for (var i = 0; i < searchResults.length; i++)
               i + 1: searchResults[i].url,

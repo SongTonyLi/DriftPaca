@@ -1,177 +1,126 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:http/http.dart' as http;
+import 'package:llamaseek/Utils/text_splitter.dart';
 
 class WebSearchResult {
   final String title;
   final String snippet;
   final String url;
-  String? pageContent; // Full page text, fetched after search
+  String? pageContent;
+  List<String>? chunks;
 
   WebSearchResult({
     required this.title,
     required this.snippet,
     required this.url,
     this.pageContent,
+    this.chunks,
   });
 }
 
 class WebSearchService {
   static const _baseUrl = 'https://html.duckduckgo.com/html/';
-  static const _maxPageContentLength = 4000; // chars per page
+  static const _maxPageContentLength = 4000;
   static const _fetchTimeout = Duration(seconds: 8);
+  static const _searchTimeout = Duration(seconds: 10);
+  static const _retryBackoff = Duration(seconds: 2);
+  static const _maxConcurrentFetches = 3;
 
-  /// Full search pipeline matching open-webui's process_web_search():
-  /// 1. Search DuckDuckGo for results
-  /// 2. Fetch full page content from each result URL
-  /// 3. Return enriched results
+  // ============================================================
+  // Public API
+  // ============================================================
+
+  /// Full search pipeline with text chunking:
+  /// 1. Search DuckDuckGo
+  /// 2. Fetch full page content (concurrency-limited)
+  /// 3. Chunk content with recursive text splitter
+  Future<List<WebSearchResult>> searchAndExtract(String query,
+      {int maxResults = 5}) async {
+    final results = await searchAndFetch(query, maxResults: maxResults);
+
+    for (final result in results) {
+      if (result.pageContent != null && result.pageContent!.isNotEmpty) {
+        result.chunks = splitText(
+          result.pageContent!,
+          chunkSize: 1500,
+          overlap: 200,
+        );
+      }
+    }
+
+    return results;
+  }
+
+  /// Search DuckDuckGo + fetch page content (concurrency-limited).
   Future<List<WebSearchResult>> searchAndFetch(String query,
       {int maxResults = 3}) async {
     final results = await search(query, maxResults: maxResults);
     if (results.isEmpty) return results;
 
-    // Fetch page content in parallel (like open-webui's get_web_loader)
+    final semaphore = _Semaphore(_maxConcurrentFetches);
     await Future.wait(
-      results.map((r) => _fetchPageContent(r)),
+      results.map((r) => semaphore.run(() => _fetchPageContent(r))),
       eagerError: false,
     );
 
     return results;
   }
 
-  /// Searches DuckDuckGo and returns top results (titles + snippets only).
+  /// Searches DuckDuckGo with retry on transient failures.
   Future<List<WebSearchResult>> search(String query,
       {int maxResults = 5}) async {
-    final response = await http
-        .post(
-          Uri.parse(_baseUrl),
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent':
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          },
-          body: 'q=${Uri.encodeComponent(query)}',
-        )
-        .timeout(const Duration(seconds: 10));
-
-    if (response.statusCode != 200) return [];
-
-    return _parseResults(response.body, maxResults);
-  }
-
-  /// Fetches and extracts text content from a result URL.
-  /// Mirrors open-webui's web loader that fetches full page content.
-  Future<void> _fetchPageContent(WebSearchResult result) async {
     try {
-      final response = await http.get(
-        Uri.parse(result.url),
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Accept': 'text/html',
-        },
-      ).timeout(_fetchTimeout);
-
-      if (response.statusCode == 200) {
-        result.pageContent = _extractTextFromHtml(response.body);
+      return await _searchOnce(query, maxResults: maxResults);
+    } on TimeoutException {
+      await Future.delayed(_retryBackoff);
+      try {
+        return await _searchOnce(query, maxResults: maxResults);
+      } catch (_) {
+        return [];
+      }
+    } on SocketException {
+      await Future.delayed(_retryBackoff);
+      try {
+        return await _searchOnce(query, maxResults: maxResults);
+      } catch (_) {
+        return [];
+      }
+    } on http.ClientException {
+      await Future.delayed(_retryBackoff);
+      try {
+        return await _searchOnce(query, maxResults: maxResults);
+      } catch (_) {
+        return [];
       }
     } catch (e) {
-      // Keep snippet as fallback — don't fail the whole search
+      return [];
     }
   }
 
-  /// Extracts readable text from HTML, stripping tags and boilerplate.
-  /// Similar to open-webui's BSHTMLLoader / web content extraction.
-  String _extractTextFromHtml(String html) {
-    // Remove script and style blocks entirely
-    var text = html
-        .replaceAll(RegExp(r'<script[^>]*>.*?</script>', dotAll: true), '')
-        .replaceAll(RegExp(r'<style[^>]*>.*?</style>', dotAll: true), '')
-        .replaceAll(RegExp(r'<nav[^>]*>.*?</nav>', dotAll: true), '')
-        .replaceAll(RegExp(r'<footer[^>]*>.*?</footer>', dotAll: true), '')
-        .replaceAll(RegExp(r'<header[^>]*>.*?</header>', dotAll: true), '')
-        .replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '');
-
-    // Strip all HTML tags
-    text = _stripHtml(text);
-
-    // Collapse whitespace
-    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-    // Truncate to reasonable size
-    if (text.length > _maxPageContentLength) {
-      text = text.substring(0, _maxPageContentLength);
-    }
-
-    return text;
-  }
-
-  List<WebSearchResult> _parseResults(String html, int maxResults) {
-    final results = <WebSearchResult>[];
-
-    final resultPattern = RegExp(
-      r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
-      r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>',
-      dotAll: true,
-    );
-
-    for (final match in resultPattern.allMatches(html)) {
-      if (results.length >= maxResults) break;
-
-      final rawUrl = match.group(1) ?? '';
-      final title = _stripHtml(match.group(2) ?? '');
-      final snippet = _stripHtml(match.group(3) ?? '');
-      final actualUrl = _extractUrl(rawUrl);
-
-      if (title.isNotEmpty && actualUrl.isNotEmpty) {
-        results.add(WebSearchResult(
-          title: title,
-          snippet: snippet,
-          url: actualUrl,
-        ));
-      }
-    }
-
-    return results;
-  }
-
-  String _stripHtml(String html) {
-    return html
-        .replaceAll(RegExp(r'<[^>]*>'), '')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#x27;', "'")
-        .replaceAll('&nbsp;', ' ')
-        .trim();
-  }
-
-  String _extractUrl(String ddgUrl) {
-    final uddgMatch = RegExp(r'uddg=([^&]+)').firstMatch(ddgUrl);
-    if (uddgMatch != null) {
-      return Uri.decodeComponent(uddgMatch.group(1)!);
-    }
-    if (ddgUrl.startsWith('http')) return ddgUrl;
-    return '';
-  }
-
-  /// Formats search results as RAG context using open-webui's source tag format.
-  /// Uses full page content when available, falls back to snippet.
-  static String formatResultsAsContext(
-      List<WebSearchResult> results, String query) {
+  /// Formats search results as RAG context.
+  /// Uses top chunks when available, falls back to snippet.
+  static String formatResultsAsContext(List<WebSearchResult> results) {
     if (results.isEmpty) return '';
 
     final sourceContext = StringBuffer();
     for (var i = 0; i < results.length; i++) {
       final r = results[i];
-      // Use full page content if fetched, otherwise snippet
-      final content = r.pageContent ?? '${r.title}\n${r.snippet}';
+      String content;
+      if (r.chunks != null && r.chunks!.isNotEmpty) {
+        content = r.chunks!.take(2).join('\n\n');
+      } else if (r.pageContent != null && r.pageContent!.isNotEmpty) {
+        content = r.pageContent!;
+      } else {
+        content = '${r.title}\n${r.snippet}';
+      }
       sourceContext.writeln(
           '<source id="${i + 1}" name="${r.url}" resource-type="web_search">');
       sourceContext.writeln(content);
       sourceContext.writeln('</source>');
     }
 
-    // open-webui's DEFAULT_RAG_TEMPLATE
     return '''### Task:
 Respond to the user query using the provided context, incorporating inline citations in the format [id] **only when the <source> tag includes an explicit id attribute** (e.g., <source id="1">).
 
@@ -185,5 +134,216 @@ Respond to the user query using the provided context, incorporating inline citat
 ${sourceContext.toString().trim()}
 </context>
 ''';
+  }
+
+  // ============================================================
+  // HTML Extraction
+  // ============================================================
+
+  /// Extracts readable text from HTML with semantic tag priority.
+  /// Prioritizes <article> or <main> content, falls back to <body>.
+  static String extractTextFromHtml(String html) {
+    if (html.isEmpty) return '';
+
+    // Remove script, style, and comments entirely
+    var text = html
+        .replaceAll(RegExp(r'<script[^>]*>.*?</script>', dotAll: true), '')
+        .replaceAll(RegExp(r'<style[^>]*>.*?</style>', dotAll: true), '')
+        .replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '');
+
+    // Try to extract semantic content: <article> first, then <main>
+    String? semanticContent;
+    for (final tag in ['article', 'main']) {
+      final match = RegExp(
+        '<$tag[^>]*>(.*?)</$tag>',
+        dotAll: true,
+      ).firstMatch(text);
+      if (match != null) {
+        semanticContent = match.group(1);
+        break;
+      }
+    }
+
+    // Use semantic content if found, otherwise strip boilerplate from full body
+    if (semanticContent != null) {
+      text = semanticContent;
+    } else {
+      text = text
+          .replaceAll(RegExp(r'<nav[^>]*>.*?</nav>', dotAll: true), '')
+          .replaceAll(RegExp(r'<footer[^>]*>.*?</footer>', dotAll: true), '')
+          .replaceAll(RegExp(r'<header[^>]*>.*?</header>', dotAll: true), '')
+          .replaceAll(RegExp(r'<aside[^>]*>.*?</aside>', dotAll: true), '');
+    }
+
+    // Strip all remaining HTML tags
+    text = text.replaceAll(RegExp(r'<[^>]*>'), '');
+
+    // Decode HTML entities
+    text = _decodeHtmlEntities(text);
+
+    // Collapse whitespace
+    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    return text;
+  }
+
+  static String _decodeHtmlEntities(String text) {
+    return text
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#x27;', "'")
+        .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&#x2F;', '/')
+        .replaceAll('&mdash;', '\u2014')
+        .replaceAll('&ndash;', '\u2013');
+  }
+
+  // ============================================================
+  // DDG Search Internals
+  // ============================================================
+
+  Future<List<WebSearchResult>> _searchOnce(String query,
+      {int maxResults = 5}) async {
+    final response = await http
+        .post(
+          Uri.parse(_baseUrl),
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent':
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          },
+          body: 'q=${Uri.encodeComponent(query)}',
+        )
+        .timeout(_searchTimeout);
+
+    if (response.statusCode == 429) {
+      throw TimeoutException('Rate limited');
+    }
+
+    if (response.statusCode >= 500) {
+      throw http.ClientException('Server error ${response.statusCode}');
+    }
+
+    if (response.statusCode != 200) return [];
+
+    return _parseResults(response.body, maxResults);
+  }
+
+  Future<void> _fetchPageContent(WebSearchResult result) async {
+    try {
+      final response = await http.get(
+        Uri.parse(result.url),
+        headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'text/html',
+        },
+      ).timeout(_fetchTimeout);
+
+      if (response.statusCode != 200) return;
+
+      // Skip non-HTML responses
+      final contentType = response.headers['content-type'] ?? '';
+      if (!contentType.contains('text/html') &&
+          !contentType.contains('text/plain') &&
+          !contentType.contains('application/xhtml')) {
+        return;
+      }
+
+      // Skip responses > 1MB
+      if (response.bodyBytes.length > 1024 * 1024) return;
+
+      final extracted = extractTextFromHtml(response.body);
+      if (extracted.isNotEmpty) {
+        result.pageContent = extracted.length > _maxPageContentLength
+            ? extracted.substring(0, _maxPageContentLength)
+            : extracted;
+      }
+    } catch (e) {
+      // Keep snippet as fallback
+    }
+  }
+
+  List<WebSearchResult> _parseResults(String html, int maxResults) {
+    final results = <WebSearchResult>[];
+    final seenUrls = <String>{};
+
+    final resultPattern = RegExp(
+      r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
+      r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>',
+      dotAll: true,
+    );
+
+    for (final match in resultPattern.allMatches(html)) {
+      if (results.length >= maxResults) break;
+
+      final rawUrl = match.group(1) ?? '';
+      final title = _decodeHtmlEntities(match.group(2) ?? '')
+          .replaceAll(RegExp(r'<[^>]*>'), '')
+          .trim();
+      final snippet = _decodeHtmlEntities(match.group(3) ?? '')
+          .replaceAll(RegExp(r'<[^>]*>'), '')
+          .trim();
+      final actualUrl = _extractUrl(rawUrl);
+
+      if (title.isNotEmpty && actualUrl.isNotEmpty && seenUrls.add(actualUrl)) {
+        results.add(WebSearchResult(
+          title: title,
+          snippet: snippet,
+          url: actualUrl,
+        ));
+      }
+    }
+
+    return results;
+  }
+
+  String _extractUrl(String ddgUrl) {
+    final uddgMatch = RegExp(r'uddg=([^&]+)').firstMatch(ddgUrl);
+    if (uddgMatch != null) {
+      return Uri.decodeComponent(uddgMatch.group(1)!);
+    }
+    if (ddgUrl.startsWith('http')) return ddgUrl;
+    return '';
+  }
+}
+
+/// Simple semaphore for limiting concurrent async operations.
+class _Semaphore {
+  final int _maxCount;
+  int _currentCount = 0;
+  final _waitQueue = <Completer<void>>[];
+
+  _Semaphore(this._maxCount);
+
+  Future<T> run<T>(Future<T> Function() task) async {
+    await _acquire();
+    try {
+      return await task();
+    } finally {
+      _release();
+    }
+  }
+
+  Future<void> _acquire() async {
+    if (_currentCount < _maxCount) {
+      _currentCount++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waitQueue.add(completer);
+    await completer.future;
+  }
+
+  void _release() {
+    if (_waitQueue.isNotEmpty) {
+      _waitQueue.removeAt(0).complete();
+    } else {
+      _currentCount--;
+    }
   }
 }

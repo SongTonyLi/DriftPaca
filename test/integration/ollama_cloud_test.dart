@@ -20,9 +20,15 @@ const _testModels = [
   'gemma4:31b',
 ];
 
-const _webSearchSystemPrompt = '''If you need current or real-time information from the web to answer the user's question, start your response with WEBSEARCH: followed by a concise search query (max 10 words) on the first line.
+final _webSearchSystemPrompt = '''You have web search access. ALWAYS search unless the answer is a universal truth that never changes (math, physics constants, basic definitions).
 
-If you can answer without web search, respond normally.''';
+Err on the side of searching. If there is ANY chance a search could provide useful, updated, or more accurate information — search. Even if you think you know the answer, search to verify.
+
+To search: start your response with WEBSEARCH: followed by a concise search query (max 10 words) on the FIRST line. Nothing else on that line.
+
+You MUST search for: numbers, statistics, prices, dates, current events, news, recent developments, product info, people, companies, forecasts, rankings, comparisons.
+
+Today's date: ${DateTime.now().toIso8601String().substring(0, 10)}.''';
 
 Future<String> generate(String prompt, {
   required String model,

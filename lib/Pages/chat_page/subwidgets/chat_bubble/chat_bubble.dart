@@ -558,15 +558,24 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   /// Builds search segment widgets (thinking blocks + search cards) from orchestrator events.
+  /// Thinking segments render as open text (not collapsible ThinkBlockWidget)
+  /// since they stream in live and should stay visible.
   List<Widget> _buildSearchSegments() {
     final widgets = <Widget>[];
-    for (final segment in widget.searchSegments) {
+    final isLastSegmentThinking = widget.searchSegments.lastOrNull is ThinkingSegment;
+    final segmentCount = widget.searchSegments.length;
+
+    for (var i = 0; i < segmentCount; i++) {
+      final segment = widget.searchSegments[i];
+      final isLast = i == segmentCount - 1;
       switch (segment) {
         case ThinkingSegment():
+          if (segment.text.isEmpty) continue;
+          // Use ThinkBlockWidget but keep it expanded (isStreaming while active)
           widgets.add(ThinkBlockWidget(
             content: segment.text,
-            isComplete: true,
-            isStreaming: false,
+            isComplete: !isLast || !isLastSegmentThinking,
+            isStreaming: isLast && isLastSegmentThinking,
           ));
         case SearchCardSegment():
           widgets.add(SearchCard(segment: segment));

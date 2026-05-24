@@ -77,9 +77,15 @@ class ChatPageViewModel extends ChangeNotifier {
   // Search Segment Management
   // ============================================================
 
-  void _appendThinkingSegment(String text) {
-    if (text.isEmpty) return;
-    _searchSegments.add(ThinkingSegment(text));
+  void _startThinkingSegment() {
+    _searchSegments.add(ThinkingSegment(''));
+  }
+
+  void _updateThinkingSegment(String accumulated) {
+    final thinking = _searchSegments.whereType<ThinkingSegment>().lastOrNull;
+    if (thinking != null) {
+      thinking.text = accumulated;
+    }
   }
 
   void _addSearchCard(String query) {
@@ -445,8 +451,10 @@ class ChatPageViewModel extends ChangeNotifier {
         // Listen to events for UI updates
         final subscription = orchestrator.events.listen((event) {
           switch (event) {
-            case ThinkingEvent():
-              _appendThinkingSegment(event.text);
+            case ThinkingStartEvent():
+              _startThinkingSegment();
+            case ThinkingUpdateEvent():
+              _updateThinkingSegment(event.accumulated);
             case SearchStartEvent():
               _addSearchCard(event.query);
             case SearchProgressEvent():

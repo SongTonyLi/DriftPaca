@@ -21,14 +21,14 @@ class ParseResult {
 
 /// Orchestrates an agentic search loop: plan -> search -> evaluate -> repeat.
 /// Emits [SearchEvent]s for UI updates via [events] stream.
-/// Max 3 iterations. All LLM calls are non-streaming with 15s timeout.
+/// Max 3 iterations. Planning/evaluation calls stream thinking tokens live.
 class SearchOrchestrator {
   final OllamaService _ollamaService;
   final OllamaChat _chat;
   final WebSearchService _searchService;
 
   static const _maxIterations = 3;
-  static const _llmTimeout = Duration(seconds: 15);
+  static const _llmTimeout = Duration(seconds: 30);
   static const _maxContextChars = 16000;
 
   bool _cancelled = false;
@@ -63,30 +63,21 @@ class SearchOrchestrator {
           iteration < _maxIterations && !_cancelled;
           iteration++) {
         String query;
-        String reasoning;
 
         if (iteration == 0) {
-          // --- PLANNING ---
-          final planResult = await _planSearch(userMessage);
-          reasoning = planResult.reasoning;
-          query = planResult.query;
+          // --- PLANNING (streaming) ---
+          query = await _planSearchStreaming(userMessage);
         } else {
-          // --- EVALUATION (from previous iteration) ---
-          final evalResponse = await _evaluate(
+          // --- EVALUATION (streaming) ---
+          final evalResult = await _evaluateStreaming(
             userMessage,
             accumulatedResults,
             queriesUsed,
           );
 
-          if (evalResponse.canAnswer) {
-            if (evalResponse.reasoning.isNotEmpty) {
-              _emit(ThinkingEvent(evalResponse.reasoning));
-            }
-            break;
-          }
+          if (evalResult.canAnswer) break;
 
-          reasoning = evalResponse.reasoning;
-          query = evalResponse.nextQuery ?? userMessage;
+          query = evalResult.nextQuery ?? userMessage;
 
           // Don't repeat a query
           if (queriesUsed.contains(query)) break;
@@ -95,9 +86,6 @@ class SearchOrchestrator {
         if (_cancelled) break;
         queriesUsed.add(query);
 
-        if (reasoning.isNotEmpty) {
-          _emit(ThinkingEvent(reasoning));
-        }
         _emit(SearchStartEvent(query));
 
         // --- SEARCH ---
@@ -123,11 +111,11 @@ class SearchOrchestrator {
   }
 
   // ============================================================
-  // Planning
+  // Streaming Planning
   // ============================================================
 
-  Future<({String query, String reasoning})> _planSearch(
-      String userMessage) async {
+  /// Streams planning reasoning as ThinkingEvents, returns the extracted query.
+  Future<String> _planSearchStreaming(String userMessage) async {
     try {
       final prompt =
           '''Think step by step about what information you need to answer the user's question.
@@ -142,22 +130,76 @@ User question: $userMessage''';
             'You are a search query planner. Your job is to determine the best web search query.',
       );
 
-      final response = await _ollamaService
-          .generate(prompt, chat: chat)
-          .timeout(_llmTimeout);
+      final stream = _ollamaService.generateStream(prompt, chat: chat);
 
-      final lines = response.content.trim().split('\n');
+      _emit(ThinkingStartEvent());
+
+      var accumulated = '';
+      await for (final msg in stream.timeout(_llmTimeout)) {
+        if (_cancelled) break;
+        accumulated += msg.content;
+        _emit(ThinkingUpdateEvent(accumulated));
+      }
+
+      // Extract last line as query
+      final lines = accumulated.trim().split('\n');
       final lastLine = lines.last.trim();
-      final reasoning =
-          lines.length > 1 ? lines.sublist(0, lines.length - 1).join('\n') : '';
       final query = sanitizeQuery(lastLine);
 
-      return (
-        query: query.isNotEmpty ? query : userMessage,
-        reasoning: reasoning,
-      );
+      return query.isNotEmpty ? query : userMessage;
     } catch (e) {
-      return (query: userMessage, reasoning: '');
+      return userMessage;
+    }
+  }
+
+  // ============================================================
+  // Streaming Evaluation
+  // ============================================================
+
+  /// Streams evaluation reasoning as ThinkingEvents, returns parse result.
+  Future<ParseResult> _evaluateStreaming(
+    String userMessage,
+    List<WebSearchResult> results,
+    List<String> queriesUsed,
+  ) async {
+    try {
+      final context = WebSearchService.formatResultsAsContext(results);
+      final queriesList = queriesUsed.map((q) => '- "$q"').join('\n');
+
+      final prompt =
+          '''You searched for "${queriesUsed.last}" and found these results:
+
+$context
+
+Think about whether you can fully answer the user's question with the information above.
+If you need more information, explain what's missing and write SEARCH: <query> on the last line.
+If you have enough, write DONE on the last line.
+
+Do not repeat these previous queries:
+$queriesList
+
+User question: $userMessage''';
+
+      final chat = OllamaChat(
+        model: _chat.model,
+        systemPrompt:
+            'You are a search evaluator. Decide if more searches are needed to answer the question.',
+      );
+
+      final stream = _ollamaService.generateStream(prompt, chat: chat);
+
+      _emit(ThinkingStartEvent());
+
+      var accumulated = '';
+      await for (final msg in stream.timeout(_llmTimeout)) {
+        if (_cancelled) break;
+        accumulated += msg.content;
+        _emit(ThinkingUpdateEvent(accumulated));
+      }
+
+      return parseEvaluation(accumulated);
+    } catch (e) {
+      return ParseResult(canAnswer: true, reasoning: '');
     }
   }
 
@@ -199,54 +241,10 @@ User question: $userMessage''';
   }
 
   // ============================================================
-  // Evaluation
-  // ============================================================
-
-  Future<ParseResult> _evaluate(
-    String userMessage,
-    List<WebSearchResult> results,
-    List<String> queriesUsed,
-  ) async {
-    try {
-      final context = WebSearchService.formatResultsAsContext(results);
-      final queriesList = queriesUsed.map((q) => '- "$q"').join('\n');
-
-      final prompt =
-          '''You searched for "${queriesUsed.last}" and found these results:
-
-$context
-
-Think about whether you can fully answer the user's question with the information above.
-If you need more information, explain what's missing and write SEARCH: <query> on the last line.
-If you have enough, write DONE on the last line.
-
-Do not repeat these previous queries:
-$queriesList
-
-User question: $userMessage''';
-
-      final chat = OllamaChat(
-        model: _chat.model,
-        systemPrompt:
-            'You are a search evaluator. Decide if more searches are needed to answer the question.',
-      );
-
-      final response = await _ollamaService
-          .generate(prompt, chat: chat)
-          .timeout(_llmTimeout);
-
-      return parseEvaluation(response.content);
-    } catch (e) {
-      return ParseResult(canAnswer: true, reasoning: '');
-    }
-  }
-
-  // ============================================================
   // Parsing
   // ============================================================
 
   /// Leniently parses the evaluation response.
-  /// Last line determines action: done-like words -> stop, anything else -> next query.
   static ParseResult parseEvaluation(String response) {
     final trimmed = response.trim();
     if (trimmed.isEmpty) {
@@ -258,7 +256,6 @@ User question: $userMessage''';
     final reasoning =
         lines.length > 1 ? lines.sublist(0, lines.length - 1).join('\n') : '';
 
-    // Check for "done" signals
     const doneSignals = [
       'ready',
       'done',
@@ -272,8 +269,7 @@ User question: $userMessage''';
       return ParseResult(canAnswer: true, reasoning: reasoning);
     }
 
-    // Strip explicit search prefix if present
-    var query = lines.last.trim(); // preserve original case for query
+    var query = lines.last.trim();
     for (final prefix in ['search:', 'search for:', 'query:']) {
       final lower = query.toLowerCase();
       if (lower.startsWith(prefix)) {
@@ -299,7 +295,6 @@ User question: $userMessage''';
   // Helpers
   // ============================================================
 
-  /// Sanitizes a query string by removing quotes, backticks, asterisks.
   static String sanitizeQuery(String query) {
     return query
         .replaceAll(RegExp(r'^["\x27]|["\x27]$'), '')

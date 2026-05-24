@@ -110,7 +110,7 @@ class OllamaService {
     );
 
     if (response.statusCode == 200) {
-      final jsonBody = json.decode(response.body);
+      final jsonBody = json.decode(utf8.decode(response.bodyBytes));
       return OllamaMessage.fromJson(jsonBody);
     } else if (response.statusCode == 404) {
       throw OllamaException("${chat.model} not found on the server.");

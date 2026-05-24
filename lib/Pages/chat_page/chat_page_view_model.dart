@@ -461,6 +461,11 @@ class ChatPageViewModel extends ChangeNotifier {
               _updateSearchCard(event.urls);
             case SearchCompleteEvent():
               _collapseSearchCard(event.resultCount);
+            case SearchContentEvent():
+              final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+              if (card != null) {
+                card.extractedContent = event.content;
+              }
             case SearchErrorEvent():
               _showSearchError(event.message);
             case AnswerStartEvent():

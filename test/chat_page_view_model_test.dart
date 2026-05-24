@@ -464,7 +464,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   }
 
   @override
-  Future<void> sendPrompt(OllamaMessage prompt, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking, bool webSearchEnabled = false}) async {
+  Future<void> sendPrompt(OllamaMessage prompt, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking, int searchAttemptsRemaining = 0}) async {
     sendPromptCalled = true;
   }
 

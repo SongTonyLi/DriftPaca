@@ -77,7 +77,9 @@ class WebSearchService {
     try {
       final results = await _searchViaWebView(query, maxResults: maxResults);
       if (results.isNotEmpty) return results;
-    } catch (_) {}
+    } catch (e) {
+      // WebView failed, fall back to HTTP
+    }
 
     // Fall back to HTTP (may be CAPTCHA-blocked)
     try {
@@ -212,7 +214,6 @@ ${sourceContext.toString().trim()}
 
     final timer = Timer(const Duration(seconds: 12), () {
       if (!completer.isCompleted) {
-        headless?.dispose();
         completer.complete([]);
       }
     });
@@ -232,8 +233,16 @@ ${sourceContext.toString().trim()}
         onLoadStop: (controller, url) async {
           if (completer.isCompleted) return;
 
-          // Wait for JS-rendered results to populate
-          await Future.delayed(const Duration(milliseconds: 1500));
+          // Poll for results instead of blind delay
+          for (var attempt = 0; attempt < 10; attempt++) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            if (completer.isCompleted) return;
+            final count = await controller.evaluateJavascript(
+              source: 'document.querySelectorAll("article[data-testid=\\"result\\"]").length || document.querySelectorAll(".result").length || 0',
+            );
+            final n = count is int ? count : int.tryParse(count?.toString() ?? '') ?? 0;
+            if (n > 0) break;
+          }
           if (completer.isCompleted) return;
 
           try {

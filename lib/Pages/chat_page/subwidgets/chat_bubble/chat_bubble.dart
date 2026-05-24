@@ -1022,9 +1022,19 @@ class _InlineLatexSyntax extends md.InlineSyntax {
   // No restrictive lookahead — allows LaTeX inside bold, before dashes, etc.
   _InlineLatexSyntax() : super(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$', startCharacter: 0x24);
 
-  /// Currency pattern: content starts with digits optionally preceded by space,
-  /// e.g. "$514 billion", "$2.203 trillion". These are NOT LaTeX.
-  static final _currencyPattern = RegExp(r'^\s*[\d,.]');
+  /// Math operators that unambiguously indicate LaTeX, not currency.
+  /// Excludes `*` (used in markdown bold **) and `-` (used in prose).
+  /// Currency: "$514 billion" — digits + words, no LaTeX operators.
+  /// LaTeX: "$1+1=2$" — has +, =, ^, etc.
+  static final _mathOperatorPattern = RegExp(r'[+=^_\\{}<>]|(?<!\*)\*(?!\*)');
+
+  /// Currency: starts with digit and contains NO LaTeX operators.
+  static bool _isCurrency(String content) {
+    if (!RegExp(r'^\s*[\d,.]').hasMatch(content)) return false;
+    // Strip markdown bold markers before checking for math operators
+    final stripped = content.replaceAll('**', '');
+    return !_mathOperatorPattern.hasMatch(stripped);
+  }
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {
@@ -1039,9 +1049,9 @@ class _InlineLatexSyntax extends md.InlineSyntax {
       return true;
     }
 
-    // Guard: inline $...$ starting with digits is currency, not LaTeX.
+    // Guard: inline $...$ that looks like currency (starts with digit, no math operators).
     // Display $$...$$ is always treated as LaTeX (currency never uses $$).
-    if (inlineContent != null && _currencyPattern.hasMatch(equation)) {
+    if (inlineContent != null && _isCurrency(equation)) {
       parser.addNode(md.Text(match.group(0)!));
       return true;
     }

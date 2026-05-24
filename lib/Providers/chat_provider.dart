@@ -15,6 +15,12 @@ import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
+import 'package:llamaseek/Services/web_search_service.dart';
+
+const _webSearchInstruction = '''
+If you need current or real-time information from the web to answer the user's question, start your response with WEBSEARCH: followed by a concise search query (max 10 words) on the first line.
+
+If you can answer without web search, respond normally.''';
 
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
@@ -24,6 +30,26 @@ class ChatProvider extends ChangeNotifier {
 
   ValueListenable? _settingsListenable;
   VoidCallback? _settingsCallback;
+
+  /// Callbacks for web search UI updates. Set by ViewModel before sendPrompt.
+  void Function(String query)? _webSearchCallback;
+  void Function(List<WebSearchResult> results)? _webSearchCompleteCallback;
+
+  void setWebSearchCallbacks({
+    required void Function(String query) onSearchStart,
+    required void Function(List<WebSearchResult> results) onSearchComplete,
+  }) {
+    _webSearchCallback = onSearchStart;
+    _webSearchCompleteCallback = onSearchComplete;
+  }
+
+  void clearWebSearchCallbacks() {
+    _webSearchCallback = null;
+    _webSearchCompleteCallback = null;
+  }
+
+  /// Source URLs intercepted during WEBSEARCH stream interception.
+  Map<int, String>? _interceptedSourceUrls;
 
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
@@ -247,6 +273,7 @@ class ChatProvider extends ChangeNotifier {
     String? searchContext,
     Map<int, String>? sourceUrls,
     String? preThinking,
+    bool webSearchEnabled = false,
   }) async {
     final associatedChat = currentChat!;
 
@@ -254,10 +281,10 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.addMessage(prompt, chat: associatedChat);
 
     // Initialize the chat stream with the messages in the chat
-    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls, preThinking: preThinking);
+    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls, preThinking: preThinking, webSearchEnabled: webSearchEnabled);
   }
 
-  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking}) async {
+  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking, bool webSearchEnabled = false}) async {
     // Send a notification to inform generation begin
     NotificationCenter().postNotification(NotificationNames.generationBegin);
 
@@ -283,7 +310,12 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? ollamaMessage;
 
     try {
-      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext, preThinking: preThinking);
+      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext, preThinking: preThinking, webSearchEnabled: webSearchEnabled);
+      // Use intercepted source URLs if search happened via stream interception
+      if (sourceUrls == null && _interceptedSourceUrls != null) {
+        sourceUrls = _interceptedSourceUrls;
+        _interceptedSourceUrls = null;
+      }
       // Replace [N] citations with clickable markdown links
       if (ollamaMessage != null && sourceUrls != null && sourceUrls.isNotEmpty) {
         ollamaMessage.content = replaceCitationsWithLinks(ollamaMessage.content, sourceUrls);
@@ -325,7 +357,7 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking}) async {
+  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking, bool webSearchEnabled = false}) async {
     if (_messages.isEmpty) return null;
 
     final searchThinking = preThinking?.trim();
@@ -355,9 +387,26 @@ class ChatProvider extends ChangeNotifier {
       );
     }
 
+    // When web search is enabled but no context yet (Call 1), inject the
+    // WEBSEARCH instruction so the model can request a search on the first line.
+    OllamaChat streamChat = associatedChat;
+    if (webSearchEnabled && searchContext == null) {
+      final origPrompt = associatedChat.systemPrompt ?? '';
+      streamChat = OllamaChat(
+        id: associatedChat.id,
+        model: associatedChat.model,
+        title: associatedChat.title,
+        systemPrompt: origPrompt.isEmpty
+            ? _webSearchInstruction
+            : '$origPrompt\n\n$_webSearchInstruction',
+        options: associatedChat.options,
+        isIncognito: associatedChat.isIncognito,
+      );
+    }
+
     final stream = _ollamaService.chatStream(
       messagesToSend,
-      chat: associatedChat,
+      chat: streamChat,
       conversationMemory: conversationMemory,
       profile: profile,
       relevantContext: relevantContext,
@@ -366,6 +415,8 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
     final notifyThrottle = Stopwatch()..start();
+    var contentBuffer = '';
+    bool webSearchChecked = false;
 
     await for (receivedMessage in stream) {
       // If the chat id is not in the active chat streams, it means the stream
@@ -411,6 +462,80 @@ class ChatProvider extends ChangeNotifier {
 
         notifyListeners();
       } else {
+        // --- WEBSEARCH stream interception (Call 1) ---
+        // Buffer the first content line to check for WEBSEARCH: <query>.
+        if (webSearchEnabled && searchContext == null && !webSearchChecked && receivedMessage.content.isNotEmpty) {
+          contentBuffer += receivedMessage.content;
+          if (!contentBuffer.contains('\n')) {
+            if (notifyThrottle.elapsedMilliseconds >= 32) {
+              notifyThrottle.reset();
+              notifyListeners();
+            }
+            continue;
+          }
+          webSearchChecked = true;
+          final firstLine = contentBuffer.split('\n').first.trim();
+          if (firstLine.toUpperCase().startsWith('WEBSEARCH:')) {
+            final searchQuery = firstLine.substring('WEBSEARCH:'.length).trim();
+            final call1Thinking = streamingMessage.thinking ?? '';
+
+            // Remove the partial message from the UI
+            _messages.remove(streamingMessage);
+            _activeChatStreams.remove(associatedChat.id);
+            notifyListeners();
+            await Future.delayed(Duration.zero);
+
+            // Notify the UI that a web search is starting
+            _webSearchCallback?.call(searchQuery);
+            await Future.delayed(Duration.zero);
+
+            // Execute the web search
+            final searchService = WebSearchService();
+            final searchResults = await searchService.searchAndExtract(searchQuery);
+            _webSearchCompleteCallback?.call(searchResults);
+            await Future.delayed(Duration.zero);
+
+            if (searchResults.isEmpty) {
+              final failMsg = OllamaMessage(
+                'I searched the web for "$searchQuery" but found no results. Let me answer based on what I know.',
+                role: OllamaMessageRole.assistant,
+                thinking: call1Thinking.isNotEmpty ? call1Thinking : null,
+              );
+              _activeChatStreams[associatedChat.id] = failMsg;
+              if (associatedChat.id == currentChat?.id) _messages.add(failMsg);
+              notifyListeners();
+              return failMsg;
+            }
+
+            // Build search context and extract source URLs for citation linking
+            final newSearchContext = WebSearchService.formatResultsAsContext(searchResults);
+            _interceptedSourceUrls = {};
+            final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
+            for (final match in urlPattern.allMatches(newSearchContext)) {
+              final id = int.tryParse(match.group(1)!);
+              final url = match.group(2);
+              if (id != null && url != null) _interceptedSourceUrls![id] = url;
+            }
+
+            // Recursive Call 2: re-stream with search context injected
+            return await _streamOllamaMessage(
+              associatedChat,
+              searchContext: newSearchContext,
+              preThinking: call1Thinking.isNotEmpty ? call1Thinking : preThinking,
+              webSearchEnabled: false,
+            );
+          }
+
+          // Not a WEBSEARCH line — flush the buffer and continue normally
+          streamingMessage.content += contentBuffer;
+          contentBuffer = '';
+          if (notifyThrottle.elapsedMilliseconds >= 32) {
+            notifyThrottle.reset();
+            notifyListeners();
+          }
+          continue;
+        }
+
         streamingMessage.content += receivedMessage.content;
         // Accumulate thinking tokens alongside content
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {

@@ -437,8 +437,27 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   /// since search thinking is rendered separately above.
   String _displayThinking(String? thinking) {
     if (thinking == null || thinking.isEmpty) return '';
-    if (widget.searchSegments.isEmpty) return thinking;
-    return modelThinkingFromCombined(thinking);
+    // Strip search data header if present (both live and history)
+    var clean = stripSearchData(thinking);
+    if (widget.searchSegments.isNotEmpty || thinking.startsWith('<!--SEARCH_DATA:')) {
+      return modelThinkingFromCombined(clean);
+    }
+    return clean;
+  }
+
+  /// Gets search segments: live from ViewModel during streaming,
+  /// or deserialized from thinking field for history messages.
+  List<MessageSegment> _getSearchSegments() {
+    // Live segments from ViewModel (during active search/streaming)
+    if (widget.searchSegments.isNotEmpty) return widget.searchSegments;
+
+    // Try to deserialize from persisted thinking field
+    final thinking = widget.message.thinking;
+    if (thinking != null && thinking.isNotEmpty) {
+      final decoded = decodeSearchSegments(thinking);
+      if (decoded != null) return decoded;
+    }
+    return const [];
   }
 
   @override
@@ -568,21 +587,20 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     );
   }
 
-  /// Builds search segment widgets (thinking blocks + search cards) from orchestrator events.
+  /// Builds search segment widgets (thinking blocks + search cards) from a list of segments.
   /// Thinking segments use ThinkBlockWidget with keepExpandedWhenComplete set to true
   /// so streamed reasoning remains visible.
-  List<Widget> _buildSearchSegments() {
+  List<Widget> _buildSearchSegmentsFrom(List<MessageSegment> segments) {
     final widgets = <Widget>[];
-    final isLastSegmentThinking = widget.searchSegments.lastOrNull is ThinkingSegment;
-    final segmentCount = widget.searchSegments.length;
+    final isLastSegmentThinking = segments.lastOrNull is ThinkingSegment;
+    final segmentCount = segments.length;
 
     for (var i = 0; i < segmentCount; i++) {
-      final segment = widget.searchSegments[i];
+      final segment = segments[i];
       final isActiveThinking = isLastSegmentThinking && i == segmentCount - 1;
       switch (segment) {
         case ThinkingSegment():
           if (segment.text.isEmpty) continue;
-          // Use ThinkBlockWidget but keep it expanded (isStreaming while active)
           widgets.add(ThinkBlockWidget(
             content: segment.text,
             isComplete: !isActiveThinking,
@@ -603,7 +621,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         ? _targetContent.substring(0, _revealedLength)
         : widget.message.content;
 
-    final searchWidgets = _buildSearchSegments();
+    final segments = _getSearchSegments();
+    final searchWidgets = _buildSearchSegmentsFrom(segments);
 
     final displayThinking = _displayThinking(widget.message.thinking);
     if (displayThinking.isNotEmpty) {

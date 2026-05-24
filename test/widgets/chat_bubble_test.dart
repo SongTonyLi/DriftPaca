@@ -299,6 +299,39 @@ void main() {
 
       expect(overflowErrors(errors), isEmpty);
     });
+
+    testWidgets('currency amounts with dollar signs are not LaTeX', (tester) async {
+      // "$514 billion" and "$2.203 trillion" should render as text, not math
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'GDP is **US $514 billion** and **US $2.203 trillion (PPP)**.',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      // Currency should NOT produce Math widgets
+      expect(find.byType(Math), findsNothing);
+    });
+
+    testWidgets('multiple currency amounts in text', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        'The price rose from \$100 to \$250, a \$150 increase.',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNothing);
+    });
+
+    testWidgets('real LaTeX still works alongside currency', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'The formula $E=mc^2$ costs $500 to compute.',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      // E=mc^2 is real LaTeX (starts with letter), $500 is currency (starts with digit)
+      expect(find.byType(Math), findsOneWidget);
+    });
   });
 
   // ---------------------------------------------------------------------------

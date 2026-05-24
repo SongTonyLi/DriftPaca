@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 import 'package:llamaseek/Utils/text_splitter.dart';
 
@@ -68,9 +70,16 @@ class WebSearchService {
     return results;
   }
 
-  /// Searches DuckDuckGo with retry on transient failures.
+  /// Searches DuckDuckGo via WebView (primary) with HTTP fallback.
   Future<List<WebSearchResult>> search(String query,
       {int maxResults = 5}) async {
+    // Try WebView first (bypasses CAPTCHA)
+    try {
+      final results = await _searchViaWebView(query, maxResults: maxResults);
+      if (results.isNotEmpty) return results;
+    } catch (_) {}
+
+    // Fall back to HTTP (may be CAPTCHA-blocked)
     try {
       return await _searchOnce(query, maxResults: maxResults);
     } catch (e) {
@@ -194,6 +203,105 @@ ${sourceContext.toString().trim()}
   // ============================================================
   // DDG Search Internals
   // ============================================================
+
+  /// Searches DuckDuckGo using a headless WebView (bypasses CAPTCHA).
+  Future<List<WebSearchResult>> _searchViaWebView(String query,
+      {int maxResults = 5}) async {
+    final completer = Completer<List<WebSearchResult>>();
+    HeadlessInAppWebView? headless;
+
+    final timer = Timer(const Duration(seconds: 12), () {
+      if (!completer.isCompleted) {
+        headless?.dispose();
+        completer.complete([]);
+      }
+    });
+
+    try {
+      final encodedQuery = Uri.encodeComponent(query);
+      headless = HeadlessInAppWebView(
+        initialUrlRequest: URLRequest(
+          url: WebUri('https://duckduckgo.com/?q=$encodedQuery&ia=web'),
+        ),
+        initialSettings: InAppWebViewSettings(
+          javaScriptEnabled: true,
+          domStorageEnabled: true,
+          userAgent:
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        ),
+        onLoadStop: (controller, url) async {
+          if (completer.isCompleted) return;
+
+          // Wait for JS-rendered results to populate
+          await Future.delayed(const Duration(milliseconds: 1500));
+          if (completer.isCompleted) return;
+
+          try {
+            final jsResult = await controller.evaluateJavascript(source: '''
+(function() {
+  var results = [];
+  var articles = document.querySelectorAll('article[data-testid="result"]');
+  if (!articles.length) articles = document.querySelectorAll('.result');
+  if (!articles.length) articles = document.querySelectorAll('[data-result]');
+  for (var i = 0; i < articles.length && i < $maxResults; i++) {
+    var el = articles[i];
+    var link = el.querySelector('a[data-testid="result-title-a"]')
+      || el.querySelector('a[href^="http"]');
+    var snippet = el.querySelector('[data-result="snippet"]')
+      || el.querySelector('.result__snippet')
+      || el.querySelector('span');
+    if (link && link.href && !link.href.includes('duckduckgo.com')) {
+      results.push({
+        title: (link.textContent || '').trim(),
+        url: link.href,
+        snippet: snippet ? (snippet.textContent || '').trim() : '',
+      });
+    }
+  }
+  return JSON.stringify(results);
+})()
+''');
+
+            if (jsResult != null && jsResult is String && jsResult.isNotEmpty) {
+              final parsed = jsonDecode(jsResult) as List;
+              final searchResults = <WebSearchResult>[];
+              final seenUrls = <String>{};
+              for (final item in parsed) {
+                final url = item['url']?.toString() ?? '';
+                final title = item['title']?.toString() ?? '';
+                if (url.isNotEmpty && title.isNotEmpty && seenUrls.add(url)) {
+                  searchResults.add(WebSearchResult(
+                    title: title,
+                    snippet: item['snippet']?.toString() ?? '',
+                    url: url,
+                  ));
+                }
+              }
+              if (!completer.isCompleted) {
+                completer.complete(searchResults);
+              }
+            } else {
+              if (!completer.isCompleted) completer.complete([]);
+            }
+          } catch (e) {
+            if (!completer.isCompleted) completer.complete([]);
+          }
+        },
+        onReceivedError: (controller, request, error) {
+          if (!completer.isCompleted) completer.complete([]);
+        },
+      );
+
+      await headless.run();
+      return await completer.future;
+    } catch (e) {
+      if (!completer.isCompleted) completer.complete([]);
+      return await completer.future;
+    } finally {
+      timer.cancel();
+      headless?.dispose();
+    }
+  }
 
   Future<List<WebSearchResult>> _searchOnce(String query,
       {int maxResults = 5}) async {

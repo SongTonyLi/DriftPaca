@@ -119,7 +119,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
   static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
     return MarkdownBody(
-      data: _escapeLatexPipesInTables(_preprocessLatex(_unwrapLatexCodeFences(data))),
+      data: _fixEmphasisFlanking(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapLatexCodeFences(data))))),
       selectable: selectable,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
@@ -236,6 +236,66 @@ class _ChatBubbleBody extends StatelessWidget {
       escaped = escaped.replaceAllMapped(RegExp(r'(?<!\\)\|'), (_) => '\\vert ');
       return escaped;
     });
+  }
+
+  /// Strips dollar signs wrapping markdown links: `$[text](url)$` → `[text](url)`.
+  ///
+  /// Some models (e.g. deepseek, qwen) output citation links wrapped in `$...$`:
+  ///   `满意度 $[[1]](https://example.com)$。`
+  ///
+  /// The inline LaTeX parser matches this as a math expression, consuming the
+  /// entire link. Stripping the `$` before parsing lets the link syntax win.
+  static final _dollarWrappedLinkPattern =
+      RegExp(r'\$(\[+[^\]]*\]+\([^)]+\))\$');
+
+  static String _unwrapDollarWrappedLinks(String content) {
+    return content.replaceAllMapped(
+      _dollarWrappedLinkPattern,
+      (m) => m[1]!,
+    );
+  }
+
+  /// Fixes CommonMark emphasis flanking failures for CJK + punctuation.
+  ///
+  /// When `**` is directly adjacent to Unicode punctuation (e.g. `"`, `（`,
+  /// `《`), CommonMark's flanking rules require the OTHER side of `**` to be
+  /// whitespace or punctuation. CJK characters satisfy neither, so patterns
+  /// like `CJK**"text"**CJK` fail — `**` can't open/close emphasis, and
+  /// the parser mispairs markers, bolding the wrong text.
+  ///
+  /// Fix: insert a zero-width space (U+200B) between `*` runs and adjacent
+  /// punctuation. ZWSP is neither whitespace nor punctuation, so `**` passes
+  /// the flanking check via the simpler rule (2a) instead of failing rule (2b).
+  static String _fixEmphasisFlanking(String content) {
+    final buffer = StringBuffer();
+    int pos = 0;
+    final codePattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
+    for (final match in codePattern.allMatches(content)) {
+      buffer.write(_insertFlankingZwsp(content.substring(pos, match.start)));
+      buffer.write(match.group(0));
+      pos = match.end;
+    }
+    buffer.write(_insertFlankingZwsp(content.substring(pos)));
+    return buffer.toString();
+  }
+
+  static final _afterStarsPattern =
+      RegExp(r'(\*+)(?!\*)(?=\p{P})', unicode: true);
+  static final _beforeStarsPattern =
+      RegExp(r'(?<=\p{P})(?<!\*)(\*+)', unicode: true);
+
+  static String _insertFlankingZwsp(String text) {
+    // After a * run followed by punctuation: **" → **\u200B"
+    text = text.replaceAllMapped(
+      _afterStarsPattern,
+      (m) => '${m[1]}\u200B',
+    );
+    // Before a * run preceded by punctuation: "** → "\u200B**
+    text = text.replaceAllMapped(
+      _beforeStarsPattern,
+      (m) => '\u200B${m[1]}',
+    );
+    return text;
   }
 }
 

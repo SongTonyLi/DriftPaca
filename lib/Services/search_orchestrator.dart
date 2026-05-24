@@ -141,10 +141,16 @@ User question: $userMessage''';
         _emit(ThinkingUpdateEvent(accumulated));
       }
 
-      // Extract last line as query
+      // Extract last line as query, strip it from displayed thinking
       final lines = accumulated.trim().split('\n');
       final lastLine = lines.last.trim();
       final query = sanitizeQuery(lastLine);
+      final reasoning = lines.length > 1
+          ? lines.sublist(0, lines.length - 1).join('\n').trim()
+          : '';
+      if (reasoning.isNotEmpty && reasoning != accumulated.trim()) {
+        _emit(ThinkingUpdateEvent(reasoning));
+      }
 
       return query.isNotEmpty ? query : userMessage;
     } catch (e) {
@@ -197,7 +203,12 @@ User question: $userMessage''';
         _emit(ThinkingUpdateEvent(accumulated));
       }
 
-      return parseEvaluation(accumulated);
+      final result = parseEvaluation(accumulated);
+      // Strip the SEARCH:/DONE decision line from displayed thinking
+      if (result.reasoning.isNotEmpty && result.reasoning != accumulated.trim()) {
+        _emit(ThinkingUpdateEvent(result.reasoning));
+      }
+      return result;
     } catch (e) {
       return ParseResult(canAnswer: true, reasoning: '');
     }

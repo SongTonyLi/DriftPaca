@@ -592,21 +592,14 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   /// so streamed reasoning remains visible.
   List<Widget> _buildSearchSegmentsFrom(List<MessageSegment> segments) {
     final widgets = <Widget>[];
-    // Once AnswerSegment is present, no thinking is active (search phase is done)
-    final hasAnswer = segments.any((s) => s is AnswerSegment);
-    final isLastSegmentThinking = !hasAnswer && segments.lastOrNull is ThinkingSegment;
-    final segmentCount = segments.length;
-
-    for (var i = 0; i < segmentCount; i++) {
-      final segment = segments[i];
-      final isActiveThinking = isLastSegmentThinking && i == segmentCount - 1;
+    for (final segment in segments) {
       switch (segment) {
         case ThinkingSegment():
           if (segment.text.isEmpty) continue;
           widgets.add(ThinkBlockWidget(
             content: segment.text,
-            isComplete: !isActiveThinking,
-            isStreaming: isActiveThinking,
+            isComplete: true,
+            isStreaming: false,
             keepExpandedWhenComplete: true,
           ));
         case SearchCardSegment():

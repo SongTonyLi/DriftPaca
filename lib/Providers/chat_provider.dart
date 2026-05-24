@@ -329,7 +329,8 @@ class ChatProvider extends ChangeNotifier {
     if (_messages.isEmpty) return null;
 
     final searchThinkingText = preThinking?.trim();
-    final hasSearchThinking = searchThinkingText?.isNotEmpty ?? false;
+    final searchThinkingValue =
+        (searchThinkingText?.isNotEmpty ?? false) ? searchThinkingText : null;
     var modelThinkingBuffer = '';
 
     // If search context is provided, inject it as a system message before the conversation
@@ -387,16 +388,16 @@ class ChatProvider extends ChangeNotifier {
         // Keep the first received message to add the content of the following messages
         streamingMessage = receivedMessage;
 
-        if (hasSearchThinking) {
+        if (searchThinkingValue != null) {
           final initialThinking = receivedMessage.thinking ?? '';
           if (initialThinking.isNotEmpty) {
             modelThinkingBuffer = initialThinking;
             streamingMessage.thinking = mergeSearchThinking(
-              searchThinking: searchThinkingText!,
+              searchThinking: searchThinkingValue,
               modelThinking: modelThinkingBuffer,
             );
           } else {
-            streamingMessage.thinking = searchThinkingText;
+            streamingMessage.thinking = searchThinkingValue;
           }
         }
 
@@ -415,14 +416,14 @@ class ChatProvider extends ChangeNotifier {
         streamingMessage.content += receivedMessage.content;
         // Accumulate thinking tokens alongside content
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
-          if (hasSearchThinking) {
+          if (searchThinkingValue != null) {
             if (modelThinkingBuffer.isEmpty) {
               modelThinkingBuffer = receivedMessage.thinking!;
             } else {
               modelThinkingBuffer += receivedMessage.thinking!;
             }
             streamingMessage.thinking = mergeSearchThinking(
-              searchThinking: searchThinkingText!,
+              searchThinking: searchThinkingValue,
               modelThinking: modelThinkingBuffer,
             );
           } else {

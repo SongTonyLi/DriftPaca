@@ -569,8 +569,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   /// Builds search segment widgets (thinking blocks + search cards) from orchestrator events.
-  /// Thinking segments use ThinkBlockWidget but stay expanded by default
-  /// so streamed reasoning remains visible.
+  /// Thinking segments use ThinkBlockWidget with keepExpandedWhenComplete
+  /// set to true so streamed reasoning remains visible.
   List<Widget> _buildSearchSegments() {
     final widgets = <Widget>[];
     final isLastSegmentThinking = widget.searchSegments.lastOrNull is ThinkingSegment;

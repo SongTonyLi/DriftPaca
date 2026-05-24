@@ -15,6 +15,7 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
+import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
 class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
@@ -492,7 +493,10 @@ class ChatPageViewModel extends ChangeNotifier {
           }
         }
 
-        // Collect thinking text + searched URLs for persistence
+        // Serialize search segments for persistence
+        final segmentHeader = encodeSearchSegments(_searchSegments);
+
+        // Also build human-readable thinking text
         final thinkingParts = <String>[];
         for (final segment in _searchSegments) {
           if (segment is ThinkingSegment && segment.text.isNotEmpty) {
@@ -503,12 +507,16 @@ class ChatPageViewModel extends ChangeNotifier {
                 .map((u) => u.url)
                 .toList();
             if (urls.isNotEmpty) {
-              thinkingParts.add('Searched: "${segment.query}" → ${urls.join(', ')}');
+              thinkingParts.add(
+                  'Searched: "${segment.query}" → ${urls.join(', ')}');
+            } else if (segment.error != null) {
+              thinkingParts.add(
+                  'Searched: "${segment.query}" → ${segment.error}');
             }
           }
         }
-        if (thinkingParts.isNotEmpty) {
-          searchThinking = thinkingParts.join('\n\n');
+        if (segmentHeader.isNotEmpty || thinkingParts.isNotEmpty) {
+          searchThinking = '$segmentHeader${thinkingParts.join('\n\n')}';
         }
       } catch (_) {
         // Orchestrator failed — continue without search

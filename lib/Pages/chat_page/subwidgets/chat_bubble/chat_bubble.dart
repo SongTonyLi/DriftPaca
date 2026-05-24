@@ -435,8 +435,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   String _displayThinking(String? thinking) {
     if (thinking == null || thinking.isEmpty) return '';
     if (widget.searchSegments.isEmpty) return thinking;
-    final modelThinking = modelThinkingFromCombined(thinking);
-    return modelThinking.isEmpty ? '' : modelThinking.trimLeft();
+    return modelThinkingFromCombined(thinking);
   }
 
   @override

@@ -11,6 +11,6 @@ String mergeSearchThinking({
 
 String modelThinkingFromCombined(String combined) {
   final separatorIndex = combined.indexOf(searchThinkingSeparator);
-  if (separatorIndex == -1) return '';
+  if (separatorIndex == -1) return combined;
   return combined.substring(separatorIndex + searchThinkingSeparator.length);
 }

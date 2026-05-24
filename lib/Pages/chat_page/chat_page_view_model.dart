@@ -15,7 +15,6 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
-import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
 class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
@@ -51,9 +50,6 @@ class ChatPageViewModel extends ChangeNotifier {
   final List<MessageSegment> _searchSegments = [];
   List<MessageSegment> get searchSegments => List.unmodifiable(_searchSegments);
 
-  /// Active orchestrator reference for cancellation
-  SearchOrchestrator? _activeOrchestrator;
-
   /// Whether the user has accepted the web search disclosure
   bool get webSearchConsented => Hive.box('settings').get('webSearchConsented', defaultValue: false);
 
@@ -72,54 +68,6 @@ class ChatPageViewModel extends ChangeNotifier {
     Hive.box('settings').put('webSearchConsented', true);
     _webSearchEnabled = true;
     notifyListeners();
-  }
-
-  // ============================================================
-  // Search Segment Management
-  // ============================================================
-
-  void _startThinkingSegment() {
-    _searchSegments.add(ThinkingSegment(''));
-  }
-
-  void _updateThinkingSegment(String accumulated) {
-    final thinking = _searchSegments.whereType<ThinkingSegment>().lastOrNull;
-    if (thinking != null) {
-      thinking.text = accumulated;
-    }
-  }
-
-  void _addSearchCard(String query) {
-    _searchSegments.add(SearchCardSegment(query: query));
-  }
-
-  void _updateSearchCard(List<SearchURLStatus> urls) {
-    final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-    if (card != null) {
-      card.urls = urls;
-    }
-  }
-
-  void _collapseSearchCard(int resultCount) {
-    final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-    if (card != null) {
-      card.resultCount = resultCount;
-      card.isComplete = true;
-    }
-  }
-
-  void _showSearchError(String message) {
-    final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-    if (card != null && !card.isComplete) {
-      card.error = message;
-      card.isComplete = true;
-    } else {
-      _searchSegments.add(SearchCardSegment(
-        query: '',
-        error: message,
-        isComplete: true,
-      ));
-    }
   }
 
   // ============================================================
@@ -280,8 +228,6 @@ class ChatPageViewModel extends ChangeNotifier {
 
   /// Cancels the current streaming response and any active search
   void cancelStreaming() {
-    _activeOrchestrator?.cancel();
-    _activeOrchestrator = null;
     _isSearching = false;
     _chatProvider.cancelCurrentStreaming();
   }
@@ -441,98 +387,59 @@ class ChatPageViewModel extends ChangeNotifier {
       _searchSegments.clear();
       notifyListeners();
 
-      SearchOrchestrator? orchestrator;
-      try {
-        orchestrator = SearchOrchestrator(
-          ollamaService: _ollamaService,
-          chat: _chatProvider.currentChat!,
-        );
-        _activeOrchestrator = orchestrator;
-
-        // Listen to events for UI updates
-        final subscription = orchestrator.events.listen((event) {
-          switch (event) {
-            case ThinkingStartEvent():
-              _startThinkingSegment();
-            case ThinkingUpdateEvent():
-              _updateThinkingSegment(event.accumulated);
-            case SearchStartEvent():
-              _addSearchCard(event.query);
-            case SearchProgressEvent():
-              _updateSearchCard(event.urls);
-            case SearchCompleteEvent():
-              _collapseSearchCard(event.resultCount);
-            case SearchContentEvent():
-              final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-              if (card != null) {
-                card.extractedContent = event.content;
-              }
-            case SearchErrorEvent():
-              _showSearchError(event.message);
-            case AnswerStartEvent():
-              _searchSegments.add(AnswerSegment());
-          }
+      _chatProvider.setWebSearchCallbacks(
+        onSearchStart: (query) {
+          _searchSegments.add(SearchCardSegment(query: query));
           notifyListeners();
-        });
-
-        // Run the agentic loop
-        searchContext = await orchestrator.run(prompt);
-
-        await subscription.cancel();
-
-        // Build source URL map from context source tags
-        if (searchContext != null) {
-          final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
-          for (final match in urlPattern.allMatches(searchContext)) {
-            final id = int.tryParse(match.group(1)!);
-            final url = match.group(2);
-            if (id != null && url != null) {
-              sourceUrls ??= {};
-              sourceUrls[id] = url;
+        },
+        onSearchComplete: (results) {
+          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+          if (card != null) {
+            if (results.isEmpty) {
+              card.error = 'No results found';
+            } else {
+              card.urls = results
+                  .map((r) => SearchURLStatus(
+                        url: r.url,
+                        domain: Uri.tryParse(r.url)?.host ?? r.url,
+                        state: r.pageContent != null
+                            ? SearchURLState.success
+                            : SearchURLState.failed,
+                      ))
+                  .toList();
+              card.resultCount = results.length;
+              final contentParts = <String>[];
+              for (final r in results) {
+                final content = r.chunks != null && r.chunks!.isNotEmpty
+                    ? r.chunks!.take(2).join('\n')
+                    : (r.pageContent ?? r.snippet);
+                if (content.isNotEmpty) {
+                  contentParts.add('${Uri.tryParse(r.url)?.host ?? r.url}:\n$content');
+                }
+              }
+              card.extractedContent = contentParts.join('\n\n');
             }
+            card.isComplete = true;
+            _searchSegments.add(AnswerSegment());
+            notifyListeners();
           }
-        }
-
-        // Serialize search segments for persistence
-        final segmentHeader = encodeSearchSegments(_searchSegments);
-
-        // Also build human-readable thinking text
-        final thinkingParts = <String>[];
-        for (final segment in _searchSegments) {
-          if (segment is ThinkingSegment && segment.text.isNotEmpty) {
-            thinkingParts.add(segment.text);
-          } else if (segment is SearchCardSegment && segment.query.isNotEmpty) {
-            final urls = segment.urls
-                .where((u) => u.state == SearchURLState.success)
-                .map((u) => u.url)
-                .toList();
-            if (urls.isNotEmpty) {
-              thinkingParts.add(
-                  'Searched: "${segment.query}" → ${urls.join(', ')}');
-            } else if (segment.error != null) {
-              thinkingParts.add(
-                  'Searched: "${segment.query}" → ${segment.error}');
-            }
-          }
-        }
-        if (segmentHeader.isNotEmpty || thinkingParts.isNotEmpty) {
-          searchThinking = '$segmentHeader${thinkingParts.join('\n\n')}';
-        }
-      } catch (_) {
-        // Orchestrator failed — continue without search
-      } finally {
-        orchestrator?.dispose();
-        _activeOrchestrator = null;
-        _isSearching = false;
-        notifyListeners();
-      }
+        },
+      );
     }
 
     // Persist message and start the AI response stream
     await _chatProvider.sendPrompt(message,
         searchContext: searchContext,
         sourceUrls: sourceUrls,
-        preThinking: searchThinking);
+        preThinking: searchThinking,
+        webSearchEnabled: _webSearchEnabled);
+
+    // Clean up search state
+    if (_webSearchEnabled) {
+      _chatProvider.clearWebSearchCallbacks();
+      _isSearching = false;
+      notifyListeners();
+    }
 
     // Generate title for new chats
     if (isNewChat) {

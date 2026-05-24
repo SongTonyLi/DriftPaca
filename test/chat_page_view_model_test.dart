@@ -45,7 +45,6 @@ void main() {
       chatProvider: fakeChatProvider,
       permissionService: fakePermissionService,
       imageService: fakeImageService,
-      ollamaService: OllamaService(),
     );
   });
 
@@ -465,7 +464,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   }
 
   @override
-  Future<void> sendPrompt(OllamaMessage prompt, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking}) async {
+  Future<void> sendPrompt(OllamaMessage prompt, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking, bool webSearchEnabled = false}) async {
     sendPromptCalled = true;
   }
 

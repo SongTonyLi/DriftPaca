@@ -20,17 +20,13 @@ class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
   final PermissionService _permissionService;
   final ImageService _imageService;
-  final OllamaService _ollamaService;
-
   ChatPageViewModel({
     required ChatProvider chatProvider,
     required PermissionService permissionService,
     required ImageService imageService,
-    required OllamaService ollamaService,
   })  : _chatProvider = chatProvider,
         _permissionService = permissionService,
-        _imageService = imageService,
-        _ollamaService = ollamaService {
+        _imageService = imageService {
     _initialize();
   }
 

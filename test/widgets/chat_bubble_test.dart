@@ -332,6 +332,27 @@ void main() {
       // E=mc^2 is real LaTeX (starts with letter), $500 is currency (starts with digit)
       expect(find.byType(Math), findsOneWidget);
     });
+
+    testWidgets('LaTeX starting with digit but with math operators is LaTeX', (tester) async {
+      // $1+1=2$ starts with digit but contains +, = operators → LaTeX, not currency
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'Simple math: $1+1=2$ and $3 \times 4 = 12$.',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(2));
+    });
+
+    testWidgets('digit-only LaTeX with operators', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'Calculate $2^{10} = 1024$ please.',
+      );
+
+      expect(overflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+    });
   });
 
   // ---------------------------------------------------------------------------

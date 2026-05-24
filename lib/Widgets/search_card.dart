@@ -14,10 +14,14 @@ class SearchCard extends StatefulWidget {
 }
 
 class _SearchCardState extends State<SearchCard>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   bool _expanded = true;
   late final AnimationController _expandController;
   late final Animation<double> _expandAnimation;
+
+  late final AnimationController _entranceController;
+  late final Animation<double> _entranceFade;
+  late final Animation<Offset> _entranceSlide;
 
   // Track previous isComplete state locally because SearchCardSegment is
   // mutable and mutated in-place, so oldWidget.segment === widget.segment.
@@ -35,6 +39,23 @@ class _SearchCardState extends State<SearchCard>
       parent: _expandController,
       curve: Curves.easeInOut,
     );
+
+    _entranceController = AnimationController(
+      duration: const Duration(milliseconds: 250),
+      vsync: this,
+    );
+    _entranceFade = CurvedAnimation(
+      parent: _entranceController,
+      curve: Curves.easeOut,
+    );
+    _entranceSlide = Tween<Offset>(
+      begin: const Offset(0, 0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _entranceController,
+      curve: Curves.easeOutCubic,
+    ));
+    _entranceController.forward();
   }
 
   @override
@@ -61,6 +82,7 @@ class _SearchCardState extends State<SearchCard>
 
   @override
   void dispose() {
+    _entranceController.dispose();
     _expandController.dispose();
     super.dispose();
   }
@@ -71,7 +93,11 @@ class _SearchCardState extends State<SearchCard>
     final segment = widget.segment;
     final hasError = segment.error != null;
 
-    return Padding(
+    return SlideTransition(
+      position: _entranceSlide,
+      child: FadeTransition(
+        opacity: _entranceFade,
+        child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Container(
         decoration: BoxDecoration(
@@ -187,6 +213,8 @@ class _SearchCardState extends State<SearchCard>
             ),
           ],
         ),
+      ),
+    ),
       ),
     );
   }

@@ -367,7 +367,7 @@ class _ChatPageState extends State<ChatPage> {
                               backgroundColor: Theme.of(context).colorScheme.primary,
                             )
                           : null,
-                      onPressed: () {
+                      onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {
                         final needsConsent = _viewModel.toggleWebSearch();
                         if (needsConsent) {
                           showDialog(
@@ -421,7 +421,7 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                       ),
                     ),
-                    if (_viewModel.isStreaming)
+                    if (_viewModel.isStreaming || _viewModel.isSearching)
                       IconButton(
                         icon: const Icon(Icons.stop_rounded, size: 20),
                         padding: const EdgeInsets.all(6),

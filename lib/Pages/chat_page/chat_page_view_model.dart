@@ -428,7 +428,7 @@ class ChatPageViewModel extends ChangeNotifier {
         searchContext: searchContext,
         sourceUrls: sourceUrls,
         preThinking: searchThinking,
-        webSearchEnabled: _webSearchEnabled);
+        searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
 
     // Clean up search state
     if (_webSearchEnabled) {

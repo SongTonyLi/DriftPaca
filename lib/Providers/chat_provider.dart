@@ -281,7 +281,7 @@ class ChatProvider extends ChangeNotifier {
     String? searchContext,
     Map<int, String>? sourceUrls,
     String? preThinking,
-    bool webSearchEnabled = false,
+    int searchAttemptsRemaining = 0,
   }) async {
     final associatedChat = currentChat!;
 
@@ -289,10 +289,10 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.addMessage(prompt, chat: associatedChat);
 
     // Initialize the chat stream with the messages in the chat
-    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls, preThinking: preThinking, webSearchEnabled: webSearchEnabled);
+    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls, preThinking: preThinking, searchAttemptsRemaining: searchAttemptsRemaining);
   }
 
-  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking, bool webSearchEnabled = false}) async {
+  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls, String? preThinking, int searchAttemptsRemaining = 0}) async {
     // Send a notification to inform generation begin
     NotificationCenter().postNotification(NotificationNames.generationBegin);
 
@@ -318,7 +318,7 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? ollamaMessage;
 
     try {
-      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext, preThinking: preThinking, webSearchEnabled: webSearchEnabled);
+      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext, preThinking: preThinking, searchAttemptsRemaining: searchAttemptsRemaining);
       // Use intercepted source URLs if search happened via stream interception
       if (sourceUrls == null && _interceptedSourceUrls != null) {
         sourceUrls = _interceptedSourceUrls;
@@ -365,7 +365,7 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking, bool webSearchEnabled = false}) async {
+  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking, int searchAttemptsRemaining = 0}) async {
     if (_messages.isEmpty) return null;
 
     final searchThinking = preThinking?.trim();
@@ -398,7 +398,7 @@ class ChatProvider extends ChangeNotifier {
     // When web search is enabled but no context yet (Call 1), inject the
     // WEBSEARCH instruction so the model can request a search on the first line.
     OllamaChat streamChat = associatedChat;
-    if (webSearchEnabled && searchContext == null) {
+    if (searchAttemptsRemaining > 0 && searchContext == null) {
       final origPrompt = associatedChat.systemPrompt ?? '';
       streamChat = OllamaChat(
         id: associatedChat.id,
@@ -472,7 +472,7 @@ class ChatProvider extends ChangeNotifier {
       } else {
         // --- WEBSEARCH stream interception (Call 1) ---
         // Buffer the first content line to check for WEBSEARCH: <query>.
-        if (webSearchEnabled && searchContext == null && !webSearchChecked && receivedMessage.content.isNotEmpty) {
+        if (searchAttemptsRemaining > 0 && searchContext == null && !webSearchChecked && receivedMessage.content.isNotEmpty) {
           contentBuffer += receivedMessage.content;
           if (!contentBuffer.contains('\n')) {
             if (notifyThrottle.elapsedMilliseconds >= 32) {
@@ -530,7 +530,7 @@ class ChatProvider extends ChangeNotifier {
               associatedChat,
               searchContext: newSearchContext,
               preThinking: call1Thinking.isNotEmpty ? call1Thinking : preThinking,
-              webSearchEnabled: false,
+              searchAttemptsRemaining: searchAttemptsRemaining - 1,
             );
           }
 

@@ -93,6 +93,20 @@ class SearchOrchestrator {
 
         if (_cancelled) break;
 
+        // Store extracted content in the search card segment for persistence
+        if (results.isNotEmpty) {
+          final contentParts = <String>[];
+          for (final r in results) {
+            final content = r.chunks != null && r.chunks!.isNotEmpty
+                ? r.chunks!.take(2).join('\n')
+                : (r.pageContent ?? r.snippet);
+            if (content.isNotEmpty) {
+              contentParts.add('${Uri.tryParse(r.url)?.host ?? r.url}:\n$content');
+            }
+          }
+          _emit(SearchContentEvent(contentParts.join('\n\n')));
+        }
+
         accumulatedResults.addAll(results);
         _capContext(accumulatedResults);
 

@@ -28,6 +28,12 @@ class SearchCompleteEvent extends SearchEvent {
   SearchCompleteEvent(this.resultCount);
 }
 
+/// Extracted content from search results, for persistence.
+class SearchContentEvent extends SearchEvent {
+  final String content;
+  SearchContentEvent(this.content);
+}
+
 /// Search error (network, timeout, etc).
 class SearchErrorEvent extends SearchEvent {
   final String message;
@@ -67,6 +73,7 @@ class SearchCardSegment extends MessageSegment {
   int? resultCount;
   String? error;
   bool isComplete;
+  String? extractedContent; // top chunks fed to model, for persistence
 
   SearchCardSegment({
     required this.query,
@@ -74,6 +81,7 @@ class SearchCardSegment extends MessageSegment {
     this.resultCount,
     this.error,
     this.isComplete = false,
+    this.extractedContent,
   });
 }
 

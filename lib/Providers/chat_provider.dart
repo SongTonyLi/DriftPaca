@@ -458,6 +458,14 @@ class ChatProvider extends ChangeNotifier {
           }
         }
 
+        // When search detection is active, buffer the first content chunk
+        // so WEBSEARCH detection works for non-thinking models (e.g. gemma4)
+        // where content arrives from the very first stream message.
+        if (searchAttemptsRemaining > 0 && searchContext == null && receivedMessage.content.isNotEmpty) {
+          contentBuffer = streamingMessage.content;
+          streamingMessage.content = '';
+        }
+
         // Update the active chat streams key with the ollama message
         // to be able to show the stream in the chat.
         // We also use this when the user switches between chats while streaming.
@@ -592,9 +600,66 @@ class ChatProvider extends ChangeNotifier {
       }
     }
 
-    // Flush any content remaining in the detection buffer (stream ended before
-    // a newline arrived after the first content line)
+    // Stream ended with content still in detection buffer (no trailing newline).
+    // Check for WEBSEARCH before flushing — models like deepseek output just the
+    // WEBSEARCH line and stop, expecting the system to handle the search.
     if (contentBuffer.isNotEmpty && streamingMessage != null) {
+      if (!webSearchChecked && searchAttemptsRemaining > 0 && searchContext == null) {
+        final fullContent = streamingMessage.content + contentBuffer;
+        final firstNonEmpty = fullContent.split('\n').cast<String?>().firstWhere(
+          (l) => l != null && l.trim().isNotEmpty,
+          orElse: () => null,
+        );
+        if (firstNonEmpty != null && firstNonEmpty.trim().toUpperCase().startsWith('WEBSEARCH:')) {
+          final searchQuery = firstNonEmpty.trim().substring('WEBSEARCH:'.length).trim();
+          final call1Thinking = streamingMessage.thinking ?? '';
+
+          _messages.remove(streamingMessage);
+          _activeChatStreams.remove(associatedChat.id);
+          notifyListeners();
+          await Future.delayed(Duration.zero);
+
+          _webSearchCallback?.call(searchQuery);
+          await Future.delayed(Duration.zero);
+
+          final searchService = WebSearchService();
+          final searchResults = await searchService.searchAndExtract(searchQuery);
+          _webSearchCompleteCallback?.call(searchResults);
+          await Future.delayed(Duration.zero);
+
+          if (searchResults.isEmpty) {
+            final failMsg = OllamaMessage(
+              'I searched the web for "$searchQuery" but found no results. Let me answer based on what I know.',
+              role: OllamaMessageRole.assistant,
+              thinking: call1Thinking.isNotEmpty ? call1Thinking : null,
+            );
+            _activeChatStreams[associatedChat.id] = failMsg;
+            if (associatedChat.id == currentChat?.id) _messages.add(failMsg);
+            notifyListeners();
+            return failMsg;
+          }
+
+          final newSearchContext = WebSearchService.formatResultsAsContext(searchResults);
+          _interceptedSourceUrls = {};
+          final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
+          for (final match in urlPattern.allMatches(newSearchContext)) {
+            final id = int.tryParse(match.group(1)!);
+            final url = match.group(2);
+            if (id != null && url != null) _interceptedSourceUrls![id] = url;
+          }
+
+          _activeChatStreams[associatedChat.id] = null;
+          notifyListeners();
+
+          return await _streamOllamaMessage(
+            associatedChat,
+            searchContext: newSearchContext,
+            preThinking: call1Thinking.isNotEmpty ? call1Thinking : preThinking,
+            searchAttemptsRemaining: searchAttemptsRemaining - 1,
+          );
+        }
+      }
+      // Not WEBSEARCH — flush buffer normally
       streamingMessage.content += contentBuffer;
       contentBuffer = '';
     }

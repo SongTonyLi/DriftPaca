@@ -441,6 +441,100 @@ void main() {
   });
 
   // ===========================================================================
+  // Group 2b: Cross-model verification (non-thinking + thinking models)
+  // ===========================================================================
+  group('Cross-model: non-thinking model (gemma4)', () {
+    test('gemma4 WEBSEARCH detection works (content arrives from first chunk)', () async {
+      final model = OllamaModel(
+        name: 'gemma4:31b',
+        model: 'gemma4:31b',
+        modifiedAt: DateTime.now(),
+        size: 1000,
+        digest: 'test',
+        parameterSize: '31B',
+      );
+      await chatProvider.createNewChat(model);
+
+      String? searchQuery;
+      chatProvider.setWebSearchCallbacks(
+        onSearchStart: (query) => searchQuery = query,
+        onSearchComplete: (_) {},
+      );
+
+      final userMsg = chatProvider.displayUserMessage('越南2025GDP');
+      await chatProvider.sendPrompt(userMsg, searchAttemptsRemaining: 3);
+      chatProvider.clearWebSearchCallbacks();
+
+      final assistantMsgs = chatProvider.messages
+          .where((m) => m.role == OllamaMessageRole.assistant)
+          .toList();
+
+      print('Model: gemma4:31b');
+      print('Search query: $searchQuery');
+      print('Messages: ${assistantMsgs.length}');
+      if (assistantMsgs.isNotEmpty) {
+        final content = assistantMsgs.last.content;
+        print('Content preview: ${_truncate(content, 150)}');
+
+        // The answer must NOT contain raw WEBSEARCH marker
+        expect(content, isNot(contains('WEBSEARCH:')),
+            reason:
+                'BUG 4: Raw WEBSEARCH: shown to user with non-thinking model.\n'
+                'For gemma4, content arrives in the first stream chunk.\n'
+                'Detection only ran in the else branch, missing first-chunk content.');
+      }
+
+      expect(assistantMsgs, isNotEmpty,
+          reason: 'Should produce an answer');
+    });
+  });
+
+  group('Cross-model: thinking model (deepseek)', () {
+    test('deepseek WEBSEARCH detection works (thinking then content)', () async {
+      final model = OllamaModel(
+        name: 'deepseek-v4-flash',
+        model: 'deepseek-v4-flash',
+        modifiedAt: DateTime.now(),
+        size: 1000,
+        digest: 'test',
+        parameterSize: '70B',
+      );
+      await chatProvider.createNewChat(model);
+
+      String? searchQuery;
+      chatProvider.setWebSearchCallbacks(
+        onSearchStart: (query) => searchQuery = query,
+        onSearchComplete: (_) {},
+      );
+
+      final userMsg = chatProvider.displayUserMessage('越南2025GDP');
+      await chatProvider.sendPrompt(userMsg, searchAttemptsRemaining: 3);
+      chatProvider.clearWebSearchCallbacks();
+
+      final assistantMsgs = chatProvider.messages
+          .where((m) => m.role == OllamaMessageRole.assistant)
+          .toList();
+
+      print('Model: deepseek-v4-flash');
+      print('Search query: $searchQuery');
+      print('Messages: ${assistantMsgs.length}');
+      if (assistantMsgs.isNotEmpty) {
+        final content = assistantMsgs.last.content;
+        print('Content preview: ${_truncate(content, 150)}');
+        print('Has thinking: ${assistantMsgs.last.thinking != null}');
+
+        expect(content, isNot(contains('WEBSEARCH:')),
+            reason:
+                'Raw WEBSEARCH: shown to user with thinking model.\n'
+                'Detection failed to intercept WEBSEARCH marker.');
+      }
+
+      expect(assistantMsgs, isNotEmpty,
+          reason: 'Should produce an answer');
+    });
+  });
+
+  // ===========================================================================
   // Group 3: UI notification flow (thinking indicator, search card, answer)
   // ===========================================================================
   group('UI notification flow', () {

@@ -553,10 +553,10 @@ class ChatProvider extends ChangeNotifier {
         } else {
           streamingMessage.content += receivedMessage.content;
 
-          // Check if accumulated content starts with WEBSEARCH:
+          // Check if accumulated content contains WEBSEARCH: anywhere
           if (canSearch && receivedMessage.content.isNotEmpty) {
-            final trimmed = streamingMessage.content.trimLeft();
-            if (trimmed.toUpperCase().startsWith('WEBSEARCH:')) {
+            final upper = streamingMessage.content.toUpperCase();
+            if (upper.contains('WEBSEARCH:')) {
               websearchDetected = true;
               websearchBuffer = streamingMessage.content;
               streamingMessage.content = '';
@@ -590,6 +590,16 @@ class ChatProvider extends ChangeNotifier {
         if (line.trim().toUpperCase().startsWith('WEBSEARCH:')) {
           fallbackQuery = line.trim().substring('WEBSEARCH:'.length).trim();
           break;
+        }
+      }
+      // Check content for embedded WEBSEARCH: (model wrote preamble before keyword)
+      if (fallbackQuery == null) {
+        final contentUpper = streamingMessage.content.toUpperCase();
+        final wsIdx = contentUpper.indexOf('WEBSEARCH:');
+        if (wsIdx != -1) {
+          fallbackQuery = streamingMessage.content
+              .substring(wsIdx + 'WEBSEARCH:'.length)
+              .trim();
         }
       }
       // Extract quoted query from thinking (e.g. 'query "Taiwan GDP 2025"')

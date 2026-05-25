@@ -34,15 +34,14 @@ class WebSearchService {
   // Public API
   // ============================================================
 
-  /// Full search pipeline with text chunking and relevance filtering:
-  /// 1. Search DuckDuckGo (overfetch to allow filtering)
+  /// Full search pipeline with text chunking:
+  /// 1. Search DuckDuckGo
   /// 2. Fetch full page content (concurrency-limited)
   /// 3. Chunk content with recursive text splitter
-  /// 4. Rank by relevance and return top results
+  /// 4. Filter out empty results, preserving DDG relevance order
   Future<List<WebSearchResult>> searchAndExtract(String query,
       {int maxResults = 8}) async {
-    // Overfetch to build a pool for quality filtering
-    final results = await searchAndFetch(query, maxResults: maxResults + 4);
+    final results = await searchAndFetch(query, maxResults: maxResults);
 
     for (final result in results) {
       if (result.pageContent != null && result.pageContent!.isNotEmpty) {
@@ -54,7 +53,12 @@ class WebSearchService {
       }
     }
 
-    return _rankByRelevance(results, query, maxResults);
+    // Preserve DuckDuckGo's search-engine relevance ordering.
+    // Only filter out results that failed to fetch any content.
+    return results
+        .where((r) => r.pageContent != null || r.snippet.isNotEmpty)
+        .take(maxResults)
+        .toList();
   }
 
   /// Search DuckDuckGo + fetch page content (concurrency-limited).
@@ -124,81 +128,19 @@ class WebSearchService {
     }
 
     return '''### Task:
-Respond to the user query using the provided context, incorporating inline citations in the format [id] **only when the <source> tag includes an explicit id attribute** (e.g., <source id="1">).
+Respond to the user query using the provided sources. Cross-reference multiple sources to verify facts before stating them — if sources disagree, note the discrepancy. Cite sources inline using [id] format.
 
 ### Guidelines:
+- Cross-reference all sources: compare data across sources and prefer claims supported by multiple sources.
+- If sources conflict, state what each source says and which seems most reliable.
 - If you don't know the answer, clearly state that.
-- If uncertain, ask the user for clarification.
 - Respond in the same language as the user's query.
-- **Only include inline citations using [id] when the <source> tag includes an id attribute.**
+- Cite using [id] matching the source id attribute.
 
 <context>
 ${sourceContext.toString().trim()}
 </context>
 ''';
-  }
-
-  // ============================================================
-  // Relevance Ranking
-  // ============================================================
-
-  /// Scores and ranks results by fuzzy query-term relevance, content
-  /// quality, and content length. Filters out empty results.
-  static List<WebSearchResult> _rankByRelevance(
-    List<WebSearchResult> results, String query, int maxResults) {
-    final queryTerms = query.toLowerCase().split(RegExp(r'\s+'))
-        .where((t) => t.length > 2).toList();
-    if (queryTerms.isEmpty) return results.take(maxResults).toList();
-
-    // Build fuzzy regex for each term: stem + optional word suffix
-    final patterns = queryTerms.map((term) {
-      final stem = _stemWord(term);
-      return RegExp('${RegExp.escape(stem)}\\w*', caseSensitive: false);
-    }).toList();
-
-    final scores = <WebSearchResult, double>{};
-    for (final r in results) {
-      double score = 0;
-      final title = r.title;
-      final content = r.pageContent ?? r.snippet;
-
-      // Has real page content (not just snippet)
-      if (r.pageContent != null && r.pageContent!.isNotEmpty) score += 3;
-
-      // Fuzzy match count — title hits worth more, content hits capped
-      for (final pattern in patterns) {
-        score += pattern.allMatches(title).length * 2;
-        score += pattern.allMatches(content).length.clamp(0, 10) * 0.3;
-      }
-
-      // Content richness bonus (longer = more useful, capped)
-      final len = r.pageContent?.length ?? r.snippet.length;
-      score += (len / 1000).clamp(0, 2).toDouble();
-
-      scores[r] = score;
-    }
-
-    final ranked = results.toList()
-      ..sort((a, b) => scores[b]!.compareTo(scores[a]!));
-
-    return ranked
-        .where((r) => r.pageContent != null || r.snippet.isNotEmpty)
-        .take(maxResults)
-        .toList();
-  }
-
-  /// Simple suffix-stripping stemmer for fuzzy regex matching.
-  static String _stemWord(String word) {
-    if (word.endsWith('ies') && word.length > 4) return word.substring(0, word.length - 3);
-    if (word.endsWith('tion') && word.length > 5) return word.substring(0, word.length - 4);
-    if (word.endsWith('ment') && word.length > 5) return word.substring(0, word.length - 4);
-    if (word.endsWith('ness') && word.length > 5) return word.substring(0, word.length - 4);
-    if (word.endsWith('ing') && word.length > 5) return word.substring(0, word.length - 3);
-    if (word.endsWith('ed') && word.length > 4) return word.substring(0, word.length - 2);
-    if (word.endsWith('es') && word.length > 4) return word.substring(0, word.length - 2);
-    if (word.endsWith('ly') && word.length > 4) return word.substring(0, word.length - 2);
-    if (word.endsWith('s') && word.length > 3) return word.substring(0, word.length - 1);
-    return word;
   }
 
   // ============================================================

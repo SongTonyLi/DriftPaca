@@ -373,11 +373,7 @@ class ChatPageViewModel extends ChangeNotifier {
     final message = _chatProvider.displayUserMessage(prompt, images: images);
     notifyListeners();
 
-    // Perform web search if enabled (user already sees their message)
-    String? searchContext;
-    Map<int, String>? sourceUrls;
-    String? searchThinking;
-
+    // Set up web search callbacks if enabled
     if (_webSearchEnabled) {
       _isSearching = true;
       _searchSegments.clear();
@@ -387,6 +383,13 @@ class ChatPageViewModel extends ChangeNotifier {
         onSearchStart: (query) {
           _searchSegments.add(SearchCardSegment(query: query));
           notifyListeners();
+        },
+        onSearchQueryUpdate: (query) {
+          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+          if (card != null) {
+            card.query = query;
+            notifyListeners();
+          }
         },
         onSearchComplete: (results) {
           final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
@@ -424,17 +427,16 @@ class ChatPageViewModel extends ChangeNotifier {
     }
 
     // Persist message and start the AI response stream
-    await _chatProvider.sendPrompt(message,
-        searchContext: searchContext,
-        sourceUrls: sourceUrls,
-        preThinking: searchThinking,
-        searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
-
-    // Clean up search state
-    if (_webSearchEnabled) {
-      _chatProvider.clearWebSearchCallbacks();
-      _isSearching = false;
-      notifyListeners();
+    try {
+      await _chatProvider.sendPrompt(message,
+          searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
+    } finally {
+      // Always clean up search state, even on error
+      if (_webSearchEnabled) {
+        _chatProvider.clearWebSearchCallbacks();
+        _isSearching = false;
+        notifyListeners();
+      }
     }
 
     // Generate title for new chats

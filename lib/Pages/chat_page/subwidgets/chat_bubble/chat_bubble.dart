@@ -476,6 +476,15 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     } else if (widget.isStreaming) {
       _targetContent = widget.message.content;
       _targetThinking = nextThinking;
+      // Clamp reveal progress if content was shortened (e.g., WEBSEARCH clear)
+      if (_revealedLength > _targetContent.length) {
+        _revealedLength = _targetContent.length;
+        _revealProgress = _revealedLength.toDouble();
+      }
+      if (_revealedThinkingLength > _targetThinking.length) {
+        _revealedThinkingLength = _targetThinking.length;
+        _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+      }
       _ensureRevealTicker();
     } else {
       _targetContent = widget.message.content;

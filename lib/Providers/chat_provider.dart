@@ -371,14 +371,7 @@ class ChatProvider extends ChangeNotifier {
     final searchThinking = preThinking?.trim();
     var modelThinkingBuffer = '';
 
-    // If search context is provided, inject it as a system message before the conversation
     List<OllamaMessage> messagesToSend = _messages;
-    if (searchContext != null && searchContext.isNotEmpty) {
-      messagesToSend = [
-        OllamaMessage(searchContext, role: OllamaMessageRole.system),
-        ..._messages,
-      ];
-    }
 
     // Fetch memories for injection — incognito chats use conv memory but skip agent memory
     final conversationMemory = await _memoryService.getConversationMemory(associatedChat.id);
@@ -395,11 +388,15 @@ class ChatProvider extends ChangeNotifier {
       );
     }
 
-    // When web search is enabled but no context yet (Call 1), inject the
-    // WEBSEARCH instruction so the model can request a search on the first line.
+    // Build the system prompt for this call:
+    // - Call 1 (no search context): inject WEBSEARCH instruction
+    // - Call 2 (has search context): inject search results into system prompt
+    //   so they become part of the single system message (not a separate one
+    //   that models may ignore)
     OllamaChat streamChat = associatedChat;
+    final origPrompt = associatedChat.systemPrompt ?? '';
     if (searchAttemptsRemaining > 0 && searchContext == null) {
-      final origPrompt = associatedChat.systemPrompt ?? '';
+      // Call 1: WEBSEARCH instruction
       streamChat = OllamaChat(
         id: associatedChat.id,
         model: associatedChat.model,
@@ -407,6 +404,20 @@ class ChatProvider extends ChangeNotifier {
         systemPrompt: origPrompt.isEmpty
             ? _webSearchInstruction()
             : '$origPrompt\n\n${_webSearchInstruction()}',
+        options: associatedChat.options,
+        isIncognito: associatedChat.isIncognito,
+      );
+    } else if (searchContext != null && searchContext.isNotEmpty) {
+      // Call 2+: inject search results into the system prompt so they're
+      // part of the single system message (avoids dual-system-message issue
+      // where models ignore the second system message).
+      streamChat = OllamaChat(
+        id: associatedChat.id,
+        model: associatedChat.model,
+        title: associatedChat.title,
+        systemPrompt: origPrompt.isEmpty
+            ? searchContext
+            : '$origPrompt\n\n$searchContext',
         options: associatedChat.options,
         isIncognito: associatedChat.isIncognito,
       );

@@ -226,8 +226,9 @@ class _ChatPageState extends State<ChatPage> {
       return ChatListView(
         key: PageStorageKey<String>(_viewModel.currentChat?.id ?? 'empty'),
         messages: _viewModel.messages,
-        isAwaitingReply: _viewModel.isThinking,
+        isAwaitingReply: _viewModel.isThinking && _viewModel.searchSegments.isEmpty,
         isStreaming: _viewModel.isStreaming,
+        searchSegments: _viewModel.searchSegments,
         error: _viewModel.currentError != null
             ? ChatError(
                 message: _viewModel.currentError!.message,
@@ -366,7 +367,7 @@ class _ChatPageState extends State<ChatPage> {
                               backgroundColor: Theme.of(context).colorScheme.primary,
                             )
                           : null,
-                      onPressed: () {
+                      onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {
                         final needsConsent = _viewModel.toggleWebSearch();
                         if (needsConsent) {
                           showDialog(
@@ -420,7 +421,7 @@ class _ChatPageState extends State<ChatPage> {
                         ),
                       ),
                     ),
-                    if (_viewModel.isStreaming)
+                    if (_viewModel.isStreaming || _viewModel.isSearching)
                       IconButton(
                         icon: const Icon(Icons.stop_rounded, size: 20),
                         padding: const EdgeInsets.all(6),

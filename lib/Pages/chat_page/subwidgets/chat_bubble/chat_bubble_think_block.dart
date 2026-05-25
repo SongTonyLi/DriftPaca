@@ -48,12 +48,14 @@ class ThinkBlockWidget extends StatefulWidget {
   final String content;
   final bool isComplete;
   final bool isStreaming;
+  final bool keepExpandedWhenComplete;
 
   const ThinkBlockWidget({
     super.key,
     required this.content,
     required this.isComplete,
     this.isStreaming = false,
+    this.keepExpandedWhenComplete = false,
   });
 
   @override
@@ -74,7 +76,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
 
   bool get _isExpanded {
     if (_userToggle != null) return _userToggle!;
-    return !widget.isComplete;
+    return widget.keepExpandedWhenComplete || !widget.isComplete;
   }
 
   @override
@@ -91,7 +93,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
     _expandController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
-      value: _wasAlreadyComplete ? 0.0 : 1.0,
+      value: (_wasAlreadyComplete && !widget.keepExpandedWhenComplete) ? 0.0 : 1.0,
     );
     _expandCurve = CurvedAnimation(
       parent: _expandController,
@@ -127,7 +129,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
       _stopwatch.stop();
       _elapsedSeconds = _stopwatch.elapsed.inSeconds;
       _pulseController.stop();
-      if (_userToggle == null) {
+      if (_userToggle == null && !widget.keepExpandedWhenComplete) {
         _userToggle = false;
         // Smooth auto-collapse after a brief pause
         Future.delayed(const Duration(milliseconds: 300), () {

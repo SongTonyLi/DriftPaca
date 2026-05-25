@@ -150,16 +150,14 @@ void main() {
   // ---------------------------------------------------------------------------
   group('currency vs LaTeX ambiguity', () {
     testWidgets('multiple currencies in paragraph with one real LaTeX', (tester) async {
-      // KNOWN ISSUE: The inline LaTeX regex matches "$5 for basic and $10"
-      // as a LaTeX expression (finds matching $ pairs greedily).
-      // This produces 2 Math widgets instead of the expected 1.
+      // Currency amounts ($5, $10) start with digits and are NOT treated as LaTeX.
+      // Only $x^2 + y^2 = r^2$ (starts with letter) is real LaTeX.
       final errors = await pumpBubbleAndCollectErrors(
         tester,
         r'The price is $5 for basic and $10 for premium. The formula is $x^2 + y^2 = r^2$.',
       );
       expect(nonOverflowErrors(errors), isEmpty);
-      // Documents current behavior — ideally should be findsOneWidget.
-      expect(find.byType(Math), findsNWidgets(2));
+      expect(find.byType(Math), findsOneWidget);
     });
 
     testWidgets('dollar amounts spanning a sentence break', (tester) async {

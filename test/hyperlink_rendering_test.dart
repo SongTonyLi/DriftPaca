@@ -32,7 +32,7 @@ void main() {
         'See [1] for details.',
         sourceUrls,
       );
-      expect(result, 'See [[1]](http://example.com) for details.');
+      expect(result, 'See [¹](http://example.com) for details.');
     });
 
     test('replaces multiple citations', () {
@@ -41,7 +41,7 @@ void main() {
         'References [1] and [2].',
         sourceUrls,
       );
-      expect(result, 'References [[1]](http://one.com) and [[2]](http://two.com).');
+      expect(result, 'References [¹](http://one.com) and [²](http://two.com).');
     });
 
     test('leaves citation without source URL unchanged', () {
@@ -50,7 +50,7 @@ void main() {
         'See [1] and [3].',
         sourceUrls,
       );
-      expect(result, 'See [[1]](http://one.com) and [3].');
+      expect(result, 'See [¹](http://one.com) and [3].');
     });
 
     test('does not replace non-numeric brackets', () {
@@ -59,7 +59,7 @@ void main() {
         'See [abc] and [1].',
         sourceUrls,
       );
-      expect(result, 'See [abc] and [[1]](http://one.com).');
+      expect(result, 'See [abc] and [¹](http://one.com).');
     });
 
     test('does not replace empty brackets', () {
@@ -68,7 +68,7 @@ void main() {
         'Empty [] and [1].',
         sourceUrls,
       );
-      expect(result, 'Empty [] and [[1]](http://one.com).');
+      expect(result, 'Empty [] and [¹](http://one.com).');
     });
 
     test('does not replace [N] already followed by (url) — existing markdown link', () {
@@ -87,7 +87,7 @@ void main() {
         '[1] is the first reference.',
         sourceUrls,
       );
-      expect(result, '[[1]](http://one.com) is the first reference.');
+      expect(result, '[¹](http://one.com) is the first reference.');
     });
 
     test('replaces citation at end of string', () {
@@ -96,7 +96,7 @@ void main() {
         'See reference [1]',
         sourceUrls,
       );
-      expect(result, 'See reference [[1]](http://one.com)');
+      expect(result, 'See reference [¹](http://one.com)');
     });
 
     test('handles citation adjacent to punctuation', () {
@@ -105,7 +105,7 @@ void main() {
         'Facts[1], figures[2].',
         sourceUrls,
       );
-      expect(result, 'Facts[[1]](http://one.com), figures[[2]](http://two.com).');
+      expect(result, 'Facts[¹](http://one.com), figures[²](http://two.com).');
     });
 
     test('handles citation in parentheses', () {
@@ -114,7 +114,7 @@ void main() {
         'Known fact ([1]).',
         sourceUrls,
       );
-      expect(result, 'Known fact ([[1]](http://one.com)).');
+      expect(result, 'Known fact ([¹](http://one.com)).');
     });
 
     test('handles large citation numbers', () {
@@ -123,7 +123,7 @@ void main() {
         'See [42] for the answer.',
         sourceUrls,
       );
-      expect(result, 'See [[42]](http://answer.com) for the answer.');
+      expect(result, 'See [⁴²](http://answer.com) for the answer.');
     });
 
     test('handles URL with query parameters', () {
@@ -132,7 +132,7 @@ void main() {
         'See [1].',
         sourceUrls,
       );
-      expect(result, 'See [[1]](http://example.com/page?q=test&lang=en).');
+      expect(result, 'See [¹](http://example.com/page?q=test&lang=en).');
     });
 
     test('handles URL with fragment', () {
@@ -141,7 +141,7 @@ void main() {
         'See [1].',
         sourceUrls,
       );
-      expect(result, 'See [[1]](http://example.com/page#section).');
+      expect(result, 'See [¹](http://example.com/page#section).');
     });
 
     test('returns content unchanged when sourceUrls is empty', () {
@@ -158,7 +158,7 @@ void main() {
         'See [this page](http://example.com) and [2] for more.',
         sourceUrls,
       );
-      expect(result, 'See [this page](http://example.com) and [[2]](http://two.com) for more.');
+      expect(result, 'See [this page](http://example.com) and [²](http://two.com) for more.');
     });
 
     test('consecutive citations without space', () {
@@ -167,7 +167,7 @@ void main() {
         'Sources[1][2].',
         sourceUrls,
       );
-      expect(result, 'Sources[[1]](http://one.com)[[2]](http://two.com).');
+      expect(result, 'Sources[¹](http://one.com)[²](http://two.com).');
     });
 
     test('does not match footnote-style [^1]', () {
@@ -177,7 +177,7 @@ void main() {
         sourceUrls,
       );
       // [^1] should not be touched (^ is not a digit)
-      expect(result, 'Footnote [^1] and citation [[1]](http://one.com).');
+      expect(result, 'Footnote [^1] and citation [¹](http://one.com).');
     });
   });
 
@@ -338,10 +338,10 @@ void main() {
   // Citation-style links (the format produced by replaceCitationsWithLinks)
   // ---------------------------------------------------------------------------
   group('hyperlink rendering — citation links', () {
-    testWidgets('citation link [[1]](url) renders without bracket artifacts', (tester) async {
+    testWidgets('citation link [¹](url) renders without bracket artifacts', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        'See [[1]](http://example.com) for reference.',
+        'See [¹](http://example.com) for reference.',
       );
       expect(nonOverflowErrors(errors), isEmpty);
       // The link text should contain "1" (possibly with brackets as part of link text)
@@ -351,7 +351,7 @@ void main() {
     testWidgets('multiple citation links render', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        'Sources [[1]](http://one.com) and [[2]](http://two.com) confirm this.',
+        'Sources [¹](http://one.com) and [²](http://two.com) confirm this.',
       );
       expect(nonOverflowErrors(errors), isEmpty);
     });
@@ -359,7 +359,7 @@ void main() {
     testWidgets('citation link in list item', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        '- Fact from [[1]](http://source.com)\n- Also see [[2]](http://other.com)',
+        '- Fact from [¹](http://source.com)\n- Also see [²](http://other.com)',
       );
       expect(nonOverflowErrors(errors), isEmpty);
     });
@@ -367,7 +367,7 @@ void main() {
     testWidgets('citation link adjacent to punctuation', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        'This is true[[1]](http://source.com), confirmed by[[2]](http://other.com).',
+        'This is true[¹](http://source.com), confirmed by[²](http://other.com).',
       );
       expect(nonOverflowErrors(errors), isEmpty);
     });
@@ -375,7 +375,7 @@ void main() {
     testWidgets('citation link in parentheses', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        'Known fact ([[1]](http://source.com)).',
+        'Known fact ([¹](http://source.com)).',
       );
       expect(nonOverflowErrors(errors), isEmpty);
     });
@@ -395,7 +395,7 @@ void main() {
     testWidgets('mixed citation links and regular links', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        'Read [this article](http://blog.com) and check source [[1]](http://source.com).',
+        'Read [this article](http://blog.com) and check source [¹](http://source.com).',
       );
       expect(nonOverflowErrors(errors), isEmpty);
     });
@@ -403,7 +403,7 @@ void main() {
     testWidgets('citation link with LaTeX in same message', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
-        r'The equation $E = mc^2$ was proven [[1]](http://physics.com).',
+        r'The equation $E = mc^2$ was proven [¹](http://physics.com).',
       );
       expect(nonOverflowErrors(errors), isEmpty);
     });
@@ -534,11 +534,11 @@ void main() {
     testWidgets('realistic LLM response with web search citations', (tester) async {
       // Simulates a response after replaceCitationsWithLinks processes it
       const content = 'According to recent studies, the global temperature '
-          'has risen by 1.1°C since pre-industrial times [[1]](http://climate.nasa.gov). '
-          'This is consistent with IPCC projections [[2]](http://ipcc.ch/report), '
-          'which predict further increases of 1.5-4.5°C by 2100 [[3]](http://nature.com/article).\n\n'
+          'has risen by 1.1°C since pre-industrial times [¹](http://climate.nasa.gov). '
+          'This is consistent with IPCC projections [²](http://ipcc.ch/report), '
+          'which predict further increases of 1.5-4.5°C by 2100 [³](http://nature.com/article).\n\n'
           r'The relationship follows: $\Delta T = \lambda \cdot \Delta F$, '
-          'where \$\\lambda\$ is climate sensitivity [[1]](http://climate.nasa.gov).';
+          'where \$\\lambda\$ is climate sensitivity [¹](http://climate.nasa.gov).';
       final errors = await pumpBubbleAndCollectErrors(tester, content);
       expect(nonOverflowErrors(errors), isEmpty);
     });

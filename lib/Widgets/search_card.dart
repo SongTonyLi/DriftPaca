@@ -190,10 +190,7 @@ class _SearchCardState extends State<SearchCard>
                                     url.domain,
                                     style:
                                         theme.textTheme.bodySmall?.copyWith(
-                                      color: url.state ==
-                                                  SearchURLState.failed ||
-                                              url.state ==
-                                                  SearchURLState.timedOut
+                                      color: url.state == SearchURLState.failed
                                           ? theme.colorScheme.onSurfaceVariant
                                               .withValues(alpha: 0.5)
                                           : theme
@@ -246,22 +243,10 @@ class _SearchCardState extends State<SearchCard>
 
   Widget _urlStateIcon(SearchURLState state, ThemeData theme) {
     switch (state) {
-      case SearchURLState.loading:
-        return SizedBox(
-          width: 12,
-          height: 12,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.5,
-            color: theme.colorScheme.primary,
-          ),
-        );
       case SearchURLState.success:
         return Icon(Icons.check, size: 12, color: theme.colorScheme.primary);
       case SearchURLState.failed:
         return Icon(Icons.close, size: 12, color: theme.colorScheme.error);
-      case SearchURLState.timedOut:
-        return Icon(Icons.timer_off_outlined,
-            size: 12, color: theme.colorScheme.error);
     }
   }
 }

@@ -580,10 +580,6 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     );
   }
 
-  Widget _buildContent(BuildContext context, String data) {
-    return widget.buildMarkdown(context, data);
-  }
-
   Widget _buildModelLabel(BuildContext context) {
     final model = widget.message.model;
     if (model == null || model.isEmpty) return const SizedBox.shrink();
@@ -646,7 +642,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
           ),
           if (content.isNotEmpty) ...[
             const SizedBox(height: 4),
-            _buildContent(context, content),
+            widget.buildMarkdown(context, content),
           ],
         ],
       );
@@ -667,7 +663,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
           ),
           if (parsed.responseContent.isNotEmpty) ...[
             const SizedBox(height: 4),
-            _buildContent(context, parsed.responseContent),
+            widget.buildMarkdown(context, parsed.responseContent),
           ],
         ],
       );
@@ -678,7 +674,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       children: [
         _buildModelLabel(context),
         ...searchWidgets,
-        if (content.isNotEmpty) _buildContent(context, content),
+        if (content.isNotEmpty) widget.buildMarkdown(context, content),
       ],
     );
   }

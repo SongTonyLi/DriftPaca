@@ -375,28 +375,25 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                       builder: (context, child) {
                         final isActive = _viewModel.webSearchEnabled &&
                             (_viewModel.isStreaming || _viewModel.isSearching);
-                        return Opacity(
-                          opacity: isActive
-                              ? 0.3 + 0.7 * (1.0 - _searchPulseController.value)
-                              : 1.0,
-                          child: child,
-                        );
-                      },
-                      child: IconButton(
-                        icon: Icon(
-                          _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
-                          size: 20,
-                          color: _viewModel.webSearchEnabled
-                              ? Theme.of(context).colorScheme.onPrimary
-                              : (_isIncognito ? _incognitoText : null),
-                        ),
-                        padding: const EdgeInsets.all(6),
-                        constraints: const BoxConstraints(),
-                        style: _viewModel.webSearchEnabled
-                            ? IconButton.styleFrom(
-                                backgroundColor: Theme.of(context).colorScheme.primary,
-                              )
-                            : null,
+                        final primary = Theme.of(context).colorScheme.primary;
+                        final glow = Color.lerp(primary, Colors.white, 0.45)!;
+                        return IconButton(
+                          icon: Icon(
+                            _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
+                            size: 20,
+                            color: _viewModel.webSearchEnabled
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : (_isIncognito ? _incognitoText : null),
+                          ),
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(),
+                          style: _viewModel.webSearchEnabled
+                              ? IconButton.styleFrom(
+                                  backgroundColor: isActive
+                                      ? Color.lerp(primary, glow, _searchPulseController.value)
+                                      : primary,
+                                )
+                              : null,
                         onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {
                           final needsConsent = _viewModel.toggleWebSearch();
                           if (needsConsent) {
@@ -425,7 +422,8 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                           }
                         },
                         tooltip: 'Web Search',
-                      ),
+                        );
+                      },
                     ),
                     Expanded(
                       child: IgnorePointer(

@@ -392,6 +392,12 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                                   backgroundColor: isActive
                                       ? Color.lerp(primary, glow, _searchPulseController.value)
                                       : primary,
+                                  disabledBackgroundColor: isActive
+                                      ? Color.lerp(primary, glow, _searchPulseController.value)
+                                      : null,
+                                  disabledForegroundColor: isActive
+                                      ? Theme.of(context).colorScheme.onPrimary
+                                      : null,
                                 )
                               : null,
                         onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {

@@ -163,6 +163,11 @@ class ChatPageViewModel extends ChangeNotifier {
     final isThinking = _chatProvider.isCurrentChatThinking;
     final errorMessage = _chatProvider.currentChatError?.message;
 
+    // Clear stale search segments when switching chats
+    if (chatId != _lastChatId) {
+      _searchSegments.clear();
+    }
+
     // Always forward during streaming/thinking — message content is mutated
     // in place so tracked values won't change, but the UI (typewriter reveal)
     // depends on each notification to advance.
@@ -340,6 +345,9 @@ class ChatPageViewModel extends ChangeNotifier {
     if (!hasText || isStreaming || _isSearching) {
       return false;
     }
+
+    // Clear stale search segments from previous messages
+    _searchSegments.clear();
 
     // Check if server is configured
     if (!isServerConfigured) {

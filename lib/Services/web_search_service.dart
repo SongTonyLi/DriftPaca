@@ -142,26 +142,33 @@ ${sourceContext.toString().trim()}
   // Relevance Ranking
   // ============================================================
 
-  /// Scores and ranks results by query-term relevance, content quality,
-  /// and content length. Filters out empty results.
+  /// Scores and ranks results by fuzzy query-term relevance, content
+  /// quality, and content length. Filters out empty results.
   static List<WebSearchResult> _rankByRelevance(
     List<WebSearchResult> results, String query, int maxResults) {
     final queryTerms = query.toLowerCase().split(RegExp(r'\s+'))
         .where((t) => t.length > 2).toList();
     if (queryTerms.isEmpty) return results.take(maxResults).toList();
 
+    // Build fuzzy regex for each term: stem + optional word suffix
+    final patterns = queryTerms.map((term) {
+      final stem = _stemWord(term);
+      return RegExp('${RegExp.escape(stem)}\\w*', caseSensitive: false);
+    }).toList();
+
     final scores = <WebSearchResult, double>{};
     for (final r in results) {
       double score = 0;
-      final text = '${r.title} ${r.pageContent ?? r.snippet}'.toLowerCase();
+      final title = r.title;
+      final content = r.pageContent ?? r.snippet;
 
       // Has real page content (not just snippet)
       if (r.pageContent != null && r.pageContent!.isNotEmpty) score += 3;
 
-      // Query term presence in title + content
-      for (final term in queryTerms) {
-        if (r.title.toLowerCase().contains(term)) score += 2;
-        if (text.contains(term)) score += 1;
+      // Fuzzy match count — title hits worth more, content hits capped
+      for (final pattern in patterns) {
+        score += pattern.allMatches(title).length * 2;
+        score += pattern.allMatches(content).length.clamp(0, 10) * 0.3;
       }
 
       // Content richness bonus (longer = more useful, capped)
@@ -178,6 +185,20 @@ ${sourceContext.toString().trim()}
         .where((r) => r.pageContent != null || r.snippet.isNotEmpty)
         .take(maxResults)
         .toList();
+  }
+
+  /// Simple suffix-stripping stemmer for fuzzy regex matching.
+  static String _stemWord(String word) {
+    if (word.endsWith('ies') && word.length > 4) return word.substring(0, word.length - 3);
+    if (word.endsWith('tion') && word.length > 5) return word.substring(0, word.length - 4);
+    if (word.endsWith('ment') && word.length > 5) return word.substring(0, word.length - 4);
+    if (word.endsWith('ness') && word.length > 5) return word.substring(0, word.length - 4);
+    if (word.endsWith('ing') && word.length > 5) return word.substring(0, word.length - 3);
+    if (word.endsWith('ed') && word.length > 4) return word.substring(0, word.length - 2);
+    if (word.endsWith('es') && word.length > 4) return word.substring(0, word.length - 2);
+    if (word.endsWith('ly') && word.length > 4) return word.substring(0, word.length - 2);
+    if (word.endsWith('s') && word.length > 3) return word.substring(0, word.length - 1);
+    return word;
   }
 
   // ============================================================

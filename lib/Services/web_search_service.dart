@@ -34,13 +34,15 @@ class WebSearchService {
   // Public API
   // ============================================================
 
-  /// Full search pipeline with text chunking:
-  /// 1. Search DuckDuckGo
+  /// Full search pipeline with text chunking and relevance filtering:
+  /// 1. Search DuckDuckGo (overfetch to allow filtering)
   /// 2. Fetch full page content (concurrency-limited)
   /// 3. Chunk content with recursive text splitter
+  /// 4. Rank by relevance and return top results
   Future<List<WebSearchResult>> searchAndExtract(String query,
-      {int maxResults = 5}) async {
-    final results = await searchAndFetch(query, maxResults: maxResults);
+      {int maxResults = 8}) async {
+    // Overfetch to build a pool for quality filtering
+    final results = await searchAndFetch(query, maxResults: maxResults + 4);
 
     for (final result in results) {
       if (result.pageContent != null && result.pageContent!.isNotEmpty) {
@@ -52,12 +54,12 @@ class WebSearchService {
       }
     }
 
-    return results;
+    return _rankByRelevance(results, query, maxResults);
   }
 
   /// Search DuckDuckGo + fetch page content (concurrency-limited).
   Future<List<WebSearchResult>> searchAndFetch(String query,
-      {int maxResults = 3}) async {
+      {int maxResults = 8}) async {
     final results = await search(query, maxResults: maxResults);
     if (results.isEmpty) return results;
 
@@ -134,6 +136,48 @@ Respond to the user query using the provided context, incorporating inline citat
 ${sourceContext.toString().trim()}
 </context>
 ''';
+  }
+
+  // ============================================================
+  // Relevance Ranking
+  // ============================================================
+
+  /// Scores and ranks results by query-term relevance, content quality,
+  /// and content length. Filters out empty results.
+  static List<WebSearchResult> _rankByRelevance(
+    List<WebSearchResult> results, String query, int maxResults) {
+    final queryTerms = query.toLowerCase().split(RegExp(r'\s+'))
+        .where((t) => t.length > 2).toList();
+    if (queryTerms.isEmpty) return results.take(maxResults).toList();
+
+    final scores = <WebSearchResult, double>{};
+    for (final r in results) {
+      double score = 0;
+      final text = '${r.title} ${r.pageContent ?? r.snippet}'.toLowerCase();
+
+      // Has real page content (not just snippet)
+      if (r.pageContent != null && r.pageContent!.isNotEmpty) score += 3;
+
+      // Query term presence in title + content
+      for (final term in queryTerms) {
+        if (r.title.toLowerCase().contains(term)) score += 2;
+        if (text.contains(term)) score += 1;
+      }
+
+      // Content richness bonus (longer = more useful, capped)
+      final len = r.pageContent?.length ?? r.snippet.length;
+      score += (len / 1000).clamp(0, 2).toDouble();
+
+      scores[r] = score;
+    }
+
+    final ranked = results.toList()
+      ..sort((a, b) => scores[b]!.compareTo(scores[a]!));
+
+    return ranked
+        .where((r) => r.pageContent != null || r.snippet.isNotEmpty)
+        .take(maxResults)
+        .toList();
   }
 
   // ============================================================

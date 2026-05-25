@@ -30,6 +30,28 @@ class WebSearchService {
   static const _retryBackoff = Duration(seconds: 2);
   static const _maxConcurrentFetches = 3;
 
+  /// Domains that are walled gardens, video/image-only, or content farms.
+  /// Filtered out before page fetching to save bandwidth and improve quality.
+  static const _blockedDomains = <String>{
+    // Walled gardens / hard to scrape
+    'facebook.com', 'instagram.com', 'tiktok.com',
+    'twitter.com', 'x.com', 'threads.net',
+    // Video/image — no extractable text
+    'youtube.com', 'youtu.be', 'vimeo.com',
+    'imgur.com', 'flickr.com', 'giphy.com',
+    // Content farms / low signal
+    'pinterest.com', 'pinterest.co', 'pin.it',
+    'quora.com',
+  };
+
+  static bool _isReliableSource(String url) {
+    final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+    for (final blocked in _blockedDomains) {
+      if (host == blocked || host.endsWith('.$blocked')) return false;
+    }
+    return true;
+  }
+
   // ============================================================
   // Public API
   // ============================================================
@@ -62,18 +84,27 @@ class WebSearchService {
   }
 
   /// Search DuckDuckGo + fetch page content (concurrency-limited).
+  /// Overfetches from DDG, filters unreliable sources, then fetches pages
+  /// for the top results only.
   Future<List<WebSearchResult>> searchAndFetch(String query,
       {int maxResults = 8}) async {
-    final results = await search(query, maxResults: maxResults);
+    // Overfetch to compensate for filtered sources
+    final results = await search(query, maxResults: maxResults + 4);
     if (results.isEmpty) return results;
+
+    // Drop unreliable sources, keep DDG relevance order
+    results.removeWhere((r) => !_isReliableSource(r.url));
+
+    // Only fetch pages for what we need
+    final toFetch = results.take(maxResults).toList();
 
     final semaphore = _Semaphore(_maxConcurrentFetches);
     await Future.wait(
-      results.map((r) => semaphore.run(() => _fetchPageContent(r))),
+      toFetch.map((r) => semaphore.run(() => _fetchPageContent(r))),
       eagerError: false,
     );
 
-    return results;
+    return toFetch;
   }
 
   /// Searches DuckDuckGo via WebView (primary) with HTTP fallback.

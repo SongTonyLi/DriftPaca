@@ -376,7 +376,6 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                         final isActive = _viewModel.webSearchEnabled &&
                             (_viewModel.isStreaming || _viewModel.isSearching);
                         final primary = Theme.of(context).colorScheme.primary;
-                        final glow = Color.lerp(primary, Colors.white, 0.45)!;
                         return IconButton(
                           icon: Icon(
                             _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
@@ -390,17 +389,11 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                           style: _viewModel.webSearchEnabled
                               ? IconButton.styleFrom(
                                   backgroundColor: isActive
-                                      ? Color.lerp(primary, glow, _searchPulseController.value)
+                                      ? Color.lerp(primary, Colors.white, 0.35 * _searchPulseController.value)
                                       : primary,
-                                  disabledBackgroundColor: isActive
-                                      ? Color.lerp(primary, glow, _searchPulseController.value)
-                                      : null,
-                                  disabledForegroundColor: isActive
-                                      ? Theme.of(context).colorScheme.onPrimary
-                                      : null,
                                 )
                               : null,
-                        onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {
+                        onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? () {} : () {
                           final needsConsent = _viewModel.toggleWebSearch();
                           if (needsConsent) {
                             showDialog(

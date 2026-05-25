@@ -380,6 +380,11 @@ class ChatPageViewModel extends ChangeNotifier {
       notifyListeners();
 
       _chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (thinking) {
+          _searchSegments.add(ThinkingSegment(thinking));
+          notifyListeners();
+        },
+        segmentsProvider: () => _searchSegments,
         onSearchStart: (query) {
           _searchSegments.add(SearchCardSegment(query: query));
           notifyListeners();

@@ -12,6 +12,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
 
@@ -19,7 +20,6 @@ class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
   final PermissionService _permissionService;
   final ImageService _imageService;
-
   ChatPageViewModel({
     required ChatProvider chatProvider,
     required PermissionService permissionService,
@@ -37,6 +37,14 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Whether web search is enabled for the next message
   bool _webSearchEnabled = false;
   bool get webSearchEnabled => _webSearchEnabled;
+
+  /// Whether a search orchestrator is currently running
+  bool _isSearching = false;
+  bool get isSearching => _isSearching;
+
+  /// Message segments for the current search-augmented response (ephemeral)
+  final List<MessageSegment> _searchSegments = [];
+  List<MessageSegment> get searchSegments => List.unmodifiable(_searchSegments);
 
   /// Whether the user has accepted the web search disclosure
   bool get webSearchConsented => Hive.box('settings').get('webSearchConsented', defaultValue: false);
@@ -57,6 +65,10 @@ class ChatPageViewModel extends ChangeNotifier {
     _webSearchEnabled = true;
     notifyListeners();
   }
+
+  // ============================================================
+  // Other Page State
+  // ============================================================
 
   /// Whether the next new chat should be incognito
   bool _incognitoRequested = false;
@@ -210,8 +222,9 @@ class ChatPageViewModel extends ChangeNotifier {
   // ChatProvider Actions (Delegated)
   // ============================================================
 
-  /// Cancels the current streaming response
+  /// Cancels the current streaming response and any active search
   void cancelStreaming() {
+    _isSearching = false;
     _chatProvider.cancelCurrentStreaming();
   }
 
@@ -323,8 +336,8 @@ class ChatPageViewModel extends ChangeNotifier {
     required Future<void> Function() onModelSelectionRequired,
     required void Function() onServerNotConfigured,
   }) async {
-    // Early return if nothing to send or currently streaming
-    if (!hasText || isStreaming) {
+    // Early return if nothing to send or currently streaming/searching
+    if (!hasText || isStreaming || _isSearching) {
       return false;
     }
 
@@ -360,26 +373,76 @@ class ChatPageViewModel extends ChangeNotifier {
     final message = _chatProvider.displayUserMessage(prompt, images: images);
     notifyListeners();
 
-    // Perform web search if enabled (user already sees their message)
-    String? searchContext;
-    Map<int, String>? sourceUrls;
+    // Set up web search callbacks if enabled
     if (_webSearchEnabled) {
-      try {
-        final searchService = WebSearchService();
-        final searchResults = await searchService.searchAndFetch(prompt);
-        if (searchResults.isNotEmpty) {
-          searchContext = WebSearchService.formatResultsAsContext(searchResults, prompt);
-          sourceUrls = {
-            for (var i = 0; i < searchResults.length; i++)
-              i + 1: searchResults[i].url,
-          };
-        }
-      } catch (_) {
-      }
+      _isSearching = true;
+      _searchSegments.clear();
+      notifyListeners();
+
+      _chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (thinking) {
+          _searchSegments.add(ThinkingSegment(thinking));
+          notifyListeners();
+        },
+        segmentsProvider: () => _searchSegments,
+        onSearchStart: (query) {
+          _searchSegments.add(SearchCardSegment(query: query));
+          notifyListeners();
+        },
+        onSearchQueryUpdate: (query) {
+          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+          if (card != null) {
+            card.query = query;
+            notifyListeners();
+          }
+        },
+        onSearchComplete: (results) {
+          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+          if (card != null) {
+            if (results.isEmpty) {
+              card.error = 'No results found';
+            } else {
+              card.urls = results
+                  .map((r) => SearchURLStatus(
+                        url: r.url,
+                        domain: Uri.tryParse(r.url)?.host ?? r.url,
+                        state: r.pageContent != null
+                            ? SearchURLState.success
+                            : SearchURLState.failed,
+                      ))
+                  .toList();
+              card.resultCount = results.length;
+              final contentParts = <String>[];
+              for (final r in results) {
+                final content = r.chunks != null && r.chunks!.isNotEmpty
+                    ? r.chunks!.take(2).join('\n')
+                    : (r.pageContent ?? r.snippet);
+                if (content.isNotEmpty) {
+                  contentParts.add('${Uri.tryParse(r.url)?.host ?? r.url}:\n$content');
+                }
+              }
+              card.extractedContent = contentParts.join('\n\n');
+            }
+            card.isComplete = true;
+            _searchSegments.add(AnswerSegment());
+            notifyListeners();
+          }
+        },
+      );
     }
 
     // Persist message and start the AI response stream
-    await _chatProvider.sendPrompt(message, searchContext: searchContext, sourceUrls: sourceUrls);
+    try {
+      await _chatProvider.sendPrompt(message,
+          searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
+    } finally {
+      // Always clean up search state, even on error
+      if (_webSearchEnabled) {
+        _chatProvider.clearWebSearchCallbacks();
+        _isSearching = false;
+        notifyListeners();
+      }
+    }
 
     // Generate title for new chats
     if (isNewChat) {

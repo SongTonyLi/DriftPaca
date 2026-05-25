@@ -13,6 +13,10 @@ import 'package:llamaseek/Extensions/code_syntax_highlighter.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:llamaseek/Utils/search_thinking_utils.dart';
+
+import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Widgets/search_card.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
@@ -23,17 +27,19 @@ class ChatBubble extends StatelessWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final bool animate;
+  final List<MessageSegment> searchSegments;
 
   const ChatBubble({
     super.key,
     required this.message,
     this.isStreaming = false,
     this.animate = false,
+    this.searchSegments = const [],
   });
 
   @override
   Widget build(BuildContext context) {
-    return _ChatBubbleBody(message: message, isStreaming: isStreaming, animate: animate);
+    return _ChatBubbleBody(message: message, isStreaming: isStreaming, animate: animate, searchSegments: searchSegments);
   }
 }
 
@@ -41,8 +47,9 @@ class _ChatBubbleBody extends StatelessWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final bool animate;
+  final List<MessageSegment> searchSegments;
 
-  const _ChatBubbleBody({required this.message, required this.isStreaming, this.animate = false});
+  const _ChatBubbleBody({required this.message, required this.isStreaming, this.animate = false, this.searchSegments = const []});
 
   static final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
     [
@@ -111,6 +118,7 @@ class _ChatBubbleBody extends StatelessWidget {
               message: message,
               isStreaming: isStreaming,
               buildMarkdown: _buildMarkdown,
+              searchSegments: searchSegments,
             ),
         ],
       ),
@@ -395,11 +403,13 @@ class _AssistantBubble extends StatefulWidget {
   final OllamaMessage message;
   final bool isStreaming;
   final Widget Function(BuildContext, String, {bool selectable}) buildMarkdown;
+  final List<MessageSegment> searchSegments;
 
   const _AssistantBubble({
     required this.message,
     required this.isStreaming,
     required this.buildMarkdown,
+    this.searchSegments = const [],
   });
 
   @override
@@ -422,13 +432,46 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   static const double _baseCharsPerFrame = 0.7;
   static const int _catchUpThreshold = 80;
 
+  /// Returns the thinking text to display for this bubble.
+  /// When search segments are shown, only the model thinking portion is shown
+  /// since search thinking is rendered separately above.
+  String _displayThinking(String? thinking) {
+    if (thinking == null || thinking.isEmpty) return '';
+    // Strip search data header if present (both live and history)
+    var clean = stripSearchData(thinking);
+    if (widget.searchSegments.isNotEmpty || thinking.startsWith('<!--SEARCH_DATA:')) {
+      // If no separator exists, the thinking is only Call 1 thinking which
+      // is already rendered as a ThinkingSegment in searchWidgets. Return
+      // empty to avoid duplication.
+      if (!clean.contains(searchThinkingSeparator)) return '';
+      return modelThinkingFromCombined(clean);
+    }
+    return clean;
+  }
+
+  /// Gets search segments: live from ViewModel during streaming,
+  /// or deserialized from thinking field for history messages.
+  List<MessageSegment> _getSearchSegments() {
+    // Live segments from ViewModel (during active search/streaming)
+    if (widget.searchSegments.isNotEmpty) return widget.searchSegments;
+
+    // Try to deserialize from persisted thinking field
+    final thinking = widget.message.thinking;
+    if (thinking != null && thinking.isNotEmpty) {
+      final decoded = decodeSearchSegments(thinking);
+      if (decoded != null) return decoded;
+    }
+    return const [];
+  }
+
   @override
   void didUpdateWidget(_AssistantBubble old) {
     super.didUpdateWidget(old);
+    final nextThinking = _displayThinking(widget.message.thinking);
     if (old.isStreaming && !widget.isStreaming) {
       _wasStreaming = true;
       _targetContent = widget.message.content;
-      _targetThinking = widget.message.thinking ?? '';
+      _targetThinking = nextThinking;
       _revealedLength = _targetContent.length;
       _revealedThinkingLength = _targetThinking.length;
       _revealProgress = _revealedLength.toDouble();
@@ -436,11 +479,20 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       _stopRevealTicker();
     } else if (widget.isStreaming) {
       _targetContent = widget.message.content;
-      _targetThinking = widget.message.thinking ?? '';
+      _targetThinking = nextThinking;
+      // Clamp reveal progress if content was shortened (e.g., WEBSEARCH clear)
+      if (_revealedLength > _targetContent.length) {
+        _revealedLength = _targetContent.length;
+        _revealProgress = _revealedLength.toDouble();
+      }
+      if (_revealedThinkingLength > _targetThinking.length) {
+        _revealedThinkingLength = _targetThinking.length;
+        _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+      }
       _ensureRevealTicker();
     } else {
       _targetContent = widget.message.content;
-      _targetThinking = widget.message.thinking ?? '';
+      _targetThinking = nextThinking;
       _revealedLength = _targetContent.length;
       _revealedThinkingLength = _targetThinking.length;
       _revealProgress = _revealedLength.toDouble();
@@ -548,19 +600,45 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     );
   }
 
+  /// Builds search segment widgets (thinking blocks + search cards) from a list of segments.
+  List<Widget> _buildSearchSegmentsFrom(List<MessageSegment> segments) {
+    final widgets = <Widget>[];
+    for (final segment in segments) {
+      switch (segment) {
+        case ThinkingSegment():
+          if (segment.text.isEmpty) continue;
+          widgets.add(ThinkBlockWidget(
+            content: segment.text,
+            isComplete: true,
+            isStreaming: false,
+          ));
+        case SearchCardSegment():
+          widgets.add(SearchCard(segment: segment));
+        case AnswerSegment():
+          break;
+      }
+    }
+    return widgets;
+  }
+
   Widget _buildMessageContent(BuildContext context) {
     final content = widget.isStreaming
         ? _targetContent.substring(0, _revealedLength)
         : widget.message.content;
 
-    if (widget.message.thinking != null && widget.message.thinking!.isNotEmpty) {
+    final segments = _getSearchSegments();
+    final searchWidgets = _buildSearchSegmentsFrom(segments);
+
+    final displayThinking = _displayThinking(widget.message.thinking);
+    if (displayThinking.isNotEmpty) {
       final thinkingContent = widget.isStreaming
           ? _targetThinking.substring(0, _revealedThinkingLength)
-          : widget.message.thinking!;
+          : displayThinking;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildModelLabel(context),
+          ...searchWidgets,
           ThinkBlockWidget(
             content: thinkingContent,
             isComplete: content.isNotEmpty,
@@ -581,6 +659,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildModelLabel(context),
+          ...searchWidgets,
           ThinkBlockWidget(
             content: parsed.thinkContent,
             isComplete: parsed.isThinkingComplete,
@@ -598,7 +677,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildModelLabel(context),
-        _buildContent(context, content),
+        ...searchWidgets,
+        if (content.isNotEmpty) _buildContent(context, content),
       ],
     );
   }
@@ -947,6 +1027,20 @@ class _InlineLatexSyntax extends md.InlineSyntax {
   // No restrictive lookahead — allows LaTeX inside bold, before dashes, etc.
   _InlineLatexSyntax() : super(r'\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$', startCharacter: 0x24);
 
+  /// Math operators that unambiguously indicate LaTeX, not currency.
+  /// Excludes `*` (used in markdown bold **) and `-` (used in prose).
+  /// Currency: "$514 billion" — digits + words, no LaTeX operators.
+  /// LaTeX: "$1+1=2$" — has +, =, ^, etc.
+  static final _mathOperatorPattern = RegExp(r'[+=^_\\{}<>]|(?<!\*)\*(?!\*)');
+
+  /// Currency: starts with digit and contains NO LaTeX operators.
+  static bool _isCurrency(String content) {
+    if (!RegExp(r'^\s*[\d,.]').hasMatch(content)) return false;
+    // Strip markdown bold markers before checking for math operators
+    final stripped = content.replaceAll('**', '');
+    return !_mathOperatorPattern.hasMatch(stripped);
+  }
+
   @override
   bool onMatch(md.InlineParser parser, Match match) {
     final displayContent = match.group(1);
@@ -956,6 +1050,13 @@ class _InlineLatexSyntax extends md.InlineSyntax {
     // MUST always return true when regex matched — returning false
     // without consuming causes InlineParser to loop infinitely.
     if (equation == null || equation.isEmpty) {
+      parser.addNode(md.Text(match.group(0)!));
+      return true;
+    }
+
+    // Guard: inline $...$ that looks like currency (starts with digit, no math operators).
+    // Display $$...$$ is always treated as LaTeX (currency never uses $$).
+    if (inlineContent != null && _isCurrency(equation)) {
       parser.addNode(md.Text(match.group(0)!));
       return true;
     }

@@ -14,6 +14,23 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
+import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Utils/search_thinking_utils.dart';
+import 'package:llamaseek/Services/web_search_service.dart';
+
+String _webSearchInstruction() {
+  final today = DateTime.now().toIso8601String().substring(0, 10);
+  return '''You have web search access. ALWAYS search unless the answer is a universal truth that never changes (math, physics constants, basic definitions).
+
+If you need to search, your ENTIRE output must be ONLY:
+WEBSEARCH: <query>
+
+Nothing else. No explanation, no preamble, no other text. Just that single line.
+
+You MUST search for: numbers, statistics, prices, dates, current events, news, recent developments, product info, people, companies, forecasts, rankings, comparisons.
+
+Today's date: $today.''';
+}
 
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
@@ -23,6 +40,38 @@ class ChatProvider extends ChangeNotifier {
 
   ValueListenable? _settingsListenable;
   VoidCallback? _settingsCallback;
+
+  /// Callbacks for web search UI updates. Set by ViewModel before sendPrompt.
+  void Function(String thinking)? _webSearchThinkingCallback;
+  void Function(String query)? _webSearchCallback;
+  void Function(String query)? _webSearchQueryUpdateCallback;
+  void Function(List<WebSearchResult> results)? _webSearchCompleteCallback;
+  List<MessageSegment> Function()? _webSearchSegmentsProvider;
+
+  void setWebSearchCallbacks({
+    required void Function(String thinking) onSearchThinking,
+    required void Function(String query) onSearchStart,
+    required void Function(String query) onSearchQueryUpdate,
+    required void Function(List<WebSearchResult> results) onSearchComplete,
+    required List<MessageSegment> Function() segmentsProvider,
+  }) {
+    _webSearchThinkingCallback = onSearchThinking;
+    _webSearchCallback = onSearchStart;
+    _webSearchQueryUpdateCallback = onSearchQueryUpdate;
+    _webSearchCompleteCallback = onSearchComplete;
+    _webSearchSegmentsProvider = segmentsProvider;
+  }
+
+  void clearWebSearchCallbacks() {
+    _webSearchThinkingCallback = null;
+    _webSearchCallback = null;
+    _webSearchQueryUpdateCallback = null;
+    _webSearchCompleteCallback = null;
+    _webSearchSegmentsProvider = null;
+  }
+
+  /// Source URLs intercepted during WEBSEARCH stream interception.
+  Map<int, String>? _interceptedSourceUrls;
 
   List<OllamaMessage> _messages = [];
   List<OllamaMessage> get messages => _messages;
@@ -243,8 +292,7 @@ class ChatProvider extends ChangeNotifier {
   /// Persists the user message and starts the AI response stream.
   /// Call [displayUserMessage] first to show the bubble immediately.
   Future<void> sendPrompt(OllamaMessage prompt, {
-    String? searchContext,
-    Map<int, String>? sourceUrls,
+    int searchAttemptsRemaining = 0,
   }) async {
     final associatedChat = currentChat!;
 
@@ -252,10 +300,10 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.addMessage(prompt, chat: associatedChat);
 
     // Initialize the chat stream with the messages in the chat
-    await _initializeChatStream(associatedChat, searchContext: searchContext, sourceUrls: sourceUrls);
+    await _initializeChatStream(associatedChat, searchAttemptsRemaining: searchAttemptsRemaining);
   }
 
-  Future<void> _initializeChatStream(OllamaChat associatedChat, {String? searchContext, Map<int, String>? sourceUrls}) async {
+  Future<void> _initializeChatStream(OllamaChat associatedChat, {int searchAttemptsRemaining = 0}) async {
     // Send a notification to inform generation begin
     NotificationCenter().postNotification(NotificationNames.generationBegin);
 
@@ -279,12 +327,14 @@ class ChatProvider extends ChangeNotifier {
 
     // Stream the Ollama message
     OllamaMessage? ollamaMessage;
+    _interceptedSourceUrls = null;
 
     try {
-      ollamaMessage = await _streamOllamaMessage(associatedChat, searchContext: searchContext);
-      // Replace [N] citations with clickable markdown links
-      if (ollamaMessage != null && sourceUrls != null && sourceUrls.isNotEmpty) {
-        ollamaMessage.content = replaceCitationsWithLinks(ollamaMessage.content, sourceUrls);
+      ollamaMessage = await _streamOllamaMessage(associatedChat, searchAttemptsRemaining: searchAttemptsRemaining);
+      // Replace [N] citations with clickable markdown links using intercepted source URLs
+      if (ollamaMessage != null && _interceptedSourceUrls != null && _interceptedSourceUrls!.isNotEmpty) {
+        ollamaMessage.content = replaceCitationsWithLinks(ollamaMessage.content, _interceptedSourceUrls!);
+        _interceptedSourceUrls = null;
       }
     } on OllamaException catch (error) {
       _chatErrors[associatedChat.id] = error;
@@ -292,7 +342,9 @@ class ChatProvider extends ChangeNotifier {
       _chatErrors[associatedChat.id] = OllamaException(
         'Network connection lost. Check your server address or internet connection.',
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('⚠️ [ChatProvider] Unexpected error in stream: $error');
+      debugPrint('⚠️ [ChatProvider] Stack trace:\n$stackTrace');
       _chatErrors[associatedChat.id] = OllamaException("Something went wrong.");
     } finally {
       // Remove the chat from the active chat streams
@@ -302,6 +354,16 @@ class ChatProvider extends ChangeNotifier {
 
     // Save the Ollama message to the database
     if (ollamaMessage != null) {
+      // Persist search segments into the thinking field so they survive reload
+      if (_webSearchSegmentsProvider != null) {
+        final segments = _webSearchSegmentsProvider!();
+        if (segments.isNotEmpty) {
+          final encoded = encodeSearchSegments(segments);
+          if (encoded.isNotEmpty) {
+            ollamaMessage.thinking = '$encoded${ollamaMessage.thinking ?? ''}';
+          }
+        }
+      }
       await _databaseService.addMessage(ollamaMessage, chat: associatedChat);
 
       // Trigger async memory update (fire-and-forget)
@@ -323,17 +385,18 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext}) async {
+  Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking, int searchAttemptsRemaining = 0, OllamaMessage? reuseMessage}) async {
     if (_messages.isEmpty) return null;
 
-    // If search context is provided, inject it as a system message before the conversation
-    List<OllamaMessage> messagesToSend = _messages;
-    if (searchContext != null && searchContext.isNotEmpty) {
-      messagesToSend = [
-        OllamaMessage(searchContext, role: OllamaMessageRole.system),
-        ..._messages,
-      ];
-    }
+    final searchThinking = preThinking?.trim();
+    var modelThinkingBuffer = '';
+
+    // For Call 2+ (reuseMessage), exclude the empty assistant message from
+    // Call 1. Sending an empty assistant response confuses models into
+    // thinking they already answered, producing garbage or truncated output.
+    List<OllamaMessage> messagesToSend = reuseMessage != null
+        ? _messages.where((m) => m != reuseMessage).toList()
+        : _messages;
 
     // Fetch memories for injection — incognito chats use conv memory but skip agent memory
     final conversationMemory = await _memoryService.getConversationMemory(associatedChat.id);
@@ -341,18 +404,57 @@ class ChatProvider extends ChangeNotifier {
         ? null
         : await _memoryService.getAgentMemory();
 
-    // Select relevant topics/ephemeral for this conversation
+    // Select relevant topics/ephemeral for this conversation.
+    // Skip relevantContext for ALL web search calls — Call 1 (WEBSEARCH
+    // decision) and Call 2+ (answering with search results). Injecting old
+    // agent memory confuses the model and leaks unrelated content.
     String relevantContext = '';
-    if (!associatedChat.isIncognito) {
+    final isWebSearchFlow = searchAttemptsRemaining > 0 || searchContext != null;
+    if (!associatedChat.isIncognito && !isWebSearchFlow) {
       relevantContext = await _memoryService.selectRelevantContext(
         messagesToSend,
         conversationSummary: conversationMemory?.summary,
       );
     }
 
+    // Build the system prompt for this call:
+    // - Call 1 (no search context): inject WEBSEARCH instruction
+    // - Call 2 (has search context): inject search results into system prompt
+    //   so they become part of the single system message (not a separate one
+    //   that models may ignore)
+    OllamaChat streamChat = associatedChat;
+    final origPrompt = associatedChat.systemPrompt ?? '';
+    if (searchAttemptsRemaining > 0 && searchContext == null) {
+      // Call 1: WEBSEARCH instruction
+      streamChat = OllamaChat(
+        id: associatedChat.id,
+        model: associatedChat.model,
+        title: associatedChat.title,
+        systemPrompt: origPrompt.isEmpty
+            ? _webSearchInstruction()
+            : '$origPrompt\n\n${_webSearchInstruction()}',
+        options: associatedChat.options,
+        isIncognito: associatedChat.isIncognito,
+      );
+    } else if (searchContext != null && searchContext.isNotEmpty) {
+      // Call 2+: inject search results into the system prompt so they're
+      // part of the single system message (avoids dual-system-message issue
+      // where models ignore the second system message).
+      streamChat = OllamaChat(
+        id: associatedChat.id,
+        model: associatedChat.model,
+        title: associatedChat.title,
+        systemPrompt: origPrompt.isEmpty
+            ? searchContext
+            : '$origPrompt\n\n$searchContext',
+        options: associatedChat.options,
+        isIncognito: associatedChat.isIncognito,
+      );
+    }
+
     final stream = _ollamaService.chatStream(
       messagesToSend,
-      chat: associatedChat,
+      chat: streamChat,
       conversationMemory: conversationMemory,
       profile: profile,
       relevantContext: relevantContext,
@@ -361,6 +463,13 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
     final notifyThrottle = Stopwatch()..start();
+
+    // Mid-stream WEBSEARCH detection: treat WEBSEARCH as a tool call.
+    // When detected, content tokens become the search query (shown in the
+    // search card UI) instead of the message body.
+    final bool canSearch = searchAttemptsRemaining > 0 && searchContext == null;
+    bool websearchDetected = false;
+    String websearchBuffer = '';
 
     await for (receivedMessage in stream) {
       // If the chat id is not in the active chat streams, it means the stream
@@ -378,25 +487,86 @@ class ChatProvider extends ChangeNotifier {
       }
 
       if (streamingMessage == null) {
-        // Keep the first received message to add the content of the following messages
-        streamingMessage = receivedMessage;
+        if (reuseMessage != null) {
+          streamingMessage = reuseMessage;
+          streamingMessage.content = '';
 
-        // Update the active chat streams key with the ollama message
-        // to be able to show the stream in the chat.
-        // We also use this when the user switches between chats while streaming.
-        _activeChatStreams[associatedChat.id] = streamingMessage;
+          if (searchThinking != null && searchThinking.isNotEmpty) {
+            final initialThinking = receivedMessage.thinking ?? '';
+            if (initialThinking.isNotEmpty) {
+              modelThinkingBuffer = initialThinking;
+              streamingMessage.thinking = mergeSearchThinking(
+                searchThinking: searchThinking,
+                modelThinking: modelThinkingBuffer,
+              );
+            } else {
+              streamingMessage.thinking = searchThinking;
+            }
+          }
 
-        // Be sure the user is in the same chat while the initial message is received
-        if (associatedChat.id == currentChat?.id) {
-          _messages.add(streamingMessage);
+          _activeChatStreams[associatedChat.id] = streamingMessage;
+          notifyListeners();
+        } else {
+          streamingMessage = receivedMessage;
+
+          if (searchThinking != null && searchThinking.isNotEmpty) {
+            final initialThinking = receivedMessage.thinking ?? '';
+            if (initialThinking.isNotEmpty) {
+              modelThinkingBuffer = initialThinking;
+              streamingMessage.thinking = mergeSearchThinking(
+                searchThinking: searchThinking,
+                modelThinking: modelThinkingBuffer,
+              );
+            } else {
+              streamingMessage.thinking = searchThinking;
+            }
+          }
+
+          _activeChatStreams[associatedChat.id] = streamingMessage;
+
+          if (associatedChat.id == currentChat?.id) {
+            _messages.add(streamingMessage);
+          }
+
+          notifyListeners();
+        }
+      } else {
+        // Accumulate thinking tokens
+        if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
+          if (searchThinking != null && searchThinking.isNotEmpty) {
+            modelThinkingBuffer += receivedMessage.thinking!;
+            streamingMessage.thinking = mergeSearchThinking(
+              searchThinking: searchThinking,
+              modelThinking: modelThinkingBuffer,
+            );
+          } else {
+            streamingMessage.thinking = (streamingMessage.thinking ?? '') + receivedMessage.thinking!;
+          }
         }
 
-        notifyListeners();
-      } else {
-        streamingMessage.content += receivedMessage.content;
-        // Accumulate thinking tokens alongside content
-        if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
-          streamingMessage.thinking = (streamingMessage.thinking ?? '') + receivedMessage.thinking!;
+        // Accumulate content — with mid-stream WEBSEARCH detection
+        if (websearchDetected) {
+          // Already detected: accumulate query tokens, don't show as content
+          websearchBuffer += receivedMessage.content;
+          final query = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
+          _webSearchQueryUpdateCallback?.call(query);
+        } else {
+          streamingMessage.content += receivedMessage.content;
+
+          // Check if accumulated content starts with WEBSEARCH:
+          if (canSearch && receivedMessage.content.isNotEmpty) {
+            final trimmed = streamingMessage.content.trimLeft();
+            if (trimmed.toUpperCase().startsWith('WEBSEARCH:')) {
+              websearchDetected = true;
+              websearchBuffer = streamingMessage.content;
+              streamingMessage.content = '';
+              final queryPart = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
+              // Emit Call 1 thinking as a segment before the search card
+              final call1Think = streamingMessage.thinking ?? '';
+              if (call1Think.isNotEmpty) _webSearchThinkingCallback?.call(call1Think);
+              _webSearchCallback?.call(queryPart);
+            }
+          }
         }
 
         // Throttle UI updates during streaming (~30fps)
@@ -405,6 +575,88 @@ class ChatProvider extends ChangeNotifier {
           notifyListeners();
         }
       }
+    }
+
+    // --- POST-STREAM: execute search or handle thinking fallback ---
+    debugPrint('🔍 [SEARCH] Stream ended. websearchDetected=$websearchDetected, content=${streamingMessage?.content.length ?? 0} chars');
+
+    // Thinking fallback: model put search intent in thinking but zero content
+    if (!websearchDetected && canSearch && streamingMessage != null) {
+      String? fallbackQuery;
+      final thinking = streamingMessage.thinking?.trim() ?? '';
+      debugPrint('🔍 [SEARCH] Thinking fallback check: thinking=${thinking.length} chars, first 200: "${thinking.substring(0, thinking.length.clamp(0, 200))}"');
+      // Check thinking for WEBSEARCH: pattern
+      for (final line in thinking.split('\n')) {
+        if (line.trim().toUpperCase().startsWith('WEBSEARCH:')) {
+          fallbackQuery = line.trim().substring('WEBSEARCH:'.length).trim();
+          break;
+        }
+      }
+      // Extract quoted query from thinking (e.g. 'query "Taiwan GDP 2025"')
+      if (fallbackQuery == null && streamingMessage.content.trim().isEmpty && thinking.isNotEmpty) {
+        final queryMatch = RegExp(r'''(?:query|search)[^"']*["']([^"']+)["']''', caseSensitive: false).firstMatch(thinking);
+        if (queryMatch != null) {
+          fallbackQuery = queryMatch.group(1)!.trim();
+        }
+      }
+      if (fallbackQuery != null && fallbackQuery.isNotEmpty) {
+        websearchDetected = true;
+        websearchBuffer = 'WEBSEARCH: $fallbackQuery';
+        streamingMessage.content = '';
+        final call1Think = streamingMessage.thinking ?? '';
+        if (call1Think.isNotEmpty) _webSearchThinkingCallback?.call(call1Think);
+        _webSearchCallback?.call(fallbackQuery);
+        notifyListeners();
+      }
+    }
+
+    // Execute web search if WEBSEARCH was detected (mid-stream or thinking fallback)
+    if (websearchDetected && streamingMessage != null) {
+      var searchQuery = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
+      // Clean query
+      searchQuery = searchQuery.replaceAll(RegExp(r'\[.*?\]'), '').trim();
+      final words = searchQuery.split(RegExp(r'\s+'));
+      if (words.length > 10) searchQuery = words.take(10).join(' ');
+      final call1Thinking = streamingMessage.thinking ?? '';
+      debugPrint('🔍 [SEARCH] Executing web search for: "$searchQuery"');
+
+      // Update search card with final query
+      _webSearchQueryUpdateCallback?.call(searchQuery);
+      notifyListeners();
+
+      final searchService = WebSearchService();
+      final searchResults = await searchService.searchAndExtract(searchQuery);
+      _webSearchCompleteCallback?.call(searchResults);
+
+      if (searchResults.isEmpty) {
+        streamingMessage.content = 'I searched the web for "$searchQuery" but found no results. Let me answer based on what I know.';
+        _activeChatStreams[associatedChat.id] = streamingMessage;
+        notifyListeners();
+        return streamingMessage;
+      }
+
+      // Build search context and extract source URLs
+      final newSearchContext = WebSearchService.formatResultsAsContext(searchResults);
+      _interceptedSourceUrls = {};
+      final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
+      for (final match in urlPattern.allMatches(newSearchContext)) {
+        final id = int.tryParse(match.group(1)!);
+        final url = match.group(2);
+        if (id != null && url != null) _interceptedSourceUrls![id] = url;
+      }
+
+      // Recursive call: re-stream with search context, reusing same message
+      debugPrint('🔍 [SEARCH] Starting Call 2 with ${newSearchContext.length} chars of context');
+      _activeChatStreams[associatedChat.id] = null;
+      notifyListeners();
+
+      return await _streamOllamaMessage(
+        associatedChat,
+        searchContext: newSearchContext,
+        preThinking: call1Thinking.isNotEmpty ? call1Thinking : preThinking,
+        searchAttemptsRemaining: searchAttemptsRemaining - 1,
+        reuseMessage: streamingMessage,
+      );
     }
 
     // Flush any throttled content to UI
@@ -511,22 +763,30 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  /// Replaces [N] citations in content with clickable markdown links.
+  /// Replaces [N] and 【N】 citations in content with clickable markdown links.
   ///
-  /// Uses negative lookahead `(?!\()` so that `[N]` already followed by
-  /// `(url)` (i.e. an existing markdown link) is not double-wrapped.
+  /// Handles both standard brackets [1] and fullwidth brackets 【1】
+  /// (some models like qwen/deepseek output fullwidth brackets for citations).
   ///
-  /// Output format: `[[N]](url)` — CommonMark parses `[N]` as the link
-  /// text (with visible brackets) and `(url)` as the destination.
+  /// Uses negative lookahead `(?!\()` so existing markdown links aren't double-wrapped.
   @visibleForTesting
+  static const _superscriptDigits = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+
+  static String _toSuperscript(int n) {
+    return n.toString().split('').map((c) => _superscriptDigits[int.parse(c)]).join('');
+  }
+
   static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
+    // Match both [N] and 【N】 citation formats (not already part of a markdown link)
     return content.replaceAllMapped(
-      RegExp(r'\[(\d+)\](?!\()'),
+      RegExp(r'(?:\[(\d+)\]|\u3010(\d+)\u3011)(?!\()'),
       (match) {
-        final id = int.tryParse(match.group(1)!);
+        final id = int.tryParse(match.group(1) ?? match.group(2) ?? '');
         if (id != null && sourceUrls.containsKey(id)) {
           final url = sourceUrls[id]!;
-          return '[[$id]]($url)';
+          // Use superscript numbers to avoid nested bracket issues and
+          // dollar-sign math mode conflicts in the markdown renderer.
+          return '[${_toSuperscript(id)}]($url)';
         }
         return match.group(0)!;
       },

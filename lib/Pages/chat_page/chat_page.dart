@@ -18,7 +18,7 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin {
   static const double _composerHorizontalInset = 6.0;
   static const double _footerSpacing = 12.0;
   static const double _collapsedComposerPadding = 56.0;
@@ -30,6 +30,9 @@ class _ChatPageState extends State<ChatPage> {
 
   // ViewModel reference
   late final ChatPageViewModel _viewModel;
+
+  // Search button pulse animation
+  late final AnimationController _searchPulseController;
 
   // Welcome screen animation state
   var _crossFadeState = CrossFadeState.showFirst;
@@ -46,10 +49,15 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     _viewModel = context.read<ChatPageViewModel>();
     _inputFocusNode.addListener(_onInputFocusChange);
+    _searchPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
   }
 
   @override
   void dispose() {
+    _searchPulseController.dispose();
     _inputFocusNode.removeListener(_onInputFocusChange);
     _inputFocusNode.dispose();
     super.dispose();
@@ -82,6 +90,16 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     // Subscribe to ViewModel changes
     context.watch<ChatPageViewModel>();
+
+    // Drive the search-button pulse animation
+    final shouldPulse = _viewModel.webSearchEnabled &&
+        (_viewModel.isStreaming || _viewModel.isSearching);
+    if (shouldPulse && !_searchPulseController.isAnimating) {
+      _searchPulseController.repeat(reverse: true);
+    } else if (!shouldPulse && _searchPulseController.isAnimating) {
+      _searchPulseController.stop();
+      _searchPulseController.value = 0.0;
+    }
 
     final isIncognito = _isIncognito;
 
@@ -352,49 +370,62 @@ class _ChatPageState extends State<ChatPage> {
                       onPressed: _handleAttachmentButton,
                     ),
                     const SizedBox(width: 2),
-                    IconButton(
-                      icon: Icon(
-                        _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
-                        size: 20,
-                        color: _viewModel.webSearchEnabled
-                            ? Theme.of(context).colorScheme.onPrimary
-                            : (_isIncognito ? _incognitoText : null),
-                      ),
-                      padding: const EdgeInsets.all(6),
-                      constraints: const BoxConstraints(),
-                      style: _viewModel.webSearchEnabled
-                          ? IconButton.styleFrom(
-                              backgroundColor: Theme.of(context).colorScheme.primary,
-                            )
-                          : null,
-                      onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {
-                        final needsConsent = _viewModel.toggleWebSearch();
-                        if (needsConsent) {
-                          showDialog(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('Web Search'),
-                              content: const Text(
-                                'When enabled, your search queries will be sent to DuckDuckGo (duckduckgo.com) to retrieve web results. Web page content may also be fetched to provide context for AI responses.\n\nNo data is collected by DriftPaca.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(ctx),
-                                  child: const Text('Cancel'),
-                                ),
-                                FilledButton(
-                                  onPressed: () {
-                                    _viewModel.acceptWebSearchConsent();
-                                    Navigator.pop(ctx);
-                                  },
-                                  child: const Text('Enable'),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
+                    AnimatedBuilder(
+                      animation: _searchPulseController,
+                      builder: (context, child) {
+                        final isActive = _viewModel.webSearchEnabled &&
+                            (_viewModel.isStreaming || _viewModel.isSearching);
+                        return Opacity(
+                          opacity: isActive
+                              ? 0.3 + 0.7 * (1.0 - _searchPulseController.value)
+                              : 1.0,
+                          child: child,
+                        );
                       },
-                      tooltip: 'Web Search',
+                      child: IconButton(
+                        icon: Icon(
+                          _viewModel.webSearchEnabled ? Icons.travel_explore : Icons.travel_explore_outlined,
+                          size: 20,
+                          color: _viewModel.webSearchEnabled
+                              ? Theme.of(context).colorScheme.onPrimary
+                              : (_isIncognito ? _incognitoText : null),
+                        ),
+                        padding: const EdgeInsets.all(6),
+                        constraints: const BoxConstraints(),
+                        style: _viewModel.webSearchEnabled
+                            ? IconButton.styleFrom(
+                                backgroundColor: Theme.of(context).colorScheme.primary,
+                              )
+                            : null,
+                        onPressed: (_viewModel.isStreaming || _viewModel.isSearching) ? null : () {
+                          final needsConsent = _viewModel.toggleWebSearch();
+                          if (needsConsent) {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Web Search'),
+                                content: const Text(
+                                  'When enabled, your search queries will be sent to DuckDuckGo (duckduckgo.com) to retrieve web results. Web page content may also be fetched to provide context for AI responses.\n\nNo data is collected by DriftPaca.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () {
+                                      _viewModel.acceptWebSearchConsent();
+                                      Navigator.pop(ctx);
+                                    },
+                                    child: const Text('Enable'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+                        },
+                        tooltip: 'Web Search',
+                      ),
                     ),
                     Expanded(
                       child: IgnorePointer(

@@ -405,12 +405,12 @@ class ChatProvider extends ChangeNotifier {
         : await _memoryService.getAgentMemory();
 
     // Select relevant topics/ephemeral for this conversation.
-    // Skip relevantContext for ALL web search calls — Call 1 (WEBSEARCH
-    // decision) and Call 2+ (answering with search results). Injecting old
-    // agent memory confuses the model and leaks unrelated content.
+    // Skip relevantContext only for Call 2+ (answering with search results)
+    // where injecting old memory alongside fresh search context is confusing.
+    // Call 1 (WEBSEARCH decision) still needs memory so the model can answer
+    // from existing knowledge or make an informed search decision.
     String relevantContext = '';
-    final isWebSearchFlow = searchAttemptsRemaining > 0 || searchContext != null;
-    if (!associatedChat.isIncognito && !isWebSearchFlow) {
+    if (!associatedChat.isIncognito && searchContext == null) {
       relevantContext = await _memoryService.selectRelevantContext(
         messagesToSend,
         conversationSummary: conversationMemory?.summary,

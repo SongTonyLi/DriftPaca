@@ -14,6 +14,7 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
+import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
 
@@ -41,24 +42,32 @@ class ChatProvider extends ChangeNotifier {
   VoidCallback? _settingsCallback;
 
   /// Callbacks for web search UI updates. Set by ViewModel before sendPrompt.
+  void Function(String thinking)? _webSearchThinkingCallback;
   void Function(String query)? _webSearchCallback;
   void Function(String query)? _webSearchQueryUpdateCallback;
   void Function(List<WebSearchResult> results)? _webSearchCompleteCallback;
+  List<MessageSegment> Function()? _webSearchSegmentsProvider;
 
   void setWebSearchCallbacks({
+    required void Function(String thinking) onSearchThinking,
     required void Function(String query) onSearchStart,
     required void Function(String query) onSearchQueryUpdate,
     required void Function(List<WebSearchResult> results) onSearchComplete,
+    required List<MessageSegment> Function() segmentsProvider,
   }) {
+    _webSearchThinkingCallback = onSearchThinking;
     _webSearchCallback = onSearchStart;
     _webSearchQueryUpdateCallback = onSearchQueryUpdate;
     _webSearchCompleteCallback = onSearchComplete;
+    _webSearchSegmentsProvider = segmentsProvider;
   }
 
   void clearWebSearchCallbacks() {
+    _webSearchThinkingCallback = null;
     _webSearchCallback = null;
     _webSearchQueryUpdateCallback = null;
     _webSearchCompleteCallback = null;
+    _webSearchSegmentsProvider = null;
   }
 
   /// Source URLs intercepted during WEBSEARCH stream interception.
@@ -345,6 +354,16 @@ class ChatProvider extends ChangeNotifier {
 
     // Save the Ollama message to the database
     if (ollamaMessage != null) {
+      // Persist search segments into the thinking field so they survive reload
+      if (_webSearchSegmentsProvider != null) {
+        final segments = _webSearchSegmentsProvider!();
+        if (segments.isNotEmpty) {
+          final encoded = encodeSearchSegments(segments);
+          if (encoded.isNotEmpty) {
+            ollamaMessage.thinking = '$encoded${ollamaMessage.thinking ?? ''}';
+          }
+        }
+      }
       await _databaseService.addMessage(ollamaMessage, chat: associatedChat);
 
       // Trigger async memory update (fire-and-forget)
@@ -372,7 +391,12 @@ class ChatProvider extends ChangeNotifier {
     final searchThinking = preThinking?.trim();
     var modelThinkingBuffer = '';
 
-    List<OllamaMessage> messagesToSend = _messages;
+    // For Call 2+ (reuseMessage), exclude the empty assistant message from
+    // Call 1. Sending an empty assistant response confuses models into
+    // thinking they already answered, producing garbage or truncated output.
+    List<OllamaMessage> messagesToSend = reuseMessage != null
+        ? _messages.where((m) => m != reuseMessage).toList()
+        : _messages;
 
     // Fetch memories for injection — incognito chats use conv memory but skip agent memory
     final conversationMemory = await _memoryService.getConversationMemory(associatedChat.id);
@@ -381,12 +405,12 @@ class ChatProvider extends ChangeNotifier {
         : await _memoryService.getAgentMemory();
 
     // Select relevant topics/ephemeral for this conversation.
-    // Skip for Call 1 of web search (WEBSEARCH decision) — injecting old
-    // context makes the model think it already has the answer and skip
-    // searching (and sometimes produce zero content tokens).
+    // Skip relevantContext for ALL web search calls — Call 1 (WEBSEARCH
+    // decision) and Call 2+ (answering with search results). Injecting old
+    // agent memory confuses the model and leaks unrelated content.
     String relevantContext = '';
-    final isWebSearchCall1 = searchAttemptsRemaining > 0 && searchContext == null;
-    if (!associatedChat.isIncognito && !isWebSearchCall1) {
+    final isWebSearchFlow = searchAttemptsRemaining > 0 || searchContext != null;
+    if (!associatedChat.isIncognito && !isWebSearchFlow) {
       relevantContext = await _memoryService.selectRelevantContext(
         messagesToSend,
         conversationSummary: conversationMemory?.summary,
@@ -537,7 +561,9 @@ class ChatProvider extends ChangeNotifier {
               websearchBuffer = streamingMessage.content;
               streamingMessage.content = '';
               final queryPart = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
-              debugPrint('🔍 [SEARCH] WEBSEARCH detected mid-stream, initial query: "$queryPart"');
+              // Emit Call 1 thinking as a segment before the search card
+              final call1Think = streamingMessage.thinking ?? '';
+              if (call1Think.isNotEmpty) _webSearchThinkingCallback?.call(call1Think);
               _webSearchCallback?.call(queryPart);
             }
           }
@@ -558,6 +584,7 @@ class ChatProvider extends ChangeNotifier {
     if (!websearchDetected && canSearch && streamingMessage != null) {
       String? fallbackQuery;
       final thinking = streamingMessage.thinking?.trim() ?? '';
+      debugPrint('🔍 [SEARCH] Thinking fallback check: thinking=${thinking.length} chars, first 200: "${thinking.substring(0, thinking.length.clamp(0, 200))}"');
       // Check thinking for WEBSEARCH: pattern
       for (final line in thinking.split('\n')) {
         if (line.trim().toUpperCase().startsWith('WEBSEARCH:')) {
@@ -573,10 +600,11 @@ class ChatProvider extends ChangeNotifier {
         }
       }
       if (fallbackQuery != null && fallbackQuery.isNotEmpty) {
-        debugPrint('🔍 [SEARCH] Thinking fallback query: "$fallbackQuery"');
         websearchDetected = true;
         websearchBuffer = 'WEBSEARCH: $fallbackQuery';
         streamingMessage.content = '';
+        final call1Think = streamingMessage.thinking ?? '';
+        if (call1Think.isNotEmpty) _webSearchThinkingCallback?.call(call1Think);
         _webSearchCallback?.call(fallbackQuery);
         notifyListeners();
       }

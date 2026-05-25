@@ -440,6 +440,10 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     // Strip search data header if present (both live and history)
     var clean = stripSearchData(thinking);
     if (widget.searchSegments.isNotEmpty || thinking.startsWith('<!--SEARCH_DATA:')) {
+      // If no separator exists, the thinking is only Call 1 thinking which
+      // is already rendered as a ThinkingSegment in searchWidgets. Return
+      // empty to avoid duplication.
+      if (!clean.contains(searchThinkingSeparator)) return '';
       return modelThinkingFromCombined(clean);
     }
     return clean;
@@ -597,8 +601,6 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   /// Builds search segment widgets (thinking blocks + search cards) from a list of segments.
-  /// Thinking segments use ThinkBlockWidget with keepExpandedWhenComplete set to true
-  /// so streamed reasoning remains visible.
   List<Widget> _buildSearchSegmentsFrom(List<MessageSegment> segments) {
     final widgets = <Widget>[];
     for (final segment in segments) {
@@ -609,7 +611,6 @@ class _AssistantBubbleState extends State<_AssistantBubble>
             content: segment.text,
             isComplete: true,
             isStreaming: false,
-            keepExpandedWhenComplete: true,
           ));
         case SearchCardSegment():
           widgets.add(SearchCard(segment: segment));

@@ -125,8 +125,11 @@ void main() {
       String? searchQuery;
       List<WebSearchResult>? searchResults;
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => searchQuery = query,
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (results) => searchResults = results,
+        segmentsProvider: () => [],
       );
 
       // Send user message that MUST trigger WEBSEARCH
@@ -263,10 +266,12 @@ void main() {
       final searchQueries = <String>[];
       final searchResultCounts = <int>[];
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) {
           searchQueries.add(query);
           print('[SEARCH START] "$query"');
         },
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (results) {
           searchResultCounts.add(results.length);
           print('[SEARCH COMPLETE] ${results.length} results');
@@ -275,6 +280,7 @@ void main() {
             print('    content length: ${r.pageContent?.length ?? 0}');
           }
         },
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage(
@@ -338,8 +344,11 @@ void main() {
 
       String? searchQuery;
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => searchQuery = query,
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage('越南2025GDP');
@@ -375,8 +384,11 @@ void main() {
 
       String? searchQuery;
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => searchQuery = query,
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage('What is 2 + 2?');
@@ -417,8 +429,11 @@ void main() {
 
       String? searchQuery;
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => searchQuery = query,
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       await chatProvider.sendPrompt(userMsg, searchAttemptsRemaining: 3);
@@ -457,8 +472,11 @@ void main() {
 
       String? searchQuery;
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => searchQuery = query,
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage('越南2025GDP');
@@ -503,8 +521,11 @@ void main() {
 
       String? searchQuery;
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => searchQuery = query,
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage('越南2025GDP');
@@ -563,8 +584,11 @@ void main() {
 
       final userMsg = chatProvider.displayUserMessage('越南2025GDP');
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (_) {},
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
       await chatProvider.sendPrompt(userMsg, searchAttemptsRemaining: 3);
       chatProvider.clearWebSearchCallbacks();
@@ -622,8 +646,11 @@ void main() {
       });
 
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) => events.add('SEARCH_START:$query'),
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (results) => events.add('SEARCH_COMPLETE:${results.length}'),
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage('越南2025GDP');
@@ -669,11 +696,14 @@ void main() {
 
       final searchQueries = <String>[];
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (query) {
           searchQueries.add(query);
           print('[SEARCH ${searchQueries.length}] "$query"');
         },
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage(
@@ -703,11 +733,14 @@ void main() {
       await chatProvider.createNewChat(model);
 
       chatProvider.setWebSearchCallbacks(
+        onSearchThinking: (_) {},
         onSearchStart: (_) {
           // Cancel streaming while search is in progress
           chatProvider.cancelCurrentStreaming();
         },
+        onSearchQueryUpdate: (_) {},
         onSearchComplete: (_) {},
+        segmentsProvider: () => [],
       );
 
       final userMsg = chatProvider.displayUserMessage('越南2025GDP');

@@ -11,7 +11,7 @@ class SearchURLStatus {
   });
 }
 
-enum SearchURLState { loading, success, failed, timedOut }
+enum SearchURLState { success, failed }
 
 /// Segments for rendering search-augmented messages.
 /// Persisted as JSON in the thinking field.

@@ -32,6 +32,13 @@ You MUST search for: numbers, statistics, prices, dates, current events, news, r
 Today's date: $today.''';
 }
 
+/// Extracts the search query from a buffer containing "WEBSEARCH: <query>".
+String _extractSearchQuery(String buffer) {
+  final idx = buffer.toUpperCase().indexOf('WEBSEARCH:');
+  if (idx == -1) return '';
+  return buffer.substring(idx + 'WEBSEARCH:'.length).trim();
+}
+
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
   OllamaService get ollamaService => _ollamaService;
@@ -490,46 +497,30 @@ class ChatProvider extends ChangeNotifier {
         if (reuseMessage != null) {
           streamingMessage = reuseMessage;
           streamingMessage.content = '';
-
-          if (searchThinking != null && searchThinking.isNotEmpty) {
-            final initialThinking = receivedMessage.thinking ?? '';
-            if (initialThinking.isNotEmpty) {
-              modelThinkingBuffer = initialThinking;
-              streamingMessage.thinking = mergeSearchThinking(
-                searchThinking: searchThinking,
-                modelThinking: modelThinkingBuffer,
-              );
-            } else {
-              streamingMessage.thinking = searchThinking;
-            }
-          }
-
-          _activeChatStreams[associatedChat.id] = streamingMessage;
-          notifyListeners();
         } else {
           streamingMessage = receivedMessage;
-
-          if (searchThinking != null && searchThinking.isNotEmpty) {
-            final initialThinking = receivedMessage.thinking ?? '';
-            if (initialThinking.isNotEmpty) {
-              modelThinkingBuffer = initialThinking;
-              streamingMessage.thinking = mergeSearchThinking(
-                searchThinking: searchThinking,
-                modelThinking: modelThinkingBuffer,
-              );
-            } else {
-              streamingMessage.thinking = searchThinking;
-            }
-          }
-
-          _activeChatStreams[associatedChat.id] = streamingMessage;
-
-          if (associatedChat.id == currentChat?.id) {
-            _messages.add(streamingMessage);
-          }
-
-          notifyListeners();
         }
+
+        if (searchThinking != null && searchThinking.isNotEmpty) {
+          final initialThinking = receivedMessage.thinking ?? '';
+          if (initialThinking.isNotEmpty) {
+            modelThinkingBuffer = initialThinking;
+            streamingMessage.thinking = mergeSearchThinking(
+              searchThinking: searchThinking,
+              modelThinking: modelThinkingBuffer,
+            );
+          } else {
+            streamingMessage.thinking = searchThinking;
+          }
+        }
+
+        _activeChatStreams[associatedChat.id] = streamingMessage;
+
+        if (reuseMessage == null && associatedChat.id == currentChat?.id) {
+          _messages.add(streamingMessage);
+        }
+
+        notifyListeners();
       } else {
         // Accumulate thinking tokens
         if (receivedMessage.thinking != null && receivedMessage.thinking!.isNotEmpty) {
@@ -548,8 +539,7 @@ class ChatProvider extends ChangeNotifier {
         if (websearchDetected) {
           // Already detected: accumulate query tokens, don't show as content
           websearchBuffer += receivedMessage.content;
-          final query = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
-          _webSearchQueryUpdateCallback?.call(query);
+          _webSearchQueryUpdateCallback?.call(_extractSearchQuery(websearchBuffer));
         } else {
           streamingMessage.content += receivedMessage.content;
 
@@ -560,11 +550,10 @@ class ChatProvider extends ChangeNotifier {
               websearchDetected = true;
               websearchBuffer = streamingMessage.content;
               streamingMessage.content = '';
-              final queryPart = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
               // Emit Call 1 thinking as a segment before the search card
               final call1Think = streamingMessage.thinking ?? '';
               if (call1Think.isNotEmpty) _webSearchThinkingCallback?.call(call1Think);
-              _webSearchCallback?.call(queryPart);
+              _webSearchCallback?.call(_extractSearchQuery(websearchBuffer));
             }
           }
         }
@@ -578,13 +567,12 @@ class ChatProvider extends ChangeNotifier {
     }
 
     // --- POST-STREAM: execute search or handle thinking fallback ---
-    debugPrint('🔍 [SEARCH] Stream ended. websearchDetected=$websearchDetected, content=${streamingMessage?.content.length ?? 0} chars');
+    debugPrint('[SEARCH] Stream ended, detected=$websearchDetected');
 
     // Thinking fallback: model put search intent in thinking but zero content
     if (!websearchDetected && canSearch && streamingMessage != null) {
       String? fallbackQuery;
       final thinking = streamingMessage.thinking?.trim() ?? '';
-      debugPrint('🔍 [SEARCH] Thinking fallback check: thinking=${thinking.length} chars, first 200: "${thinking.substring(0, thinking.length.clamp(0, 200))}"');
       // Check thinking for WEBSEARCH: pattern
       for (final line in thinking.split('\n')) {
         if (line.trim().toUpperCase().startsWith('WEBSEARCH:')) {
@@ -622,13 +610,12 @@ class ChatProvider extends ChangeNotifier {
 
     // Execute web search if WEBSEARCH was detected (mid-stream or thinking fallback)
     if (websearchDetected && streamingMessage != null) {
-      var searchQuery = websearchBuffer.substring(websearchBuffer.toUpperCase().indexOf('WEBSEARCH:') + 'WEBSEARCH:'.length).trim();
-      // Clean query
+      var searchQuery = _extractSearchQuery(websearchBuffer);
       searchQuery = searchQuery.replaceAll(RegExp(r'\[.*?\]'), '').trim();
       final words = searchQuery.split(RegExp(r'\s+'));
       if (words.length > 10) searchQuery = words.take(10).join(' ');
       final call1Thinking = streamingMessage.thinking ?? '';
-      debugPrint('🔍 [SEARCH] Executing web search for: "$searchQuery"');
+      debugPrint('[SEARCH] Searching: "$searchQuery"');
 
       // Update search card with final query
       _webSearchQueryUpdateCallback?.call(searchQuery);
@@ -656,7 +643,7 @@ class ChatProvider extends ChangeNotifier {
       }
 
       // Recursive call: re-stream with search context, reusing same message
-      debugPrint('🔍 [SEARCH] Starting Call 2 with ${newSearchContext.length} chars of context');
+      debugPrint('[SEARCH] Starting Call 2 with ${newSearchContext.length} chars context');
       _activeChatStreams[associatedChat.id] = null;
       notifyListeners();
 
@@ -784,6 +771,7 @@ class ChatProvider extends ChangeNotifier {
   static const _superscriptDigits = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
 
   static String _toSuperscript(int n) {
+    if (n < 10) return _superscriptDigits[n];
     return n.toString().split('').map((c) => _superscriptDigits[int.parse(c)]).join('');
   }
 

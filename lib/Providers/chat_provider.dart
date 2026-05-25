@@ -474,15 +474,36 @@ class ChatProvider extends ChangeNotifier {
         // Buffer the first content line to check for WEBSEARCH: <query>.
         if (searchAttemptsRemaining > 0 && searchContext == null && !webSearchChecked && receivedMessage.content.isNotEmpty) {
           contentBuffer += receivedMessage.content;
-          if (!contentBuffer.contains('\n')) {
+          // Find the first non-empty line (models may prefix with \n\n)
+          final lines = contentBuffer.split('\n');
+          final firstNonEmpty = lines.cast<String?>().firstWhere(
+            (l) => l != null && l.trim().isNotEmpty,
+            orElse: () => null,
+          );
+          // Keep buffering until we have a non-empty line followed by a newline
+          // (ensures the full WEBSEARCH: <query> line has arrived).
+          // Safety: if buffer exceeds 200 chars without a match, give up — it's
+          // not a WEBSEARCH response (avoids infinite buffering).
+          if (firstNonEmpty == null && contentBuffer.length < 200) {
             if (notifyThrottle.elapsedMilliseconds >= 32) {
               notifyThrottle.reset();
               notifyListeners();
             }
             continue;
           }
+          if (firstNonEmpty != null) {
+            final firstNonEmptyIdx = lines.indexOf(firstNonEmpty);
+            final hasLineAfter = lines.length > firstNonEmptyIdx + 1;
+            if (!hasLineAfter && contentBuffer.length < 200) {
+              if (notifyThrottle.elapsedMilliseconds >= 32) {
+                notifyThrottle.reset();
+                notifyListeners();
+              }
+              continue;
+            }
+          }
           webSearchChecked = true;
-          final firstLine = contentBuffer.split('\n').first.trim();
+          final firstLine = (firstNonEmpty ?? '').trim();
           if (firstLine.toUpperCase().startsWith('WEBSEARCH:')) {
             final searchQuery = firstLine.substring('WEBSEARCH:'.length).trim();
             final call1Thinking = streamingMessage.thinking ?? '';
@@ -525,6 +546,11 @@ class ChatProvider extends ChangeNotifier {
               if (id != null && url != null) _interceptedSourceUrls![id] = url;
             }
 
+            // Re-add to active streams so the recursive call's cancellation
+            // guard (line 432) doesn't immediately abort the new stream.
+            _activeChatStreams[associatedChat.id] = null;
+            notifyListeners();
+
             // Recursive Call 2: re-stream with search context injected
             return await _streamOllamaMessage(
               associatedChat,
@@ -564,6 +590,13 @@ class ChatProvider extends ChangeNotifier {
           notifyListeners();
         }
       }
+    }
+
+    // Flush any content remaining in the detection buffer (stream ended before
+    // a newline arrived after the first content line)
+    if (contentBuffer.isNotEmpty && streamingMessage != null) {
+      streamingMessage.content += contentBuffer;
+      contentBuffer = '';
     }
 
     // Flush any throttled content to UI

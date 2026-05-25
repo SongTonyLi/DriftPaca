@@ -715,11 +715,12 @@ class ChatProvider extends ChangeNotifier {
     if (messageIndex == -1) return;
 
     final includeMessage = (message.role == OllamaMessageRole.user ? 1 : 0);
+    final removeStart = messageIndex + includeMessage;
 
-    final stayedMessages = _messages.sublist(0, messageIndex + includeMessage);
-    final removeMessages = _messages.sublist(messageIndex + includeMessage);
-
-    _messages = stayedMessages;
+    final removeMessages = _messages.sublist(removeStart);
+    // Mutate in place to preserve list identity — ChatListView uses
+    // identical() to decide whether to clear its bubble cache.
+    _messages.removeRange(removeStart, _messages.length);
     notifyListeners();
 
     await _databaseService.deleteMessages(removeMessages);

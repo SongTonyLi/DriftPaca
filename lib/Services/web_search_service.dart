@@ -30,6 +30,11 @@ class WebSearchService {
   static const _retryBackoff = Duration(seconds: 2);
   static const _maxConcurrentFetches = 3;
 
+  /// Shared client across all WebSearchService instances so the connection
+  /// pool survives between searches (the service itself is instantiated
+  /// per-search). DDG is always the same host; reuse is significant there.
+  static final http.Client _client = http.Client();
+
   /// Domains that are walled gardens, video/image-only, or content farms.
   /// Filtered out before page fetching to save bandwidth and improve quality.
   static const _blockedDomains = <String>{
@@ -352,7 +357,7 @@ ${sourceContext.toString().trim()}
 
   Future<List<WebSearchResult>> _searchOnce(String query,
       {int maxResults = 5}) async {
-    final response = await http
+    final response = await _client
         .post(
           Uri.parse(_baseUrl),
           headers: {
@@ -379,7 +384,7 @@ ${sourceContext.toString().trim()}
 
   Future<void> _fetchPageContent(WebSearchResult result) async {
     try {
-      final response = await http.get(
+      final response = await _client.get(
         Uri.parse(result.url),
         headers: {
           'User-Agent':

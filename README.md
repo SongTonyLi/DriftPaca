@@ -18,6 +18,7 @@ A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a 
 - **Sidebar with context menu** -- long-press any chat to rename or delete with an animated glass popup
 - **Multi-model support** -- local Ollama or Ollama Cloud, switch models per conversation
 - **Per-chat configuration** -- system prompts, temperature, and advanced options per conversation
+- **Encrypted cloud traffic** -- TLS/HTTPS for every Ollama Cloud and web search request, with the TLS session reused across calls for low latency
 - **Cross-platform** -- iOS, Android, macOS, Linux, Windows
 
 ## Getting Started

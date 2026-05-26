@@ -57,8 +57,17 @@ class OllamaService {
   /// Cached model capabilities from /api/show, keyed by model name.
   final Map<String, ModelCapabilities> _capabilitiesCache = {};
 
+  /// Persistent HTTP client so TCP/TLS connections are reused across requests.
+  /// Top-level http.* helpers create a fresh client per call, which pays a
+  /// new TLS handshake every time on Ollama Cloud.
+  final http.Client _client = http.Client();
+
   /// Creates a new instance of the Ollama service.
   OllamaService({String? baseUrl}) : _baseUrl = baseUrl ?? defaultLocalUrl;
+
+  void dispose() {
+    _client.close();
+  }
 
   /// Constructs a URL by resolving the provided path against the base URL.
   Uri constructUrl(String path) {
@@ -97,7 +106,7 @@ class OllamaService {
   }) async {
     final url = constructUrl("/api/generate");
 
-    final response = await http.post(
+    final response = await _client.post(
       url,
       headers: headers,
       body: json.encode({
@@ -135,7 +144,7 @@ class OllamaService {
       "stream": true,
     });
 
-    http.StreamedResponse response = await request.send();
+    http.StreamedResponse response = await _client.send(request);
 
     if (response.statusCode == 200) {
       await for (final message in _processStream(response.stream)) {
@@ -168,7 +177,7 @@ class OllamaService {
   }) async {
     final url = constructUrl("/api/chat");
 
-    final response = await http.post(
+    final response = await _client.post(
       url,
       headers: headers,
       body: json.encode({
@@ -236,7 +245,7 @@ class OllamaService {
       "stream": true,
     });
 
-    http.StreamedResponse response = await request.send();
+    http.StreamedResponse response = await _client.send(request);
 
     // If the server rejects images (400), retry without them and cache
     // the model as non-vision so future requests skip images immediately.
@@ -263,7 +272,7 @@ class OllamaService {
           "stream": true,
         });
 
-        response = await retryRequest.send();
+        response = await _client.send(retryRequest);
       }
     }
 
@@ -421,7 +430,7 @@ class OllamaService {
   Future<ApiTagsResponse> _fetchTags() async {
     final url = constructUrl("/api/tags");
 
-    final response = await http.get(url, headers: headers).timeout(
+    final response = await _client.get(url, headers: headers).timeout(
           Duration(seconds: _isCloudMode ? 10 : 2),
         );
 
@@ -443,7 +452,7 @@ class OllamaService {
     try {
       final url = constructUrl("/api/show");
 
-      final response = await http
+      final response = await _client
           .post(
             url,
             headers: headers,
@@ -475,7 +484,7 @@ class OllamaService {
       messages: messages,
     );
 
-    final response = await http.post(
+    final response = await _client.post(
       url,
       headers: headers,
       body: json.encode(await request.toJson()),
@@ -491,7 +500,7 @@ class OllamaService {
   Future<void> deleteModel(String model) async {
     final url = constructUrl("/api/delete");
 
-    final response = await http.delete(
+    final response = await _client.delete(
       url,
       headers: headers,
       body: json.encode({"model": model}),
@@ -540,7 +549,7 @@ class OllamaService {
 
     try {
       final url = Uri.parse('https://ollama.com/library/$baseName');
-      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      final response = await _client.get(url).timeout(const Duration(seconds: 8));
 
       if (response.statusCode != 200) return null;
 

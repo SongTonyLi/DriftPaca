@@ -35,6 +35,10 @@ class MemoryService extends ChangeNotifier {
   List<MemoryTopic>? _topicsCache;
   List<EphemeralContext>? _ephemeralCache;
 
+  /// Persistent HTTP client for cloud memory-model calls — reuses the
+  /// TLS connection across summarisation requests.
+  final http.Client _client = http.Client();
+
   MemoryService({required DatabaseService db}) : _db = db {
     // Migrate old default model names to current default
     final box = Hive.box('settings');
@@ -260,7 +264,7 @@ class MemoryService extends ChangeNotifier {
     final url = Uri.parse('$_cloudBaseUrl/api/chat');
 
     try {
-      final response = await http.post(
+      final response = await _client.post(
         url,
         headers: {
           'Content-Type': 'application/json',
@@ -616,6 +620,12 @@ class MemoryService extends ChangeNotifier {
       _isUpdating = false;
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _client.close();
+    super.dispose();
   }
 }
 

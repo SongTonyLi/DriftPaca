@@ -450,11 +450,12 @@ class ChatPageViewModel extends ChangeNotifier {
         _isSearching = false;
         notifyListeners();
       }
-    }
 
-    // Generate title for new chats
-    if (isNewChat) {
-      await _chatProvider.generateTitleForCurrentChat();
+      // Generate title for new chats — in finally so it runs even if
+      // sendPrompt throws (e.g. post-stream processing errors in web search)
+      if (isNewChat) {
+        await _chatProvider.generateTitleForCurrentChat();
+      }
     }
 
     return true;

@@ -67,9 +67,23 @@ class WebSearchService {
   /// 2. Fetch full page content (concurrency-limited)
   /// 3. Chunk content with recursive text splitter
   /// 4. Filter out empty results, preserving DDG relevance order
-  Future<List<WebSearchResult>> searchAndExtract(String query,
-      {int maxResults = 8}) async {
-    final results = await searchAndFetch(query, maxResults: maxResults);
+  ///
+  /// Optional progress callbacks let the UI render a pending → resolved
+  /// transition: [onUrlsKnown] fires once after DDG returns and before
+  /// page fetches begin; [onUrlFetched] fires per URL as each fetch
+  /// resolves with a success bool.
+  Future<List<WebSearchResult>> searchAndExtract(
+    String query, {
+    int maxResults = 8,
+    void Function(List<WebSearchResult> urls)? onUrlsKnown,
+    void Function(String url, bool success)? onUrlFetched,
+  }) async {
+    final results = await searchAndFetch(
+      query,
+      maxResults: maxResults,
+      onUrlsKnown: onUrlsKnown,
+      onUrlFetched: onUrlFetched,
+    );
 
     for (final result in results) {
       if (result.pageContent != null && result.pageContent!.isNotEmpty) {
@@ -92,8 +106,12 @@ class WebSearchService {
   /// Search DuckDuckGo + fetch page content (concurrency-limited).
   /// Overfetches from DDG, filters unreliable sources, then fetches pages
   /// for the top results only.
-  Future<List<WebSearchResult>> searchAndFetch(String query,
-      {int maxResults = 8}) async {
+  Future<List<WebSearchResult>> searchAndFetch(
+    String query, {
+    int maxResults = 8,
+    void Function(List<WebSearchResult> urls)? onUrlsKnown,
+    void Function(String url, bool success)? onUrlFetched,
+  }) async {
     // Overfetch to compensate for filtered sources
     final results = await search(query, maxResults: maxResults + 4);
     if (results.isEmpty) return results;
@@ -104,9 +122,17 @@ class WebSearchService {
     // Only fetch pages for what we need
     final toFetch = results.take(maxResults).toList();
 
+    // Notify the UI of the URL list before fetching starts so the
+    // search card can render each row in a "pending" state.
+    onUrlsKnown?.call(toFetch);
+
     final semaphore = _Semaphore(_maxConcurrentFetches);
     await Future.wait(
-      toFetch.map((r) => semaphore.run(() => _fetchPageContent(r))),
+      toFetch.map((r) => semaphore.run(() async {
+            await _fetchPageContent(r);
+            final ok = r.pageContent != null && r.pageContent!.isNotEmpty;
+            onUrlFetched?.call(r.url, ok);
+          })),
       eagerError: false,
     );
 
@@ -172,7 +198,7 @@ Respond to the user query using the provided sources. Cross-reference multiple s
 - If sources conflict, state what each source says and which seems most reliable.
 - If you don't know the answer, clearly state that.
 - Respond in the same language as the user's query.
-- Cite using [id] matching the source id attribute.
+- Cite sources inline as bracketed numbers, e.g. `[1]` for source id="1", `[3]` for source id="3". Do NOT write the word "id" inside the brackets — `[id:1]` is wrong, `[1]` is correct.
 
 <context>
 ${sourceContext.toString().trim()}

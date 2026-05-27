@@ -53,6 +53,8 @@ class ChatProvider extends ChangeNotifier {
   void Function(String query)? _webSearchCallback;
   void Function(String query)? _webSearchQueryUpdateCallback;
   void Function(List<WebSearchResult> results)? _webSearchCompleteCallback;
+  void Function(List<WebSearchResult> urls)? _webSearchUrlsKnownCallback;
+  void Function(String url, bool success)? _webSearchUrlFetchedCallback;
   List<MessageSegment> Function()? _webSearchSegmentsProvider;
 
   void setWebSearchCallbacks({
@@ -61,11 +63,15 @@ class ChatProvider extends ChangeNotifier {
     required void Function(String query) onSearchQueryUpdate,
     required void Function(List<WebSearchResult> results) onSearchComplete,
     required List<MessageSegment> Function() segmentsProvider,
+    void Function(List<WebSearchResult> urls)? onUrlsKnown,
+    void Function(String url, bool success)? onUrlFetched,
   }) {
     _webSearchThinkingCallback = onSearchThinking;
     _webSearchCallback = onSearchStart;
     _webSearchQueryUpdateCallback = onSearchQueryUpdate;
     _webSearchCompleteCallback = onSearchComplete;
+    _webSearchUrlsKnownCallback = onUrlsKnown;
+    _webSearchUrlFetchedCallback = onUrlFetched;
     _webSearchSegmentsProvider = segmentsProvider;
   }
 
@@ -74,6 +80,8 @@ class ChatProvider extends ChangeNotifier {
     _webSearchCallback = null;
     _webSearchQueryUpdateCallback = null;
     _webSearchCompleteCallback = null;
+    _webSearchUrlsKnownCallback = null;
+    _webSearchUrlFetchedCallback = null;
     _webSearchSegmentsProvider = null;
   }
 
@@ -622,7 +630,11 @@ class ChatProvider extends ChangeNotifier {
       notifyListeners();
 
       final searchService = WebSearchService();
-      final searchResults = await searchService.searchAndExtract(searchQuery);
+      final searchResults = await searchService.searchAndExtract(
+        searchQuery,
+        onUrlsKnown: _webSearchUrlsKnownCallback,
+        onUrlFetched: _webSearchUrlFetchedCallback,
+      );
       _webSearchCompleteCallback?.call(searchResults);
 
       if (searchResults.isEmpty) {
@@ -776,9 +788,19 @@ class ChatProvider extends ChangeNotifier {
   }
 
   static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
-    // Match both [N] and 【N】 citation formats (not already part of a markdown link)
+    // Match citation formats the model might emit:
+    //   [1], [ 1 ]       — plain bracketed digit
+    //   [id:1], [id: 1]  — when the model takes the prompt's "use [id]"
+    //                      literally and writes the word "id"
+    //   【1】, 【id:1】   — fullwidth brackets (qwen/deepseek)
+    // Negative lookahead `(?!\()` skips brackets already followed by `(`,
+    // which would be part of an existing markdown link.
     return content.replaceAllMapped(
-      RegExp(r'(?:\[(\d+)\]|\u3010(\d+)\u3011)(?!\()'),
+      RegExp(
+        r'(?:\[\s*(?:id\s*:\s*)?(\d+)\s*\]'
+        r'|\u3010\s*(?:id\s*:\s*)?(\d+)\s*\u3011)(?!\()',
+        caseSensitive: false,
+      ),
       (match) {
         final id = int.tryParse(match.group(1) ?? match.group(2) ?? '');
         if (id != null && sourceUrls.containsKey(id)) {

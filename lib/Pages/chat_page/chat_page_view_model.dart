@@ -15,6 +15,7 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
+import 'package:llamaseek/Utils/favicon_cache.dart';
 
 class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
@@ -404,6 +405,38 @@ class ChatPageViewModel extends ChangeNotifier {
             notifyListeners();
           }
         },
+        // Populate URLs in `pending` state as soon as DDG returns. The
+        // SearchCard renders the list with a shimmer + spinner per row;
+        // onUrlFetched flips entries to success/failed one by one.
+        onUrlsKnown: (urls) {
+          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+          if (card == null) return;
+          card.urls = [
+            for (final r in urls)
+              SearchURLStatus(
+                url: r.url,
+                domain: Uri.tryParse(r.url)?.host ?? r.url,
+                title: r.title,
+                state: SearchURLState.pending,
+              ),
+          ];
+          // Warm favicon cache for these domains so the source-card
+          // dialog and any future inline citation render instantly.
+          FaviconCache.instance.preload(card.urls.map((u) => u.domain));
+          notifyListeners();
+        },
+        onUrlFetched: (url, success) {
+          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+          if (card == null) return;
+          for (final u in card.urls) {
+            if (u.url == url) {
+              u.state =
+                  success ? SearchURLState.success : SearchURLState.failed;
+              break;
+            }
+          }
+          notifyListeners();
+        },
         onSearchComplete: (results) {
           final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
           if (card != null) {
@@ -414,6 +447,7 @@ class ChatPageViewModel extends ChangeNotifier {
                   .map((r) => SearchURLStatus(
                         url: r.url,
                         domain: Uri.tryParse(r.url)?.host ?? r.url,
+                        title: r.title,
                         state: r.pageContent != null
                             ? SearchURLState.success
                             : SearchURLState.failed,
@@ -421,15 +455,27 @@ class ChatPageViewModel extends ChangeNotifier {
                   .toList();
               card.resultCount = results.length;
               final contentParts = <String>[];
+              final sources = <SearchSource>[];
               for (final r in results) {
                 final content = r.chunks != null && r.chunks!.isNotEmpty
                     ? r.chunks!.take(2).join('\n')
                     : (r.pageContent ?? r.snippet);
-                if (content.isNotEmpty) {
-                  contentParts.add('${Uri.tryParse(r.url)?.host ?? r.url}:\n$content');
-                }
+                if (content.isEmpty) continue;
+                final domain = Uri.tryParse(r.url)?.host ?? r.url;
+                contentParts.add('$domain:\n$content');
+                sources.add(SearchSource(
+                  url: r.url,
+                  domain: domain,
+                  title: r.title,
+                  content: content,
+                ));
               }
               card.extractedContent = contentParts.join('\n\n');
+              card.sources = sources;
+              // Preload favicons so inline citations and source cards
+              // render instantly from cache instead of triggering a
+              // network fetch when the assistant message paints.
+              FaviconCache.instance.preload(sources.map((s) => s.domain));
             }
             card.isComplete = true;
             _searchSegments.add(AnswerSegment());

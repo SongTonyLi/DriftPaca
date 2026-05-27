@@ -41,6 +41,7 @@ String encodeSearchSegments(List<MessageSegment> segments) {
             .map((u) => {
                   'url': u.url,
                   'domain': u.domain,
+                  'title': u.title,
                   'state': u.state.name,
                 })
             .toList(),
@@ -48,6 +49,15 @@ String encodeSearchSegments(List<MessageSegment> segments) {
         'error': segment.error,
         if (segment.extractedContent != null)
           'content': segment.extractedContent,
+        if (segment.sources != null)
+          'sources': segment.sources!
+              .map((s) => {
+                    'url': s.url,
+                    'domain': s.domain,
+                    'title': s.title,
+                    'content': s.content,
+                  })
+              .toList(),
       });
     }
   }
@@ -80,6 +90,7 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
                 ?.map((u) => SearchURLStatus(
                       url: u['url'] as String? ?? '',
                       domain: u['domain'] as String? ?? '',
+                      title: u['title'] as String? ?? '',
                       state: SearchURLState.values.firstWhere(
                         (s) => s.name == (u['state'] as String? ?? ''),
                         orElse: () => SearchURLState.failed,
@@ -87,6 +98,14 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
                     ))
                 .toList() ??
             [];
+        final sources = (item['sources'] as List?)
+            ?.map((s) => SearchSource(
+                  url: s['url'] as String? ?? '',
+                  domain: s['domain'] as String? ?? '',
+                  title: s['title'] as String? ?? '',
+                  content: s['content'] as String? ?? '',
+                ))
+            .toList();
         segments.add(SearchCardSegment(
           query: item['query'] as String? ?? '',
           urls: urls,
@@ -94,6 +113,7 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
           error: item['error'] as String?,
           isComplete: true,
           extractedContent: item['content'] as String?,
+          sources: sources,
         ));
       }
     }

@@ -9,9 +9,11 @@ import 'package:llamaseek/Pages/settings_page/settings_page.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/services.dart';
+import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'dart:typed_data';
 import 'package:llamaseek/Utils/request_review_helper.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 import 'dart:io' show Platform;
@@ -39,6 +41,9 @@ void main() async {
 
   await Hive.openBox('settings');
   await Hive.openBox('model_readmes');
+  final faviconBox =
+      await Hive.openBox<Uint8List>(FaviconCache.boxName);
+  FaviconCache.instance.attachBox(faviconBox);
 
   // Initialize RequestReviewHelper and request review if needed
   final reviewHelper = await RequestReviewHelper.initialize();

@@ -179,6 +179,53 @@ void main() {
       // [^1] should not be touched (^ is not a digit)
       expect(result, 'Footnote [^1] and citation [¹](http://one.com).');
     });
+
+    test('replaces [id:N] when the model writes the literal "id" prefix',
+        () {
+      // Some models interpret the system prompt's "[id]" literally and
+      // emit `[id:1]`. Regression for the "all hyperlinks not rendered"
+      // bug reported when a response contained `[id:1][id:4]` chains.
+      final sourceUrls = {
+        1: 'http://one.com',
+        2: 'http://two.com',
+        4: 'http://four.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '市值约 [id:1][id:4]，价 [id:2]。',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '市值约 [¹](http://one.com)[⁴](http://four.com)，价 [²](http://two.com)。',
+      );
+    });
+
+    test('replaces [id: N] with whitespace after colon', () {
+      final sourceUrls = {3: 'http://three.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See [id: 3] for details.',
+        sourceUrls,
+      );
+      expect(result, 'See [³](http://three.com) for details.');
+    });
+
+    test('replaces fullwidth 【id:N】 citation', () {
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '据报道【id:1】，确认。',
+        sourceUrls,
+      );
+      expect(result, '据报道[¹](http://one.com)，确认。');
+    });
+
+    test('case-insensitive ID prefix [ID:1]', () {
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Source [ID:1] confirms.',
+        sourceUrls,
+      );
+      expect(result, 'Source [¹](http://one.com) confirms.');
+    });
   });
 
   // ===========================================================================
@@ -191,9 +238,10 @@ void main() {
         'Visit [Example](http://example.com) for more.',
       );
       expect(nonOverflowErrors(errors), isEmpty);
-      expect(find.textContaining('Example'), findsOneWidget);
-      // Raw markdown brackets should not be visible
+      // Link text is replaced by an inline favicon; just verify no raw
+      // markdown leaks into the rendered text.
       expect(find.textContaining('[Example]'), findsNothing);
+      expect(find.textContaining('](http'), findsNothing);
     });
 
     testWidgets('link with title attribute renders', (tester) async {
@@ -210,8 +258,7 @@ void main() {
         'Visit [Google](http://google.com) or [GitHub](http://github.com).',
       );
       expect(nonOverflowErrors(errors), isEmpty);
-      expect(find.textContaining('Google'), findsOneWidget);
-      expect(find.textContaining('GitHub'), findsOneWidget);
+      expect(find.textContaining('](http'), findsNothing);
     });
 
     testWidgets('adjacent links without space render', (tester) async {
@@ -261,7 +308,8 @@ void main() {
         surfaceSize: const Size(500, 800),
       );
       expect(nonOverflowErrors(errors), isEmpty);
-      expect(find.textContaining('click here'), findsOneWidget);
+      // Link text replaced by favicon; verify no raw markdown leaks.
+      expect(find.textContaining('](http'), findsNothing);
     });
 
     testWidgets('link in blockquote renders', (tester) async {

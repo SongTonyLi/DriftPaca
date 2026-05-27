@@ -127,7 +127,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
   static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
     return MarkdownBody(
-      data: _fixEmphasisFlanking(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapLatexCodeFences(data))))),
+      data: _fixEmphasisFlanking(_escapeCurrencyDollars(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapLatexCodeFences(data)))))),
       selectable: selectable,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
@@ -136,6 +136,7 @@ class _ChatBubbleBody extends StatelessWidget {
       ),
       extensionSet: _markdownExtensionSet,
       builders: {
+        'a': _LinkBuilder(),
         'latex': _SmartLatexBuilder(),
         'br': _HtmlBrBuilder(),
       },
@@ -261,6 +262,60 @@ class _ChatBubbleBody extends StatelessWidget {
       _dollarWrappedLinkPattern,
       (m) => m[1]!,
     );
+  }
+
+  /// Escapes paired `$` signs that surround currency-like content (e.g.
+  /// `$852B ... $500B`) so they render as literal dollars instead of being
+  /// consumed by [_InlineLatexSyntax].
+  ///
+  /// `_InlineLatexSyntax` already detects currency via [_isCurrency] and emits
+  /// the matched range as plain text — but in doing so it swallows any inline
+  /// markdown (e.g. `[³](url)` citation links) between the two `$` signs.
+  /// Pre-escaping the `$` characters lets the link parser see those links.
+  ///
+  /// Skips inside fenced code blocks and inline code. Pairing logic mirrors
+  /// [_InlineLatexSyntax]'s regex so we only escape what the latex syntax
+  /// would have otherwise consumed.
+  static String _escapeCurrencyDollars(String content) {
+    final buffer = StringBuffer();
+    int pos = 0;
+    final codePattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
+    for (final match in codePattern.allMatches(content)) {
+      buffer.write(_escapeCurrencyInText(content.substring(pos, match.start)));
+      buffer.write(match.group(0));
+      pos = match.end;
+    }
+    buffer.write(_escapeCurrencyInText(content.substring(pos)));
+    return buffer.toString();
+  }
+
+  static final _inlineDollarPairPattern = RegExp(r'\$([^$\n]+?)\$');
+  static final _currencyLeadPattern = RegExp(r'^\s*[\d,.]');
+  static final _latexOperatorPattern =
+      RegExp(r'[+=^_\\{}<>]|(?<!\*)\*(?!\*)');
+
+  static String _escapeCurrencyInText(String text) {
+    return text.replaceAllMapped(_inlineDollarPairPattern, (m) {
+      final full = m[0]!;
+      final inner = m[1]!;
+      if (!_currencyLeadPattern.hasMatch(inner)) return full;
+      final stripped = inner.replaceAll('**', '');
+      if (_latexOperatorPattern.hasMatch(stripped)) return full;
+      return '\\\$$inner\\\$';
+    });
+  }
+
+  /// Truncates trailing incomplete link syntax (`[text](url` without closing
+  /// `)`) so it doesn't render as raw markdown while the typewriter reveal
+  /// catches up to the closing paren. Once `)` is revealed the full link
+  /// renders normally.
+  static final _incompleteLinkAtEndPattern =
+      RegExp(r'\[[^\]\n]*\]\([^)\n]*$');
+
+  static String _hideIncompleteLinks(String content) {
+    final match = _incompleteLinkAtEndPattern.firstMatch(content);
+    if (match == null) return content;
+    return content.substring(0, match.start);
   }
 
   /// Fixes CommonMark emphasis flanking failures for CJK + punctuation.
@@ -619,7 +674,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
   Widget _buildMessageContent(BuildContext context) {
     final content = widget.isStreaming
-        ? _targetContent.substring(0, _revealedLength)
+        ? _ChatBubbleBody._hideIncompleteLinks(
+            _targetContent.substring(0, _revealedLength))
         : widget.message.content;
 
     final segments = _getSearchSegments();
@@ -1015,6 +1071,92 @@ class _HtmlBrBuilder extends MarkdownElementBuilder {
     TextStyle? parentStyle,
   ) {
     return const SizedBox(width: double.infinity, height: 0);
+  }
+}
+
+/// Renders markdown links as tappable pill-shaped chips with adequate
+/// touch area. Default flutter_markdown link rendering attaches a
+/// recognizer to a bare TextSpan, so the hit area is the text bounds —
+/// effectively unclickable for short citation links like `[¹]`.
+///
+/// Wrapping the link in a `WidgetSpan` inside a `Text.rich` lets
+/// flutter_markdown's [_mergeInlineChildren] merge it with surrounding
+/// text so the chip flows inline.
+class _LinkBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final href = element.attributes['href'] ?? '';
+    final text = element.textContent;
+    if (text.isEmpty) return null;
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final linkColor = colorScheme.primary;
+    final base = preferredStyle ?? parentStyle ?? const TextStyle();
+    final linkStyle = base.copyWith(
+      color: linkColor,
+      fontWeight: FontWeight.w500,
+      decoration: TextDecoration.none,
+    );
+
+    return Text.rich(
+      TextSpan(
+        children: [
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            baseline: TextBaseline.alphabetic,
+            child: _LinkPill(
+              href: href,
+              text: text,
+              textStyle: linkStyle,
+              fillColor: linkColor.withValues(alpha: 0.10),
+              borderColor: linkColor.withValues(alpha: 0.22),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LinkPill extends StatelessWidget {
+  final String href;
+  final String text;
+  final TextStyle textStyle;
+  final Color fillColor;
+  final Color borderColor;
+
+  const _LinkPill({
+    required this.href,
+    required this.text,
+    required this.textStyle,
+    required this.fillColor,
+    required this.borderColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => launchUrlString(href),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: fillColor,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor, width: 0.5),
+          ),
+          child: Text(text, style: textStyle),
+        ),
+      ),
+    );
   }
 }
 

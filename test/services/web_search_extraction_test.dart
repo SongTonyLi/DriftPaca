@@ -1,7 +1,100 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
 
 void main() {
+  group('decodeHtmlBytes', () {
+    test('decodes UTF-8 Chinese page with no Content-Type charset', () {
+      // Reproduces the bug from the screenshot: cssn.cn / gov.cn sites
+      // serve UTF-8 but only declare it in <meta>, not the response header.
+      const html =
+          '<html><head><meta charset="utf-8"></head><body>'
+          '满清入关战役的影响</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded =
+          WebSearchService.decodeHtmlBytes(bytes, contentTypeHeader: 'text/html');
+      expect(decoded, contains('满清入关战役的影响'));
+      // Negative check: Latin-1 decoding of the same bytes would produce
+      // mojibake — confirm we didn't fall back to that.
+      expect(decoded, isNot(contains('æ')));
+    });
+
+    test('honours charset from Content-Type header', () {
+      const html =
+          '<html><head><meta charset="iso-8859-1"></head><body>résumé</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(
+        bytes,
+        contentTypeHeader: 'text/html; charset=utf-8',
+      );
+      // Header wins over meta — header says UTF-8, bytes are UTF-8.
+      expect(decoded, contains('résumé'));
+    });
+
+    test('respects <meta charset> when header has no charset', () {
+      const html =
+          '<html><head><meta charset="utf-8"></head><body>café</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(
+        bytes,
+        contentTypeHeader: 'text/html',
+      );
+      expect(decoded, contains('café'));
+    });
+
+    test('respects HTML4 http-equiv meta charset', () {
+      const html =
+          '<html><head><meta http-equiv="Content-Type" '
+          'content="text/html; charset=utf-8"></head><body>北京</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(
+        bytes,
+        contentTypeHeader: 'text/html',
+      );
+      expect(decoded, contains('北京'));
+    });
+
+    test('falls back to UTF-8 when nothing is declared', () {
+      // No charset in header, no meta tag — but bytes are UTF-8.
+      const html = '<html><body>東京</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(bytes);
+      expect(decoded, contains('東京'));
+    });
+
+    test('decodes ASCII content unchanged', () {
+      const html = '<html><body>hello world</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(
+        bytes,
+        contentTypeHeader: 'text/html; charset=us-ascii',
+      );
+      expect(decoded, contains('hello world'));
+    });
+
+    test('handles unsupported charsets by falling back to UTF-8', () {
+      // GBK is not in dart:convert. Bytes are actually UTF-8.
+      const html =
+          '<html><head><meta charset="gbk"></head><body>测试</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(bytes);
+      // GBK lookup returns null → fall through → UTF-8 with allowMalformed
+      // succeeds on this UTF-8 byte stream.
+      expect(decoded, contains('测试'));
+    });
+
+    test('quoted charset value in header is unwrapped', () {
+      const html = '<html><body>ok</body></html>';
+      final bytes = utf8.encode(html);
+      final decoded = WebSearchService.decodeHtmlBytes(
+        bytes,
+        contentTypeHeader: 'text/html; charset="utf-8"',
+      );
+      expect(decoded, contains('ok'));
+    });
+  });
+
   group('extractTextFromHtml', () {
     test('prioritizes article tag content', () {
       final html = '''

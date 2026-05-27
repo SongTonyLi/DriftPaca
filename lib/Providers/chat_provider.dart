@@ -564,6 +564,22 @@ class ChatProvider extends ChangeNotifier {
               _webSearchCallback?.call(_extractSearchQuery(websearchBuffer));
             }
           }
+
+          // Rewrite raw citations into markdown links live during the
+          // second call, so favicons pop in the moment a citation token
+          // closes (e.g. `[1]`, `(src 2)`) instead of only at end-of-
+          // stream. `replaceCitationsWithLinks` is idempotent — already-
+          // converted `[¹](url)` is skipped via the `(?!\()` lookahead,
+          // and partial tokens like `[1` or `(src` don't match yet so
+          // they pass through until the closing char arrives.
+          if (_interceptedSourceUrls != null &&
+              _interceptedSourceUrls!.isNotEmpty &&
+              receivedMessage.content.isNotEmpty) {
+            streamingMessage.content = replaceCitationsWithLinks(
+              streamingMessage.content,
+              _interceptedSourceUrls!,
+            );
+          }
         }
 
         // Throttle UI updates during streaming (~30fps)

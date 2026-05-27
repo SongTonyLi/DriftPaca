@@ -1074,12 +1074,16 @@ class _HtmlBrBuilder extends MarkdownElementBuilder {
   }
 }
 
-/// Renders markdown links as tappable pill-shaped chips with adequate
-/// touch area. Default flutter_markdown link rendering attaches a
-/// recognizer to a bare TextSpan, so the hit area is the text bounds —
-/// effectively unclickable for short citation links like `[¹]`.
+/// Renders markdown links as inline "highlighter marks" — a soft color
+/// stripe behind the text that fades at the top and bottom so it reads
+/// like marker tape rather than a button.
 ///
-/// Wrapping the link in a `WidgetSpan` inside a `Text.rich` lets
+/// Default flutter_markdown link rendering attaches a recognizer to a
+/// bare TextSpan, so the hit area is the text bounds — effectively
+/// unclickable for short citation links like `[¹]`. The chip pads the
+/// hit target while the fading gradient keeps the visual weight low.
+///
+/// Wrapping the result in a `WidgetSpan` inside a `Text.rich` lets
 /// flutter_markdown's [_mergeInlineChildren] merge it with surrounding
 /// text so the chip flows inline.
 class _LinkBuilder extends MarkdownElementBuilder {
@@ -1100,6 +1104,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
     final linkStyle = base.copyWith(
       color: linkColor,
       fontWeight: FontWeight.w500,
+      letterSpacing: 0.15,
       decoration: TextDecoration.none,
     );
 
@@ -1113,8 +1118,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
               href: href,
               text: text,
               textStyle: linkStyle,
-              fillColor: linkColor.withValues(alpha: 0.10),
-              borderColor: linkColor.withValues(alpha: 0.22),
+              linkColor: linkColor,
             ),
           ),
         ],
@@ -1127,31 +1131,47 @@ class _LinkPill extends StatelessWidget {
   final String href;
   final String text;
   final TextStyle textStyle;
-  final Color fillColor;
-  final Color borderColor;
+  final Color linkColor;
 
   const _LinkPill({
     required this.href,
     required this.text,
     required this.textStyle,
-    required this.fillColor,
-    required this.borderColor,
+    required this.linkColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Highlighter stripe: transparent → solid tint → solid tint →
+    // transparent. The solid band sits in the middle 75% of the chip
+    // height so the visible mark looks taller than the text but doesn't
+    // touch the line boundaries — closer to a marker pen swipe than to
+    // a bordered button.
+    final stripeColor = linkColor.withValues(alpha: 0.18);
+    final gradient = LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Colors.transparent,
+        stripeColor,
+        stripeColor,
+        Colors.transparent,
+      ],
+      stops: const [0.0, 0.12, 0.88, 1.0],
+    );
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: () => launchUrlString(href),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(3),
+        splashColor: linkColor.withValues(alpha: 0.22),
+        highlightColor: linkColor.withValues(alpha: 0.10),
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2.5),
           decoration: BoxDecoration(
-            color: fillColor,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: borderColor, width: 0.5),
+            gradient: gradient,
+            borderRadius: BorderRadius.circular(3),
           ),
           child: Text(text, style: textStyle),
         ),

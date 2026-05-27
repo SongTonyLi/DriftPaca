@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Widgets/search_detail_dialog.dart';
+import 'package:shimmer/shimmer.dart';
 
 /// Displays the status of a web search iteration.
 /// Shows query, per-URL fetch status, and completion state.
@@ -178,32 +179,13 @@ class _SearchCardState extends State<SearchCard>
                           left: 36, right: 12, bottom: 8),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: segment.urls.map((url) {
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: Row(
-                              children: [
-                                _urlStateIcon(url.state, theme),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    url.domain,
-                                    style:
-                                        theme.textTheme.bodySmall?.copyWith(
-                                      color: url.state == SearchURLState.failed
-                                          ? theme.colorScheme.onSurfaceVariant
-                                              .withValues(alpha: 0.5)
-                                          : theme
-                                              .colorScheme.onSurfaceVariant,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
+                        children: [
+                          for (final url in segment.urls)
+                            _UrlRow(
+                              key: ValueKey(url.url),
+                              url: url,
                             ),
-                          );
-                        }).toList(),
+                        ],
                       ),
                     )
                   : const SizedBox.shrink(),
@@ -241,12 +223,127 @@ class _SearchCardState extends State<SearchCard>
     return 'Searching: "${segment.query}"';
   }
 
-  Widget _urlStateIcon(SearchURLState state, ThemeData theme) {
+}
+
+/// One row of the URL list inside the search card.
+///
+/// While the row is in [SearchURLState.pending] the domain text is
+/// wrapped in a `Shimmer` so it reads as "still loading" — a horizontal
+/// highlight sweeps across the text every ~1.4 s. The leading status
+/// glyph rides an `AnimatedSwitcher`, so the transition from spinner →
+/// check/cross feels deliberate instead of instant.
+class _UrlRow extends StatelessWidget {
+  final SearchURLStatus url;
+
+  const _UrlRow({super.key, required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isPending = url.state == SearchURLState.pending;
+    final isFailed = url.state == SearchURLState.failed;
+
+    final textColor = isFailed
+        ? colorScheme.onSurfaceVariant.withValues(alpha: 0.5)
+        : colorScheme.onSurfaceVariant;
+
+    // Prefer the page title from the search engine; fall back to the
+    // domain for legacy persisted data (no title) or sites whose search
+    // result didn't carry one.
+    final display = url.title.trim().isNotEmpty ? url.title : url.domain;
+
+    final titleText = Text(
+      display,
+      style: theme.textTheme.bodySmall?.copyWith(color: textColor),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          _StatusGlyph(state: url.state),
+          const SizedBox(width: 6),
+          Expanded(
+            child: isPending
+                ? Shimmer.fromColors(
+                    baseColor: colorScheme.onSurfaceVariant
+                        .withValues(alpha: 0.45),
+                    highlightColor: colorScheme.onSurface
+                        .withValues(alpha: 0.95),
+                    period: const Duration(milliseconds: 1400),
+                    child: titleText,
+                  )
+                : titleText,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 12px status glyph that animates between spinner / check / cross when
+/// the URL's [SearchURLState] changes. Uses `AnimatedSwitcher` with a
+/// scale + fade transition so the new glyph pops in.
+class _StatusGlyph extends StatelessWidget {
+  final SearchURLState state;
+
+  const _StatusGlyph({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    Widget glyph;
     switch (state) {
+      case SearchURLState.pending:
+        glyph = SizedBox(
+          key: const ValueKey('pending'),
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            valueColor: AlwaysStoppedAnimation(
+              colorScheme.primary.withValues(alpha: 0.75),
+            ),
+          ),
+        );
       case SearchURLState.success:
-        return Icon(Icons.check, size: 12, color: theme.colorScheme.primary);
+        glyph = Icon(
+          Icons.check_rounded,
+          key: const ValueKey('success'),
+          size: 13,
+          color: colorScheme.primary,
+        );
       case SearchURLState.failed:
-        return Icon(Icons.close, size: 12, color: theme.colorScheme.error);
+        glyph = Icon(
+          Icons.close_rounded,
+          key: const ValueKey('failed'),
+          size: 13,
+          color: colorScheme.error.withValues(alpha: 0.75),
+        );
     }
+
+    return SizedBox(
+      width: 14,
+      height: 14,
+      child: Center(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          switchInCurve: Curves.easeOutBack,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, animation) {
+            return ScaleTransition(
+              scale: animation,
+              child: FadeTransition(opacity: animation, child: child),
+            );
+          },
+          child: glyph,
+        ),
+      ),
+    );
   }
 }

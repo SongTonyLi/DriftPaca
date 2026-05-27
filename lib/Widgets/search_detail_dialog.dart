@@ -1,7 +1,9 @@
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Shows search details as a bottom sheet with sources and per-source snippets.
@@ -67,34 +69,20 @@ class SearchDetailDialog extends StatelessWidget {
               ),
             ),
             Divider(height: 1, color: theme.colorScheme.outlineVariant.withValues(alpha: 0.3)),
-            // Content
+            // Content: loaded source cards (with title, favicon, content,
+            // tap → open URL, swipe → full content). Failed sources are
+            // moved to the bottom as a compact list. The old "X of Y
+            // sources loaded" header and per-URL tile list are gone —
+            // the cards themselves already convey the loaded state.
             Expanded(
               child: ListView(
                 controller: scrollController,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 children: [
-                  // Error
                   if (segment.error != null)
                     _ErrorCard(error: segment.error!),
-                  // Sources
-                  if (segment.urls.isNotEmpty) ...[
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        '${segment.urls.where((u) => u.state == SearchURLState.success).length} of ${segment.urls.length} sources loaded',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ),
-                    ...segment.urls.map((url) => _SourceTile(url: url)),
-                  ],
-                  // Extracted content per source
-                  if (segment.extractedContent != null &&
-                      segment.extractedContent!.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    ..._buildContentCards(theme),
-                  ],
+                  ..._buildContentCards(theme),
+                  ..._buildFailedSources(theme),
                 ],
               ),
             ),
@@ -104,23 +92,72 @@ class SearchDetailDialog extends StatelessWidget {
     );
   }
 
-  /// Parse extractedContent into per-source cards.
-  /// Format: "domain:\ncontent\n\ndomain:\ncontent"
+  /// Build per-source cards. Prefers the structured `segment.sources`
+  /// (carries url + title + content) and falls back to parsing the
+  /// legacy `extractedContent` string for messages persisted before the
+  /// `sources` field existed.
   List<Widget> _buildContentCards(ThemeData theme) {
-    final raw = segment.extractedContent!;
+    final sources = segment.sources;
+    if (sources != null && sources.isNotEmpty) {
+      return [
+        for (var i = 0; i < sources.length; i++)
+          _SourceContentCard(
+            domain: sources[i].domain,
+            url: sources[i].url,
+            title: sources[i].title,
+            content: sources[i].content,
+            index: i + 1,
+          ),
+      ];
+    }
+
+    // Legacy fallback: "domain:\ncontent\n\ndomain:\ncontent".
+    final raw = segment.extractedContent ?? '';
     final parts = raw.split('\n\n');
     final cards = <Widget>[];
-
+    var index = 0;
     for (final part in parts) {
       final colonIdx = part.indexOf(':\n');
       if (colonIdx == -1) continue;
-      final source = part.substring(0, colonIdx).trim();
+      final domain = part.substring(0, colonIdx).trim();
       final content = part.substring(colonIdx + 2).trim();
       if (content.isEmpty) continue;
-
-      cards.add(_SourceContentCard(source: source, content: content));
+      index++;
+      cards.add(_SourceContentCard(
+        domain: domain,
+        url: 'https://$domain',
+        title: '',
+        content: content,
+        index: index,
+      ));
     }
     return cards;
+  }
+
+  /// Compact list of sources that failed to load (no extracted content).
+  /// Rendered at the bottom of the dialog with a muted "Not loaded"
+  /// header so it's visually deprioritised but still discoverable.
+  List<Widget> _buildFailedSources(ThemeData theme) {
+    final failed = segment.urls
+        .where((u) => u.state == SearchURLState.failed)
+        .toList();
+    if (failed.isEmpty) return const [];
+    return [
+      const SizedBox(height: 18),
+      Padding(
+        padding: const EdgeInsets.only(left: 4, bottom: 6),
+        child: Text(
+          'Not loaded',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color:
+                theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.4,
+          ),
+        ),
+      ),
+      ...failed.map((u) => _FailedSourceRow(url: u)),
+    ];
   }
 }
 
@@ -132,10 +169,19 @@ class SearchDetailDialog extends StatelessWidget {
 /// `model_selection_bottom_sheet.dart` so the gesture feels consistent
 /// across the app.
 class _SourceContentCard extends StatefulWidget {
-  final String source;
+  final String domain;
+  final String url;
+  final String title;
   final String content;
+  final int index;
 
-  const _SourceContentCard({required this.source, required this.content});
+  const _SourceContentCard({
+    required this.domain,
+    required this.url,
+    required this.title,
+    required this.content,
+    required this.index,
+  });
 
   @override
   State<_SourceContentCard> createState() => _SourceContentCardState();
@@ -197,6 +243,12 @@ class _SourceContentCardState extends State<_SourceContentCard>
     _slideController.forward(from: 0);
   }
 
+  Future<void> _openUrl() async {
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   void _showFullContent() {
     showGeneralDialog(
       context: context,
@@ -222,7 +274,8 @@ class _SourceContentCardState extends State<_SourceContentCard>
           child: ScaleTransition(
             scale: Tween(begin: 0.94, end: 1.0).animate(curve),
             child: _SourceFullContentDialog(
-              source: widget.source,
+              source: widget.domain,
+              title: widget.title,
               content: widget.content,
             ),
           ),
@@ -240,12 +293,11 @@ class _SourceContentCardState extends State<_SourceContentCard>
     final preview = widget.content.length > _previewLength
         ? '${widget.content.substring(0, _previewLength)}…'
         : widget.content;
-    final isTruncated = widget.content.length > _previewLength;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         child: Stack(
           children: [
             // Hint revealed behind the card
@@ -255,7 +307,7 @@ class _SourceContentCardState extends State<_SourceContentCard>
                 decoration: BoxDecoration(
                   color: colorScheme.primary
                       .withValues(alpha: 0.08 + 0.06 * progress),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 padding: const EdgeInsets.only(right: 18),
                 child: Opacity(
@@ -291,45 +343,59 @@ class _SourceContentCardState extends State<_SourceContentCard>
                 child: Material(
                   color: Colors.transparent,
                   child: InkWell(
-                    onTap: isTruncated ? _showFullContent : null,
-                    borderRadius: BorderRadius.circular(10),
+                    onTap: _openUrl,
+                    borderRadius: BorderRadius.circular(12),
                     child: Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.4),
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
+                              _FaviconAvatar(domain: widget.domain, size: 18),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  widget.source,
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: colorScheme.primary,
-                                    fontWeight: FontWeight.w600,
+                                  widget.domain,
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: colorScheme.onSurface,
+                                    fontWeight: FontWeight.w500,
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              if (isTruncated)
-                                Icon(
-                                  Icons.swipe_left_rounded,
-                                  size: 14,
-                                  color: colorScheme.onSurfaceVariant
-                                      .withValues(alpha: 0.4),
-                                ),
+                              const SizedBox(width: 8),
+                              _NumberBubble(number: widget.index),
                             ],
                           ),
+                          if (widget.title.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              widget.title,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: colorScheme.onSurface,
+                                fontWeight: FontWeight.w600,
+                                height: 1.35,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                           const SizedBox(height: 6),
                           Text(
                             preview,
                             style: theme.textTheme.bodySmall?.copyWith(
                               height: 1.5,
-                              color: colorScheme.onSurfaceVariant,
+                              color: colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.85),
                             ),
                           ),
                         ],
@@ -346,13 +412,162 @@ class _SourceContentCardState extends State<_SourceContentCard>
   }
 }
 
+/// Small circular favicon used in the source card header. Reads from
+/// [FaviconCache] when populated; otherwise fetches once and caches.
+class _FaviconAvatar extends StatefulWidget {
+  final String domain;
+  final double size;
+
+  const _FaviconAvatar({required this.domain, this.size = 18});
+
+  @override
+  State<_FaviconAvatar> createState() => _FaviconAvatarState();
+}
+
+class _FaviconAvatarState extends State<_FaviconAvatar>
+    with SingleTickerProviderStateMixin {
+  static const Cubic _popCurve = Cubic(0.34, 1.56, 0.64, 1.0);
+
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _fade;
+
+  Uint8List? _bytes;
+  bool _resolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    _scale = CurvedAnimation(parent: _controller, curve: _popCurve);
+    _fade = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    );
+
+    // Cached bytes → render at full state immediately. Animation is
+    // reserved for the "just fetched from network" moment.
+    final cache = FaviconCache.instance;
+    if (cache.isResolved(widget.domain)) {
+      _bytes = cache.bytesFor(widget.domain);
+      _resolved = true;
+      _controller.value = 1.0;
+    } else {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final bytes = await FaviconCache.instance.fetch(widget.domain);
+    if (!mounted) return;
+    setState(() {
+      _bytes = bytes;
+      _resolved = true;
+    });
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final size = widget.size;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: ScaleTransition(
+        scale: _scale,
+        child: FadeTransition(
+          opacity: _fade,
+          child: _resolved ? _buildIcon(colorScheme) : null,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIcon(ColorScheme colorScheme) {
+    if (_bytes != null) {
+      return ClipOval(
+        child: Image.memory(
+          _bytes!,
+          width: widget.size,
+          height: widget.size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => _fallback(colorScheme),
+        ),
+      );
+    }
+    return _fallback(colorScheme);
+  }
+
+  Widget _fallback(ColorScheme colorScheme) {
+    return Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: colorScheme.onSurface.withValues(alpha: 0.10),
+      ),
+      child: Icon(
+        Icons.language_rounded,
+        size: widget.size * 0.65,
+        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+      ),
+    );
+  }
+}
+
+/// Small grey numbered bubble shown at the trailing edge of a source card.
+class _NumberBubble extends StatelessWidget {
+  final int number;
+
+  const _NumberBubble({required this.number});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      decoration: BoxDecoration(
+        color: colorScheme.onSurface.withValues(alpha: 0.085),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        '$number',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          height: 1.0,
+          color: colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
 /// Centered modal that displays the full extracted content for one source,
 /// styled to match `_ModelInfoCard` from the model selector.
 class _SourceFullContentDialog extends StatelessWidget {
   final String source;
+  final String title;
   final String content;
 
-  const _SourceFullContentDialog({required this.source, required this.content});
+  const _SourceFullContentDialog({
+    required this.source,
+    required this.title,
+    required this.content,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -406,33 +621,49 @@ class _SourceFullContentDialog extends StatelessWidget {
                           ),
                         ),
                       ),
-                      child: Row(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            Icons.language_rounded,
-                            size: 18,
-                            color: colorScheme.primary,
+                          Row(
+                            children: [
+                              _FaviconAvatar(domain: source, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  source,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close_rounded, size: 20),
+                                color: colorScheme.onSurfaceVariant,
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              source,
+                          if (title.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              title,
                               style: TextStyle(
-                                fontSize: 14,
+                                fontSize: 15,
                                 fontWeight: FontWeight.w700,
                                 color: colorScheme.onSurface,
                                 letterSpacing: -0.2,
+                                height: 1.35,
                               ),
-                              maxLines: 2,
+                              maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close_rounded, size: 20),
-                            color: colorScheme.onSurfaceVariant,
-                            visualDensity: VisualDensity.compact,
-                            onPressed: () => Navigator.of(context).pop(),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -489,14 +720,18 @@ class _ErrorCard extends StatelessWidget {
   }
 }
 
-class _SourceTile extends StatelessWidget {
+/// Compact row for a source whose page could not be fetched. Listed at
+/// the bottom of the dialog, visually deprioritised but still tappable
+/// so the user can open the original URL in a browser if curious.
+class _FailedSourceRow extends StatelessWidget {
   final SearchURLStatus url;
-  const _SourceTile({required this.url});
+  const _FailedSourceRow({required this.url});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isSuccess = url.state == SearchURLState.success;
+    final colorScheme = theme.colorScheme;
+    final muted = colorScheme.onSurfaceVariant.withValues(alpha: 0.55);
 
     return InkWell(
       onTap: () {
@@ -505,43 +740,26 @@ class _SourceTile extends StatelessWidget {
       },
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
         child: Row(
           children: [
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                color: isSuccess
-                    ? theme.colorScheme.primaryContainer.withValues(alpha: 0.5)
-                    : theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Icon(
-                isSuccess ? Icons.check_rounded : Icons.close_rounded,
-                size: 14,
-                color: isSuccess
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
-              ),
+            Opacity(
+              opacity: 0.55,
+              child: _FaviconAvatar(domain: url.domain, size: 16),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 url.domain,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: isSuccess
-                      ? theme.colorScheme.onSurface
-                      : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                ),
+                style: theme.textTheme.bodySmall?.copyWith(color: muted),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             Icon(
               Icons.open_in_new_rounded,
-              size: 14,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+              size: 13,
+              color: muted,
             ),
           ],
         ),

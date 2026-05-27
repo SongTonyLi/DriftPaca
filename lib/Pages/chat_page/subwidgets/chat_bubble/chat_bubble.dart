@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import 'package:llamaseek/Extensions/code_syntax_highlighter.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
 import 'package:llamaseek/Models/search_event.dart';
@@ -1074,18 +1076,20 @@ class _HtmlBrBuilder extends MarkdownElementBuilder {
   }
 }
 
-/// Renders markdown links as inline "highlighter marks" — a soft color
-/// stripe behind the text that fades at the top and bottom so it reads
-/// like marker tape rather than a button.
+/// Renders markdown links as a small inline favicon that pops in. The
+/// destination's website logo replaces the visible link text — the user
+/// sees the brand, taps the brand. Hit area is locked to the visible
+/// circle via `HitTestBehavior.opaque`, so taps next to the icon never
+/// trigger the URL.
 ///
-/// Default flutter_markdown link rendering attaches a recognizer to a
-/// bare TextSpan, so the hit area is the text bounds — effectively
-/// unclickable for short citation links like `[¹]`. The chip pads the
-/// hit target while the fading gradient keeps the visual weight low.
+/// Favicons are expected to be in the [FaviconCache] (preloaded by the
+/// web-search pipeline). On cache miss the widget kicks off a fetch and
+/// animates in once the bytes arrive; on permanent failure it shows a
+/// muted globe glyph.
 ///
 /// Wrapping the result in a `WidgetSpan` inside a `Text.rich` lets
 /// flutter_markdown's [_mergeInlineChildren] merge it with surrounding
-/// text so the chip flows inline.
+/// text so the favicon flows inline.
 class _LinkBuilder extends MarkdownElementBuilder {
   @override
   Widget? visitElementAfterWithContext(
@@ -1095,18 +1099,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
     TextStyle? parentStyle,
   ) {
     final href = element.attributes['href'] ?? '';
-    final text = element.textContent;
-    if (text.isEmpty) return null;
-
-    final colorScheme = Theme.of(context).colorScheme;
-    final linkColor = colorScheme.primary;
-    final base = preferredStyle ?? parentStyle ?? const TextStyle();
-    final linkStyle = base.copyWith(
-      color: linkColor,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.15,
-      decoration: TextDecoration.none,
-    );
+    if (href.isEmpty) return null;
 
     return Text.rich(
       TextSpan(
@@ -1114,12 +1107,7 @@ class _LinkBuilder extends MarkdownElementBuilder {
           WidgetSpan(
             alignment: PlaceholderAlignment.middle,
             baseline: TextBaseline.alphabetic,
-            child: _LinkPill(
-              href: href,
-              text: text,
-              textStyle: linkStyle,
-              linkColor: linkColor,
-            ),
+            child: _LinkFavicon(href: href),
           ),
         ],
       ),
@@ -1127,54 +1115,142 @@ class _LinkBuilder extends MarkdownElementBuilder {
   }
 }
 
-class _LinkPill extends StatelessWidget {
+/// Animated favicon for inline links. Plays a one-shot scale + fade "pop"
+/// when the favicon resolves, mirroring sticker-placement feel.
+class _LinkFavicon extends StatefulWidget {
   final String href;
-  final String text;
-  final TextStyle textStyle;
-  final Color linkColor;
 
-  const _LinkPill({
-    required this.href,
-    required this.text,
-    required this.textStyle,
-    required this.linkColor,
-  });
+  const _LinkFavicon({required this.href});
+
+  @override
+  State<_LinkFavicon> createState() => _LinkFaviconState();
+}
+
+class _LinkFaviconState extends State<_LinkFavicon>
+    with SingleTickerProviderStateMixin {
+  static const double _size = 16.0;
+  // easeOutBack — gentle overshoot (~10%) without oscillation. Subtler
+  // than elasticOut for a 16px icon, so a paragraph of citations doesn't
+  // visually rattle when they pop in.
+  static const Cubic _popCurve = Cubic(0.34, 1.56, 0.64, 1.0);
+
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _fade;
+
+  Uint8List? _bytes;
+  String _domain = '';
+  bool _resolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    _scale = CurvedAnimation(parent: _controller, curve: _popCurve);
+    _fade = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    );
+    _domain = Uri.tryParse(widget.href)?.host ?? '';
+
+    // When bytes are already cached we skip the pop entirely and render
+    // at full scale. During streaming, MarkdownBody re-parses on every
+    // typewriter tick and recreates the WidgetSpan child — if we
+    // animated from 0 on each build, the controller would never reach 1
+    // before the next rebuild, and the favicon would stay invisible
+    // until streaming finished. Skipping the animation for cached bytes
+    // makes citations appear instantly during streaming (which is the
+    // common case once `FaviconCache.preload` has warmed the cache).
+    final cache = FaviconCache.instance;
+    if (cache.isResolved(_domain)) {
+      _bytes = cache.bytesFor(_domain);
+      _resolved = true;
+      _controller.value = 1.0;
+    } else {
+      _resolveFavicon();
+    }
+  }
+
+  Future<void> _resolveFavicon() async {
+    if (_domain.isEmpty) {
+      _resolved = true;
+      _controller.value = 1.0;
+      return;
+    }
+
+    final bytes = await FaviconCache.instance.fetch(_domain);
+    if (!mounted) return;
+    setState(() {
+      _bytes = bytes;
+      _resolved = true;
+    });
+    // Only animate when bytes have just arrived from the network — there
+    // was a real "appear" moment to celebrate. Cached bytes never get
+    // here.
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Highlighter stripe: transparent → solid tint → solid tint →
-    // transparent. The solid band sits in the middle 75% of the chip
-    // height so the visible mark looks taller than the text but doesn't
-    // touch the line boundaries — closer to a marker pen swipe than to
-    // a bordered button.
-    final stripeColor = linkColor.withValues(alpha: 0.18);
-    final gradient = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [
-        Colors.transparent,
-        stripeColor,
-        stripeColor,
-        Colors.transparent,
-      ],
-      stops: const [0.0, 0.12, 0.88, 1.0],
-    );
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => launchUrlString(href),
-        borderRadius: BorderRadius.circular(3),
-        splashColor: linkColor.withValues(alpha: 0.22),
-        highlightColor: linkColor.withValues(alpha: 0.10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2.5),
-          decoration: BoxDecoration(
-            gradient: gradient,
-            borderRadius: BorderRadius.circular(3),
+    final colorScheme = Theme.of(context).colorScheme;
+    // Hit area is pinned to the visible favicon rectangle (16x16) and
+    // not the padding/spacing around it. The GestureDetector lives
+    // inside the SizedBox so its bounds match the icon exactly — taps
+    // in adjacent text or whitespace never route here.
+    return SizedBox(
+      width: _size,
+      height: _size,
+      child: ScaleTransition(
+        scale: _scale,
+        child: FadeTransition(
+          opacity: _fade,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => launchUrlString(widget.href),
+            child: _resolved ? _buildIcon(colorScheme) : null,
           ),
-          child: Text(text, style: textStyle),
         ),
+      ),
+    );
+  }
+
+  Widget _buildIcon(ColorScheme colorScheme) {
+    if (_bytes != null) {
+      return ClipOval(
+        child: Image.memory(
+          _bytes!,
+          width: _size,
+          height: _size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => _fallbackGlyph(colorScheme),
+        ),
+      );
+    }
+    return _fallbackGlyph(colorScheme);
+  }
+
+  Widget _fallbackGlyph(ColorScheme colorScheme) {
+    return Container(
+      width: _size,
+      height: _size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: colorScheme.onSurface.withValues(alpha: 0.10),
+      ),
+      child: Icon(
+        Icons.language_rounded,
+        size: _size * 0.72,
+        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
       ),
     );
   }

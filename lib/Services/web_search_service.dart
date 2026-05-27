@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 import 'package:llamaseek/Utils/text_splitter.dart';
@@ -406,7 +407,8 @@ ${sourceContext.toString().trim()}
       // Skip responses > 1MB
       if (response.bodyBytes.length > 1024 * 1024) return;
 
-      final extracted = extractTextFromHtml(response.body);
+      final html = _decodeResponseBody(response);
+      final extracted = extractTextFromHtml(html);
       if (extracted.isNotEmpty) {
         result.pageContent = extracted.length > _maxPageContentLength
             ? extracted.substring(0, _maxPageContentLength)
@@ -414,6 +416,77 @@ ${sourceContext.toString().trim()}
       }
     } catch (e) {
       // Keep snippet as fallback
+    }
+  }
+
+  /// Decodes response bytes using the correct character encoding.
+  ///
+  /// `response.body` decodes with Latin-1 whenever the `Content-Type` header
+  /// omits a `charset` — which is the norm for many Chinese/Japanese sites
+  /// that declare encoding only in `<meta charset>`. Reading those as
+  /// Latin-1 produces mojibake (`æ§¶å°²…`) in the extracted text.
+  ///
+  /// Resolution order: Content-Type charset → `<meta charset>` scanned from
+  /// the first 4KB (using Latin-1 to safely walk ASCII) → UTF-8.
+  static String _decodeResponseBody(http.Response response) =>
+      decodeHtmlBytes(response.bodyBytes,
+          contentTypeHeader: response.headers['content-type'] ?? '');
+
+  @visibleForTesting
+  static String decodeHtmlBytes(
+    List<int> bytes, {
+    String contentTypeHeader = '',
+  }) {
+    final headerCharset = _extractHeaderCharset(contentTypeHeader);
+    if (headerCharset != null) {
+      final decoded = _tryDecodeBytes(bytes, headerCharset);
+      if (decoded != null) return decoded;
+    }
+
+    // Latin-1 round-trips bytes 0x00..0xFF, so the ASCII parts of the head
+    // remain readable regardless of the document's real encoding.
+    final headSize = bytes.length < 4096 ? bytes.length : 4096;
+    final headPeek = latin1.decode(bytes.sublist(0, headSize));
+    final metaCharset = _extractMetaCharset(headPeek);
+    if (metaCharset != null) {
+      final decoded = _tryDecodeBytes(bytes, metaCharset);
+      if (decoded != null) return decoded;
+    }
+
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  static final _headerCharsetPattern =
+      RegExp(r'charset\s*=\s*"?([\w-]+)', caseSensitive: false);
+
+  static String? _extractHeaderCharset(String contentType) =>
+      _headerCharsetPattern.firstMatch(contentType)?.group(1)?.toLowerCase();
+
+  // Matches both HTML5 `<meta charset="utf-8">` and HTML4
+  // `<meta http-equiv="Content-Type" content="text/html; charset=...">`.
+  static final _metaCharsetPattern =
+      RegExp(r'''<meta[^>]+charset\s*=\s*["']?([\w-]+)''',
+          caseSensitive: false);
+
+  static String? _extractMetaCharset(String html) =>
+      _metaCharsetPattern.firstMatch(html)?.group(1)?.toLowerCase();
+
+  static String? _tryDecodeBytes(List<int> bytes, String charset) {
+    switch (charset) {
+      case 'utf-8':
+      case 'utf8':
+        return utf8.decode(bytes, allowMalformed: true);
+      case 'iso-8859-1':
+      case 'latin1':
+      case 'latin-1':
+        return latin1.decode(bytes);
+      case 'us-ascii':
+      case 'ascii':
+        return ascii.decode(bytes, allowInvalid: true);
+      default:
+        // GBK, Big5, Shift-JIS, etc. — dart:convert doesn't ship decoders
+        // for these. Caller falls through to UTF-8 with allowMalformed.
+        return null;
     }
   }
 

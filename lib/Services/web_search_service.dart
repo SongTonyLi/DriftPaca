@@ -198,7 +198,7 @@ Respond to the user query using the provided sources. Cross-reference multiple s
 - If sources conflict, state what each source says and which seems most reliable.
 - If you don't know the answer, clearly state that.
 - Respond in the same language as the user's query.
-- Cite sources inline as bracketed numbers, e.g. `[1]` for source id="1", `[3]` for source id="3". Do NOT write the word "id" inside the brackets — `[id:1]` is wrong, `[1]` is correct.
+- Cite every reference using EXACTLY the form `[N]`, where N is the source id digit — `[1]` for source id="1", `[3]` for source id="3", `[10]` for source id="10". This is the only accepted citation format. Do not write `[id:1]`, `[src:1]`, `[source:1]`, `(src 1)`, `(source 1)`, `(see source 1)`, or any other variant — those will not render as links. Use the same `[N]` form in prose, tables, list items, and headers alike.
 
 <context>
 ${sourceContext.toString().trim()}

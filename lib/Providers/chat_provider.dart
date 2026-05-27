@@ -789,20 +789,30 @@ class ChatProvider extends ChangeNotifier {
 
   static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
     // Match citation formats the model might emit:
-    //   [1], [ 1 ]       — plain bracketed digit
-    //   [id:1], [id: 1]  — when the model takes the prompt's "use [id]"
-    //                      literally and writes the word "id"
+    //   [1], [ 1 ]              — plain bracketed digit
+    //   [id:1], [src:1],
+    //     [source:1]            — bracketed digit with a label prefix
+    //                              (the model sometimes reads "use [id]"
+    //                              literally)
+    //   (src 1), (source 1),
+    //     (Src1), (SRC 1)       — parenthesised "src"/"source" + digit
+    //                              (gpt-oss / gemma sometimes prefer this
+    //                              in tables, e.g. `Precedence (src 1)`)
     //   【1】, 【id:1】   — fullwidth brackets (qwen/deepseek)
     // Negative lookahead `(?!\()` skips brackets already followed by `(`,
     // which would be part of an existing markdown link.
     return content.replaceAllMapped(
       RegExp(
-        r'(?:\[\s*(?:id\s*:\s*)?(\d+)\s*\]'
-        r'|\u3010\s*(?:id\s*:\s*)?(\d+)\s*\u3011)(?!\()',
+        r'(?:'
+        r'\[\s*(?:(?:id|src|source)\s*:\s*)?(\d+)\s*\]'
+        r'|\u3010\s*(?:(?:id|src|source)\s*:\s*)?(\d+)\s*\u3011'
+        r'|\(\s*(?:src|source)\s*(\d+)\s*\)'
+        r')(?!\()',
         caseSensitive: false,
       ),
       (match) {
-        final id = int.tryParse(match.group(1) ?? match.group(2) ?? '');
+        final id = int.tryParse(
+            match.group(1) ?? match.group(2) ?? match.group(3) ?? '');
         if (id != null && sourceUrls.containsKey(id)) {
           final url = sourceUrls[id]!;
           // Use superscript numbers to avoid nested bracket issues and

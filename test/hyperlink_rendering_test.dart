@@ -226,6 +226,80 @@ void main() {
       );
       expect(result, 'Source [¹](http://one.com) confirms.');
     });
+
+    test('replaces parenthesised (src N) used inside table cells', () {
+      // Regression for an HBM market-report response where the model
+      // labelled each table row with `(src 1)`, `(src 2)`, etc. instead
+      // of using bracketed citations.
+      final sourceUrls = {
+        1: 'http://one.com',
+        2: 'http://two.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '| Precedence (src 1) | data |\n| DataInsights (src 2) | data |',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '| Precedence [¹](http://one.com) | data |\n'
+        '| DataInsights [²](http://two.com) | data |',
+      );
+    });
+
+    test('replaces (source N) and (SRC N) variants', () {
+      final sourceUrls = {3: 'http://three.com', 4: 'http://four.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See (source 3) and (SRC 4).',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'See [³](http://three.com) and [⁴](http://four.com).',
+      );
+    });
+
+    test('replaces (src1) with no space between word and digit', () {
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'reported in (src1).',
+        sourceUrls,
+      );
+      expect(result, 'reported in [¹](http://one.com).');
+    });
+
+    test('replaces [src:N] and [source:N]', () {
+      final sourceUrls = {1: 'http://one.com', 2: 'http://two.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '[src:1] and [source:2]',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '[¹](http://one.com) and [²](http://two.com)',
+      );
+    });
+
+    test('does not match parenthesised text without a digit', () {
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See (src files) and (source code).',
+        sourceUrls,
+      );
+      // No digit after the keyword → leave the text alone.
+      expect(result, 'See (src files) and (source code).');
+    });
+
+    test('does not match parenthesised id without src/source prefix', () {
+      // `(1)`, `(see 1)`, etc. are too ambiguous (could be a footnote,
+      // section number, parenthesised value). Only `src`/`source`
+      // prefix qualifies.
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See (1) and (note 1).',
+        sourceUrls,
+      );
+      expect(result, 'See (1) and (note 1).');
+    });
   });
 
   // ===========================================================================

@@ -13,6 +13,7 @@ import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'dart:typed_data';
 import 'package:llamaseek/Utils/request_review_helper.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -55,16 +56,22 @@ void main() async {
     await inAppReview.requestReview();
   }
 
+  // One HTTP client shared by OllamaService and MemoryService so they reuse a
+  // single TLS connection to ollama.com instead of each paying a cold-start
+  // handshake on the first message.
+  final sharedHttpClient = http.Client();
+
   runApp(
     MultiProvider(
       providers: [
-        Provider(create: (_) => OllamaService()),
+        Provider(create: (_) => OllamaService(client: sharedHttpClient)),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),
         ChangeNotifierProvider(
           create: (context) => MemoryService(
             db: context.read<DatabaseService>(),
+            client: sharedHttpClient,
           ),
         ),
         ChangeNotifierProvider(

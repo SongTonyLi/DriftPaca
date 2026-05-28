@@ -36,10 +36,16 @@ class MemoryService extends ChangeNotifier {
   List<EphemeralContext>? _ephemeralCache;
 
   /// Persistent HTTP client for cloud memory-model calls — reuses the
-  /// TLS connection across summarisation requests.
-  final http.Client _client = http.Client();
+  /// TLS connection across requests. When injected (shared with
+  /// OllamaService), both services reuse a single TLS connection to
+  /// ollama.com instead of each paying a separate handshake.
+  final http.Client _client;
+  final bool _ownsClient;
 
-  MemoryService({required DatabaseService db}) : _db = db {
+  MemoryService({required DatabaseService db, http.Client? client})
+      : _db = db,
+        _client = client ?? http.Client(),
+        _ownsClient = client == null {
     // Migrate old default model names to current default
     final box = Hive.box('settings');
     final stored = box.get('memoryModel');
@@ -52,9 +58,17 @@ class MemoryService extends ChangeNotifier {
   // Configuration
   // ============================================================
 
-  String get _model {
+  /// Model for async memory generation/summarisation (off the critical path).
+  String get _generationModel {
     final box = Hive.box('settings');
     return box.get('memoryModel', defaultValue: MemoryConstants.defaultModel);
+  }
+
+  /// Model for the pre-message topic-retrieval call (on the critical path).
+  String get _retrievalModel {
+    final box = Hive.box('settings');
+    return box.get('memoryRetrievalModel',
+        defaultValue: MemoryConstants.defaultRetrievalModel);
   }
 
   String? get _apiKey {
@@ -146,7 +160,7 @@ class MemoryService extends ChangeNotifier {
         ephemeralKeys: ephemeralKeys,
       );
 
-      final responseBody = await _callCloudModel(prompt);
+      final responseBody = await _callCloudModel(prompt, model: _retrievalModel);
       if (responseBody == null) return '';
 
       final parsed = _extractJson(responseBody);
@@ -241,8 +255,8 @@ class MemoryService extends ChangeNotifier {
             : null,
       );
 
-      // Call cloud model
-      final responseBody = await _callCloudModel(prompt);
+      // Call cloud model (async generation — off the critical path)
+      final responseBody = await _callCloudModel(prompt, model: _generationModel);
       if (responseBody == null) {
         return;
       }
@@ -260,7 +274,7 @@ class MemoryService extends ChangeNotifier {
     }
   }
 
-  Future<String?> _callCloudModel(String prompt) async {
+  Future<String?> _callCloudModel(String prompt, {required String model}) async {
     final url = Uri.parse('$_cloudBaseUrl/api/chat');
 
     try {
@@ -271,7 +285,7 @@ class MemoryService extends ChangeNotifier {
           'Authorization': 'Bearer $_apiKey',
         },
         body: jsonEncode({
-          'model': _model,
+          'model': model,
           'messages': [
             {'role': 'user', 'content': prompt},
           ],
@@ -284,7 +298,7 @@ class MemoryService extends ChangeNotifier {
         final json = jsonDecode(responseBody);
         return json['message']?['content'] as String?;
       } else if (response.statusCode == 404) {
-        _lastError = 'Model "$_model" not found. Change it in Settings → Memory Model.';
+        _lastError = 'Model "$model" not found. Change it in Settings → Memory Model.';
         return null;
       } else {
         _lastError = 'API error ${response.statusCode}';
@@ -615,7 +629,7 @@ class MemoryService extends ChangeNotifier {
 
     try {
       final prompt = MemoryConstants.buildResummarizationPrompt(content, tokenLimit);
-      return await _callCloudModel(prompt);
+      return await _callCloudModel(prompt, model: _generationModel);
     } finally {
       _isUpdating = false;
       notifyListeners();
@@ -624,7 +638,7 @@ class MemoryService extends ChangeNotifier {
 
   @override
   void dispose() {
-    _client.close();
+    if (_ownsClient) _client.close();
     super.dispose();
   }
 }

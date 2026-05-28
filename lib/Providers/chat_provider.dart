@@ -807,9 +807,12 @@ class ChatProvider extends ChangeNotifier {
     // Match citation formats the model might emit:
     //   [1], [ 1 ]              — plain bracketed digit
     //   [id:1], [src:1],
-    //     [source:1]            — bracketed digit with a label prefix
+    //     [source:1], [来源:1]   — bracketed digit with a label prefix
     //                              (the model sometimes reads "use [id]"
-    //                              literally)
+    //                              literally; Chinese models translate it
+    //                              to 来源 = "source")
+    //   [来源：1]                — same, but with a fullwidth colon U+FF1A
+    //                              that a Chinese IME emits instead of ":"
     //   (src 1), (source 1),
     //     (Src1), (SRC 1)       — parenthesised "src"/"source" + digit
     //                              (gpt-oss / gemma sometimes prefer this
@@ -820,8 +823,8 @@ class ChatProvider extends ChangeNotifier {
     return content.replaceAllMapped(
       RegExp(
         r'(?:'
-        r'\[\s*(?:(?:id|src|source)\s*:\s*)?(\d+)\s*\]'
-        r'|\u3010\s*(?:(?:id|src|source)\s*:\s*)?(\d+)\s*\u3011'
+        r'\[\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?(\d+)\s*\]'
+        r'|\u3010\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?(\d+)\s*\u3011'
         r'|\(\s*(?:src|source)\s*(\d+)\s*\)'
         r')(?!\()',
         caseSensitive: false,

@@ -279,6 +279,40 @@ void main() {
       );
     });
 
+    test('replaces Chinese [来源:N] label with ASCII colon', () {
+      // Chinese models translate the system prompt's "source id" and emit
+      // 来源 ("source") as the label, e.g. `[来源:6]`.
+      final sourceUrls = {6: 'http://six.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '这源于熟悉感 [来源:6]。',
+        sourceUrls,
+      );
+      expect(result, '这源于熟悉感 [⁶](http://six.com)。');
+    });
+
+    test('replaces Chinese [来源：N] label with fullwidth colon', () {
+      // Chinese IME produces a fullwidth colon U+FF1A between the label and
+      // the digit, e.g. `[来源：2]`.
+      final sourceUrls = {2: 'http://two.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '激发嫉妒情绪 [来源：2]。',
+        sourceUrls,
+      );
+      expect(result, '激发嫉妒情绪 [²](http://two.com)。');
+    });
+
+    test('replaces chained Chinese [来源:N][来源:N] citations', () {
+      final sourceUrls = {4: 'http://four.com', 6: 'http://six.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '寻找熟悉的影子 [来源:4][来源:6]。',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '寻找熟悉的影子 [⁴](http://four.com)[⁶](http://six.com)。',
+      );
+    });
+
     test('does not match parenthesised text without a digit', () {
       final sourceUrls = {1: 'http://one.com'};
       final result = ChatProvider.replaceCitationsWithLinks(

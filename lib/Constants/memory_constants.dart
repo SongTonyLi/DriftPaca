@@ -1,7 +1,14 @@
 // lib/Constants/memory_constants.dart
 
 class MemoryConstants {
+  /// Model for async memory generation/summarisation (runs post-message,
+  /// off the critical path — can be large/slow).
   static const String defaultModel = 'gpt-oss:120b-cloud';
+
+  /// Model for the pre-message topic-retrieval call (on the critical path —
+  /// must be fast). Benchmarked: ministral-3:8b ~1s with recall on par with
+  /// gpt-oss:120b (~1.7–2.9s) on topic selection.
+  static const String defaultRetrievalModel = 'ministral-3:8b';
 
   static const int maxConversationMemoryTokens = 12000;
   static const int maxProfileTokens = 2000;

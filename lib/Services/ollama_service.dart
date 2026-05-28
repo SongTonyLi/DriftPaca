@@ -59,14 +59,20 @@ class OllamaService {
 
   /// Persistent HTTP client so TCP/TLS connections are reused across requests.
   /// Top-level http.* helpers create a fresh client per call, which pays a
-  /// new TLS handshake every time on Ollama Cloud.
-  final http.Client _client = http.Client();
+  /// new TLS handshake every time on Ollama Cloud. When injected (shared with
+  /// MemoryService), both services reuse a single TLS connection to ollama.com
+  /// instead of each paying a separate cold-start handshake.
+  final http.Client _client;
+  final bool _ownsClient;
 
   /// Creates a new instance of the Ollama service.
-  OllamaService({String? baseUrl}) : _baseUrl = baseUrl ?? defaultLocalUrl;
+  OllamaService({String? baseUrl, http.Client? client})
+      : _baseUrl = baseUrl ?? defaultLocalUrl,
+        _client = client ?? http.Client(),
+        _ownsClient = client == null;
 
   void dispose() {
-    _client.close();
+    if (_ownsClient) _client.close();
   }
 
   /// Constructs a URL by resolving the provided path against the base URL.

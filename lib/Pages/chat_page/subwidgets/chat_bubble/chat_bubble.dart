@@ -299,14 +299,31 @@ class _ChatBubbleBody extends StatelessWidget {
   static final _currencyLeadPattern = RegExp(r'^\s*[\d,.]');
   static final _latexOperatorPattern =
       RegExp(r'[+=^_\\{}<>]|(?<!\*)\*(?!\*)');
+  // A lone `~` (not part of `~~`) immediately before an amount — `~$4.6T`,
+  // `~€39B`, `~40` — is "approximately", not a strikethrough delimiter. Two
+  // of them otherwise pair into GFM strikethrough and scratch out everything
+  // between two figures. A doubled `~~strike~~` is left untouched.
+  static final _approxTildePattern = RegExp(r'(?<!~)~(?!~)(?=[\$€£¥\d])');
 
   static String _escapeCurrencyInText(String text) {
-    return text.replaceAllMapped(_inlineDollarPairPattern, (m) {
+    final escaped = text.replaceAll(_approxTildePattern, r'\~');
+    return escaped.replaceAllMapped(_inlineDollarPairPattern, (m) {
       final full = m[0]!;
       final inner = m[1]!;
       if (!_currencyLeadPattern.hasMatch(inner)) return full;
-      final stripped = inner.replaceAll('**', '');
-      if (_latexOperatorPattern.hasMatch(stripped)) return full;
+      // A markdown link inside the span makes this prose with currency
+      // dollars, never a math expression — LaTeX has no `[text](url)`. Skip
+      // the operator heuristic, which would otherwise be fooled by `_`/`=`/`+`
+      // inside citation URLs (e.g. `internet_services`) and leave the `$`
+      // unescaped, letting the inline-LaTeX parser swallow the whole prose run
+      // as a single non-wrapping formula.
+      if (!inner.contains('](')) {
+        // Drop `**` and our own escaped `\~` (inserted above for
+        // "approximately") so neither the bold markers nor that backslash
+        // are mistaken for LaTeX operators.
+        final stripped = inner.replaceAll('**', '').replaceAll(r'\~', '');
+        if (_latexOperatorPattern.hasMatch(stripped)) return full;
+      }
       return '\\\$$inner\\\$';
     });
   }
@@ -489,22 +506,27 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   Ticker? _revealTicker;
   double _revealProgress = 0.0;
   double _thinkingRevealProgress = 0.0;
+  // Throttles how often the reveal rebuilds (re-parses markdown). Independent
+  // wall clock so it survives the ticker stopping/restarting.
+  final Stopwatch _revealThrottle = Stopwatch()..start();
 
   static const double _baseCharsPerFrame = 0.7;
   static const int _catchUpThreshold = 80;
-  // Upper bound on reveal rate. Without it the catch-up term explodes for a
-  // large buffered chunk — the answer arriving all at once after a long
-  // thinking phase, or a fast cloud model emitting the whole reply in one
-  // frame — and the text dumps instantly. Capping keeps it a visible
-  // typewriter stream (at most ~_maxCharsPerFrame * 60 chars/sec).
-  static const double _maxCharsPerFrame = 4.0;
+  // Drain any backlog within ~this many frames (~1.5s at 60fps). A fixed
+  // chars/frame cap made long answers reveal over hundreds of frames, and
+  // every frame re-parses the full (growing) markdown + preprocessing chain —
+  // which spiked memory and janked other animations (e.g. the prompt bar).
+  // Bounding the frame count keeps long text a fast-but-visible stream while
+  // short text still reveals at the gentle base pace.
+  static const int _revealFrameBudget = 90;
 
-  /// Reveal rate in chars/frame: base pace, accelerating when behind, but
-  /// never above [_maxCharsPerFrame] so a buffered tail still streams in.
+  /// Reveal rate in chars/frame: gentle base pace for a small backlog,
+  /// otherwise fast enough to finish the backlog within [_revealFrameBudget]
+  /// frames so a long answer never re-parses markdown for many seconds.
   double _revealSpeed(int remaining) {
     if (remaining <= _catchUpThreshold) return _baseCharsPerFrame;
-    final accelerated = _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5;
-    return accelerated > _maxCharsPerFrame ? _maxCharsPerFrame : accelerated;
+    final budgetPace = remaining / _revealFrameBudget;
+    return budgetPace > _baseCharsPerFrame ? budgetPace : _baseCharsPerFrame;
   }
 
   /// True once both thinking and response content are fully revealed.
@@ -617,24 +639,40 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   void _onRevealTick(Duration elapsed) {
+    // Advance the reveal cursor every frame, but only rebuild (which re-parses
+    // the whole markdown) at ~30fps. At 60fps the re-parse competes with the
+    // stream notifications and starves other animations like the prompt bar.
     // Reveal thinking tokens first, then response content.
     if (_revealedThinkingLength < _targetThinking.length) {
       final remaining = _targetThinking.length - _revealedThinkingLength;
       _thinkingRevealProgress += _revealSpeed(remaining);
       final newLen = _thinkingRevealProgress.floor().clamp(0, _targetThinking.length);
-      if (newLen != _revealedThinkingLength) {
+      if (newLen != _revealedThinkingLength &&
+          _revealDue(newLen >= _targetThinking.length)) {
         setState(() => _revealedThinkingLength = newLen);
       }
     } else if (_revealedLength < _targetContent.length) {
       final remaining = _targetContent.length - _revealedLength;
       _revealProgress += _revealSpeed(remaining);
       final newLen = _revealProgress.floor().clamp(0, _targetContent.length);
-      if (newLen != _revealedLength) {
+      if (newLen != _revealedLength &&
+          _revealDue(newLen >= _targetContent.length)) {
         setState(() => _revealedLength = newLen);
       }
     } else {
       _stopRevealTicker();
     }
+  }
+
+  /// Whether a reveal rebuild should happen this frame: at most every ~33ms
+  /// (~30fps), but always when the phase reaches its target so the final
+  /// characters flush and the ticker can stop.
+  bool _revealDue(bool reachedTarget) {
+    if (reachedTarget || _revealThrottle.elapsedMilliseconds >= 33) {
+      _revealThrottle.reset();
+      return true;
+    }
+    return false;
   }
 
   @override

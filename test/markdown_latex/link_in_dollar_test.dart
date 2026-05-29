@@ -308,6 +308,98 @@ void main() {
       expect(nonOverflowErrors(errors), isEmpty);
       expect(find.byType(Math), findsNothing);
     });
+
+    testWidgets('real model output (Vietnam GDP comparison) renders without '
+        'overflow, stray math, or strikethrough', (tester) async {
+      // Verbatim excerpt of the financial-comparison answer that triggered
+      // both the right-overflow (currency $ paired as math) and the
+      // scratched-out text (lone ~ paired as strikethrough).
+      const realOutput =
+          '- **United States** – Alphabet/Google is valued at roughly '
+          r'**$4.6 trillion** in the most recent USD sources '
+          r'[⁷](https://capital.com/en-int/markets/shares/largest-tech-companies-by-market-cap)'
+          r'[⁸](https://www.financecharts.com/keyword/internet_services), '
+          r'while Source 1 lists it at **€3.909 trillion** '
+          r'[¹](https://companiesmarketcap.com/eur/internet/largest-internet-companies-by-market-cap/). '
+          r'Amazon is shown at about **$2.42 trillion** '
+          r'[⁴](https://www.investopedia.com/articles/personal-finance/030415/worlds-top-10-internet-companies.asp).'
+          '\n\n'
+          r"**Scale relative to Vietnam's GDP** "
+          r"Vietnam's nominal GDP is about **$514 billion**. Alphabet alone "
+          r'(~$4.6T) '
+          r'[⁷](https://capital.com/en-int/markets/shares/largest-tech-companies-by-market-cap) '
+          r'is worth roughly **nine times** that amount. Tencent '
+          r'(~$423B–$580B) '
+          r'[¹](https://companiesmarketcap.com/eur/internet/largest-internet-companies-by-market-cap/) '
+          r"by itself is comparable to Vietnam's entire annual output.";
+      final errors = await pumpBubbleAndCollectErrors(tester, realOutput);
+      expect(overflowErrors(errors), isEmpty,
+          reason: 'currency prose must wrap, not render as non-wrapping math');
+      expect(find.byType(Math), findsNothing,
+          reason: 'no \$ run in this prose is real LaTeX');
+      expect(find.textContaining('](https://'), findsNothing,
+          reason: 'citation links must render, not appear as raw text');
+      var struck = false;
+      for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+        rt.text.visitChildren((span) {
+          if (span is TextSpan &&
+              span.style?.decoration == TextDecoration.lineThrough) {
+            struck = true;
+          }
+          return true;
+        });
+      }
+      expect(struck, isFalse, reason: 'lone ~ must not strike out text');
+    });
+
+    testWidgets('lone ~ before currency is not parsed as strikethrough',
+        (tester) async {
+      // `~` means "approximately" before amounts (e.g. `~$4.6T`, `~$423B`).
+      // GFM strikethrough pairs lone tildes, so two of them struck out the
+      // entire prose run between (the scratched-out-text screenshot bug).
+      await pumpBubbleAndCollectErrors(
+        tester,
+        r'Alphabet alone (~$4.6T) [⁷](https://a.com) is worth roughly nine '
+        r'times that amount. Tencent (~$423B–$580B) [¹](https://b.com) by '
+        r'itself is comparable.',
+      );
+      var struck = false;
+      for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+        rt.text.visitChildren((span) {
+          if (span is TextSpan &&
+              span.style?.decoration == TextDecoration.lineThrough) {
+            struck = true;
+          }
+          return true;
+        });
+      }
+      expect(struck, isFalse,
+          reason: 'lone ~ before currency must render literally, not strike '
+              'through the surrounding text');
+    });
+
+    testWidgets('currency span whose links contain operator chars in the URL '
+        'does not render as overflowing math', (tester) async {
+      // The financial-comparison bug: a long prose run sits between two
+      // currency dollars, and the citation URLs inside it contain `_`/`=`/`+`
+      // (e.g. `internet_services`). Those fooled the currency heuristic into
+      // treating the span as LaTeX, which doesn't wrap and overflowed ~2000px.
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'Alphabet is valued at roughly **$4.6 trillion** in the most recent '
+        r'sources [⁷](https://capital.com/markets/shares/largest-tech-companies) '
+        r'[⁸](https://www.financecharts.com/keyword/internet_services), while '
+        r'Amazon is shown at about **$2.42 trillion** '
+        r'[⁴](https://www.investopedia.com/articles/030415/top-10.asp).',
+      );
+      expect(overflowErrors(errors), isEmpty,
+          reason: 'currency prose with operator-char URLs must wrap, not '
+              'render as a single non-wrapping math run');
+      expect(find.byType(Math), findsNothing,
+          reason: 'currency dollars around prose must not become LaTeX');
+      expect(find.textContaining('](https://'), findsNothing,
+          reason: 'citation links must render, not appear as raw text');
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -142,7 +142,11 @@ class _ChatBubbleBody extends StatelessWidget {
         'latex': _SmartLatexBuilder(),
         'br': _HtmlBrBuilder(),
       },
-      onTapLink: (text, href, title) => launchUrlString(href!),
+      // No onTapLink: flutter_markdown attaches the link's TapGestureRecognizer
+      // to the prose spans that FOLLOW the link, so an onTapLink handler would
+      // open the citation URL when the user taps that trailing text. The
+      // favicon from _LinkBuilder carries its own GestureDetector, so taps are
+      // already handled at the icon itself.
     );
   }
 

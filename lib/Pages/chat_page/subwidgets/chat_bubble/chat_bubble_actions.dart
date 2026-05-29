@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
+import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 
 import 'chat_bubble_bottom_sheet.dart';
@@ -35,9 +36,9 @@ class ChatBubbleActions {
   }
 
   void handleRegenerate(BuildContext context) {
-    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);
 
-    chatProvider.regenerateMessage(message);
+    viewModel.regenerateMessage(message);
   }
 
   /// Opens edit sheet. Returns the new text if saved, null if cancelled.

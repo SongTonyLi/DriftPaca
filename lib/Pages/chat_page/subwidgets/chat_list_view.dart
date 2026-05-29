@@ -123,9 +123,16 @@ class _ChatListViewState extends State<ChatListView> {
                 final isStreamingMessage = index == 0 && widget.isStreaming;
 
                 if (index == 0) {
-                  final shouldAnimate = !isStreamingMessage &&
-                      message.role == OllamaMessageRole.user &&
+                  // Mark every index-0 user message as "seen" so its entrance
+                  // animation plays at most once, on genuine first appearance.
+                  // Recording the id even when we don't animate (a freshly sent
+                  // message first paints while isStreaming is already true)
+                  // prevents a stale pop later: on regenerate the prior user
+                  // message transiently becomes the last, non-streaming bubble
+                  // and would otherwise animate as if just sent.
+                  final firstAppearance = message.role == OllamaMessageRole.user &&
                       _animatedMessageIds.add(message.id);
+                  final shouldAnimate = firstAppearance && !isStreamingMessage;
 
                   return ObserveSize(
                     key: Key(message.id),

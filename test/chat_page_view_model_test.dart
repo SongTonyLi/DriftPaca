@@ -11,6 +11,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
@@ -330,6 +331,70 @@ void main() {
     });
   });
 
+  group('web search propagation to re-run paths', () {
+    setUp(() {
+      fakeChatProvider.setCurrentChat(createTestChat('test-id'));
+      fakeChatProvider.setMessages([
+        OllamaMessage('Hello', role: OllamaMessageRole.user),
+        OllamaMessage('Hi there', role: OllamaMessageRole.assistant),
+      ]);
+    });
+
+    test('regenerateMessage forwards search attempts and wires callbacks when web search enabled', () async {
+      viewModel.acceptWebSearchConsent(); // enables web search
+
+      await viewModel.regenerateMessage(fakeChatProvider.messages.last);
+
+      expect(fakeChatProvider.regenerateMessageCalled, isTrue);
+      expect(fakeChatProvider.lastRegenerateSearchAttempts, 3);
+      expect(fakeChatProvider.setWebSearchCallbacksCalled, isTrue);
+      expect(fakeChatProvider.clearWebSearchCallbacksCalled, isTrue);
+    });
+
+    test('regenerateMessage uses 0 attempts when web search disabled', () async {
+      await viewModel.regenerateMessage(fakeChatProvider.messages.last);
+
+      expect(fakeChatProvider.regenerateMessageCalled, isTrue);
+      expect(fakeChatProvider.lastRegenerateSearchAttempts, 0);
+      expect(fakeChatProvider.setWebSearchCallbacksCalled, isFalse);
+    });
+
+    test('editAndResend forwards search attempts and wires callbacks when web search enabled', () async {
+      viewModel.acceptWebSearchConsent();
+
+      await viewModel.editAndResend(fakeChatProvider.messages.first, 'edited');
+
+      expect(fakeChatProvider.editAndResendCalled, isTrue);
+      expect(fakeChatProvider.lastEditAndResendSearchAttempts, 3);
+      expect(fakeChatProvider.setWebSearchCallbacksCalled, isTrue);
+      expect(fakeChatProvider.clearWebSearchCallbacksCalled, isTrue);
+    });
+
+    test('editAndResend uses 0 attempts when web search disabled', () async {
+      await viewModel.editAndResend(fakeChatProvider.messages.first, 'edited');
+
+      expect(fakeChatProvider.editAndResendCalled, isTrue);
+      expect(fakeChatProvider.lastEditAndResendSearchAttempts, 0);
+      expect(fakeChatProvider.setWebSearchCallbacksCalled, isFalse);
+    });
+
+    test('retryLastPrompt forwards search attempts when web search enabled', () async {
+      viewModel.acceptWebSearchConsent();
+
+      await viewModel.retryLastPrompt();
+
+      expect(fakeChatProvider.retryLastPromptCalled, isTrue);
+      expect(fakeChatProvider.lastRetrySearchAttempts, 3);
+    });
+
+    test('retryLastPrompt uses 0 attempts when web search disabled', () async {
+      await viewModel.retryLastPrompt();
+
+      expect(fakeChatProvider.retryLastPromptCalled, isTrue);
+      expect(fakeChatProvider.lastRetrySearchAttempts, 0);
+    });
+  });
+
   group('isServerConfigured', () {
     test('should return true when serverAddress is set', () {
       expect(viewModel.isServerConfigured, isTrue);
@@ -382,12 +447,20 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
 
   bool cancelStreamingCalled = false;
   bool retryLastPromptCalled = false;
+  bool regenerateMessageCalled = false;
+  bool editAndResendCalled = false;
   bool createNewChatCalled = false;
   bool displayUserMessageCalled = false;
   bool sendPromptCalled = false;
   bool generateTitleCalled = false;
+  bool setWebSearchCallbacksCalled = false;
+  bool clearWebSearchCallbacksCalled = false;
   String? lastSentPrompt;
   List<File>? lastSentImages;
+  int? lastSendPromptSearchAttempts;
+  int? lastRegenerateSearchAttempts;
+  int? lastEditAndResendSearchAttempts;
+  int? lastRetrySearchAttempts;
 
   void setMessages(List<OllamaMessage> messages) {
     _messages = messages;
@@ -438,8 +511,39 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   }
 
   @override
-  Future<void> retryLastPrompt() async {
+  Future<void> retryLastPrompt({int searchAttemptsRemaining = 0}) async {
     retryLastPromptCalled = true;
+    lastRetrySearchAttempts = searchAttemptsRemaining;
+  }
+
+  @override
+  Future<void> regenerateMessage(OllamaMessage message, {int searchAttemptsRemaining = 0}) async {
+    regenerateMessageCalled = true;
+    lastRegenerateSearchAttempts = searchAttemptsRemaining;
+  }
+
+  @override
+  Future<void> editAndResend(OllamaMessage originalMessage, String newContent, {int searchAttemptsRemaining = 0}) async {
+    editAndResendCalled = true;
+    lastEditAndResendSearchAttempts = searchAttemptsRemaining;
+  }
+
+  @override
+  void setWebSearchCallbacks({
+    required void Function(String thinking) onSearchThinking,
+    required void Function(String query) onSearchStart,
+    required void Function(String query) onSearchQueryUpdate,
+    required void Function(List<WebSearchResult> results) onSearchComplete,
+    required List<MessageSegment> Function() segmentsProvider,
+    void Function(List<WebSearchResult> urls)? onUrlsKnown,
+    void Function(String url, bool success)? onUrlFetched,
+  }) {
+    setWebSearchCallbacksCalled = true;
+  }
+
+  @override
+  void clearWebSearchCallbacks() {
+    clearWebSearchCallbacksCalled = true;
   }
 
   @override
@@ -466,6 +570,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   @override
   Future<void> sendPrompt(OllamaMessage prompt, {int searchAttemptsRemaining = 0}) async {
     sendPromptCalled = true;
+    lastSendPromptSearchAttempts = searchAttemptsRemaining;
   }
 
   @override

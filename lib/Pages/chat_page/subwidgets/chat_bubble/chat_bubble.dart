@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
-import 'package:llamaseek/Providers/chat_provider.dart';
+import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
@@ -492,6 +492,31 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
   static const double _baseCharsPerFrame = 0.7;
   static const int _catchUpThreshold = 80;
+  // Upper bound on reveal rate. Without it the catch-up term explodes for a
+  // large buffered chunk — the answer arriving all at once after a long
+  // thinking phase, or a fast cloud model emitting the whole reply in one
+  // frame — and the text dumps instantly. Capping keeps it a visible
+  // typewriter stream (at most ~_maxCharsPerFrame * 60 chars/sec).
+  static const double _maxCharsPerFrame = 4.0;
+
+  /// Reveal rate in chars/frame: base pace, accelerating when behind, but
+  /// never above [_maxCharsPerFrame] so a buffered tail still streams in.
+  double _revealSpeed(int remaining) {
+    if (remaining <= _catchUpThreshold) return _baseCharsPerFrame;
+    final accelerated = _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5;
+    return accelerated > _maxCharsPerFrame ? _maxCharsPerFrame : accelerated;
+  }
+
+  /// True once both thinking and response content are fully revealed.
+  bool get _revealComplete =>
+      _revealedThinkingLength >= _targetThinking.length &&
+      _revealedLength >= _targetContent.length;
+
+  /// Whether the typewriter should drive the displayed text: during the
+  /// stream, and afterwards while a buffered tail is still being revealed.
+  /// History messages (never streamed) skip the reveal and render in full.
+  bool get _isRevealing =>
+      widget.isStreaming || (_wasStreaming && !_revealComplete);
 
   /// Returns the thinking text to display for this bubble.
   /// When search segments are shown, only the model thinking portion is shown
@@ -530,14 +555,21 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     super.didUpdateWidget(old);
     final nextThinking = _displayThinking(widget.message.thinking);
     if (old.isStreaming && !widget.isStreaming) {
+      // Stream finished. Don't jump to the full text — keep the typewriter
+      // running so any buffered remainder still reveals progressively. The
+      // ticker stops itself in _onRevealTick once it catches up.
       _wasStreaming = true;
       _targetContent = widget.message.content;
       _targetThinking = nextThinking;
-      _revealedLength = _targetContent.length;
-      _revealedThinkingLength = _targetThinking.length;
-      _revealProgress = _revealedLength.toDouble();
-      _thinkingRevealProgress = _revealedThinkingLength.toDouble();
-      _stopRevealTicker();
+      if (_revealedThinkingLength > _targetThinking.length) {
+        _revealedThinkingLength = _targetThinking.length;
+        _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+      }
+      if (_revealedLength > _targetContent.length) {
+        _revealedLength = _targetContent.length;
+        _revealProgress = _revealedLength.toDouble();
+      }
+      _ensureRevealTicker();
     } else if (widget.isStreaming) {
       _targetContent = widget.message.content;
       _targetThinking = nextThinking;
@@ -554,10 +586,17 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     } else {
       _targetContent = widget.message.content;
       _targetThinking = nextThinking;
-      _revealedLength = _targetContent.length;
-      _revealedThinkingLength = _targetThinking.length;
-      _revealProgress = _revealedLength.toDouble();
-      _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+      if (_wasStreaming && !_revealComplete) {
+        // Just-finished message still typing out its buffered tail — keep
+        // the ticker going instead of snapping to the full text.
+        _ensureRevealTicker();
+      } else {
+        // History message, or reveal already complete: show in full.
+        _revealedLength = _targetContent.length;
+        _revealedThinkingLength = _targetThinking.length;
+        _revealProgress = _revealedLength.toDouble();
+        _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+      }
     }
   }
 
@@ -581,20 +620,14 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     // Reveal thinking tokens first, then response content.
     if (_revealedThinkingLength < _targetThinking.length) {
       final remaining = _targetThinking.length - _revealedThinkingLength;
-      final speed = remaining > _catchUpThreshold
-          ? _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5
-          : _baseCharsPerFrame;
-      _thinkingRevealProgress += speed;
+      _thinkingRevealProgress += _revealSpeed(remaining);
       final newLen = _thinkingRevealProgress.floor().clamp(0, _targetThinking.length);
       if (newLen != _revealedThinkingLength) {
         setState(() => _revealedThinkingLength = newLen);
       }
     } else if (_revealedLength < _targetContent.length) {
       final remaining = _targetContent.length - _revealedLength;
-      final speed = remaining > _catchUpThreshold
-          ? _baseCharsPerFrame + (remaining - _catchUpThreshold) * 0.5
-          : _baseCharsPerFrame;
-      _revealProgress += speed;
+      _revealProgress += _revealSpeed(remaining);
       final newLen = _revealProgress.floor().clamp(0, _targetContent.length);
       if (newLen != _revealedLength) {
         setState(() => _revealedLength = newLen);
@@ -629,7 +662,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOutCubic,
             alignment: Alignment.topLeft,
-            child: widget.isStreaming
+            child: _isRevealing
                 ? const SizedBox(width: double.infinity, height: 0)
                 : Padding(
                     padding: const EdgeInsets.only(top: 6),
@@ -679,7 +712,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   Widget _buildMessageContent(BuildContext context) {
-    final content = widget.isStreaming
+    final content = _isRevealing
         ? _ChatBubbleBody._hideIncompleteLinks(
             _targetContent.substring(0, _revealedLength))
         : widget.message.content;
@@ -689,7 +722,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
     final displayThinking = _displayThinking(widget.message.thinking);
     if (displayThinking.isNotEmpty) {
-      final thinkingContent = widget.isStreaming
+      final thinkingContent = _isRevealing
           ? _targetThinking.substring(0, _revealedThinkingLength)
           : displayThinking;
       return Column(
@@ -765,8 +798,8 @@ class _UserActionButtons extends StatelessWidget {
           onTap: () async {
             final result = await _showEditPopup(context, message);
             if (result != null && context.mounted) {
-              final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-              chatProvider.editAndResend(message, result);
+              final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);
+              viewModel.editAndResend(message, result);
             }
           },
         ),

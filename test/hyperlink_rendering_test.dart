@@ -313,6 +313,75 @@ void main() {
       );
     });
 
+    test('replaces single superscript citation [²]', () {
+      // Some models emit the citation digit as a superscript Unicode glyph
+      // (U+00B2 here) — mimicking the rendered form — instead of an ASCII
+      // digit, e.g. `[²]` rather than `[2]`.
+      final sourceUrls = {2: 'http://two.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'ATM 拒绝旧钞 [²]。',
+        sourceUrls,
+      );
+      expect(result, 'ATM 拒绝旧钞 [²](http://two.com)。');
+    });
+
+    test('replaces chained superscript citations [²][³]', () {
+      final sourceUrls = {2: 'http://two.com', 3: 'http://three.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '光学和图像扫描 [²][³]。',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '光学和图像扫描 [²](http://two.com)[³](http://three.com)。',
+      );
+    });
+
+    test('replaces superscript digits across both Unicode blocks', () {
+      // ¹²³ live in Latin-1 (U+00B9/B2/B3) while ⁰⁴-⁹ live in the
+      // Superscripts block (U+2070-2079); a multi-digit id mixes the two.
+      final sourceUrls = {1: 'http://one.com', 8: 'http://eight.com', 10: 'http://ten.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '依据 [¹] 与 [⁸] 与 [¹⁰]。',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '依据 [¹](http://one.com) 与 [⁸](http://eight.com) 与 [¹⁰](http://ten.com)。',
+      );
+    });
+
+    test('leaves superscript citation without source URL unchanged', () {
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See [¹] and [⁹].',
+        sourceUrls,
+      );
+      expect(result, 'See [¹](http://one.com) and [⁹].');
+    });
+
+    test('does not re-wrap an already-rendered superscript link', () {
+      // Idempotency: the converted form `[²](url)` must survive a second
+      // pass (the streaming path applies the function repeatedly).
+      final sourceUrls = {2: 'http://two.com'};
+      final once = ChatProvider.replaceCitationsWithLinks(
+        '旧钞 [²]。',
+        sourceUrls,
+      );
+      final twice = ChatProvider.replaceCitationsWithLinks(once, sourceUrls);
+      expect(twice, once);
+    });
+
+    test('does not match a bare superscript outside brackets', () {
+      // `m²` (square metres) / `x²` must not be treated as a citation.
+      final sourceUrls = {2: 'http://two.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '面积 5 m² 和 x² 项。',
+        sourceUrls,
+      );
+      expect(result, '面积 5 m² 和 x² 项。');
+    });
+
     test('does not match parenthesised text without a digit', () {
       final sourceUrls = {1: 'http://one.com'};
       final result = ChatProvider.replaceCitationsWithLinks(

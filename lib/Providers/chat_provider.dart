@@ -803,6 +803,15 @@ class ChatProvider extends ChangeNotifier {
     return n.toString().split('').map((c) => _superscriptDigits[int.parse(c)]).join('');
   }
 
+  /// Maps superscript digit glyphs back to ASCII so a citation id can be
+  /// parsed; ASCII digits and any other char pass through unchanged.
+  static String _digitsToAscii(String s) {
+    return s.runes.map((r) {
+      final i = _superscriptDigits.indexOf(String.fromCharCode(r));
+      return i >= 0 ? '$i' : String.fromCharCode(r);
+    }).join();
+  }
+
   static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
     // Match citation formats the model might emit:
     //   [1], [ 1 ]              — plain bracketed digit
@@ -818,20 +827,25 @@ class ChatProvider extends ChangeNotifier {
     //                              (gpt-oss / gemma sometimes prefer this
     //                              in tables, e.g. `Precedence (src 1)`)
     //   【1】, 【id:1】   — fullwidth brackets (qwen/deepseek)
+    //   [²], [¹⁰]               — the digit emitted as superscript glyphs
+    //                              (some models echo the rendered look, e.g.
+    //                              `[²][³]`). ¹²³ are U+00B9/B2/B3, the rest
+    //                              U+2070/2074-2079; normalised back to ASCII
+    //                              before the source-id lookup below.
     // Negative lookahead `(?!\()` skips brackets already followed by `(`,
     // which would be part of an existing markdown link.
     return content.replaceAllMapped(
       RegExp(
         r'(?:'
-        r'\[\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?(\d+)\s*\]'
-        r'|\u3010\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?(\d+)\s*\u3011'
-        r'|\(\s*(?:src|source)\s*(\d+)\s*\)'
+        r'\[\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?([\d\u00b2\u00b3\u00b9\u2070\u2074-\u2079]+)\s*\]'
+        r'|\u3010\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?([\d\u00b2\u00b3\u00b9\u2070\u2074-\u2079]+)\s*\u3011'
+        r'|\(\s*(?:src|source)\s*([\d\u00b2\u00b3\u00b9\u2070\u2074-\u2079]+)\s*\)'
         r')(?!\()',
         caseSensitive: false,
       ),
       (match) {
-        final id = int.tryParse(
-            match.group(1) ?? match.group(2) ?? match.group(3) ?? '');
+        final id = int.tryParse(_digitsToAscii(
+            match.group(1) ?? match.group(2) ?? match.group(3) ?? ''));
         if (id != null && sourceUrls.containsKey(id)) {
           final url = sourceUrls[id]!;
           // Use superscript numbers to avoid nested bracket issues and

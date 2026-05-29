@@ -296,7 +296,13 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                 duration: _composerExpandDuration,
                 curve: _composerExpandCurve,
                 padding: EdgeInsets.symmetric(
-                  horizontal: _shouldShowExpanded ? 0.0 : _collapsedComposerInset,
+                  // Stay full width while expanded OR generating, so the stop
+                  // button isn't squeezed out of the shrunken collapsed bar.
+                  horizontal: (_shouldShowExpanded ||
+                          _viewModel.isStreaming ||
+                          _viewModel.isSearching)
+                      ? 0.0
+                      : _collapsedComposerInset,
                 ),
                 child: _buildComposer(),
               ),

@@ -22,7 +22,13 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   static const double _composerHorizontalInset = 6.0;
   static const double _footerSpacing = 12.0;
   static const double _collapsedComposerPadding = 56.0;
-  static const double _expandedComposerPadding = 86.0;
+
+  // Extra horizontal inset applied to the composer while collapsed, so the
+  // prompt bar shrinks to a compact floating pill and grows to full width as
+  // it expands. Animated in sync with the height reveal.
+  static const double _collapsedComposerInset = 64.0;
+  static const Duration _composerExpandDuration = Duration(milliseconds: 400);
+  static const Curve _composerExpandCurve = Curves.easeInOutCubic;
 
   // Incognito mode transition
   static const _transitionDuration = Duration(milliseconds: 400);
@@ -286,7 +292,14 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                 footer,
                 const SizedBox(height: _footerSpacing),
               ],
-              _buildComposer(),
+              AnimatedPadding(
+                duration: _composerExpandDuration,
+                curve: _composerExpandCurve,
+                padding: EdgeInsets.symmetric(
+                  horizontal: _shouldShowExpanded ? 0.0 : _collapsedComposerInset,
+                ),
+                child: _buildComposer(),
+              ),
             ],
           ),
         ),
@@ -339,13 +352,13 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             children: [
               ClipRect(
                 child: AnimatedAlign(
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeInOutCubic,
+                  duration: _composerExpandDuration,
+                  curve: _composerExpandCurve,
                   alignment: Alignment.bottomCenter,
                   heightFactor: _shouldShowExpanded ? 1.0 : 0.0,
                   child: AnimatedOpacity(
                     opacity: _shouldShowExpanded ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 400),
+                    duration: _composerExpandDuration,
                     curve: Curves.easeIn,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -365,11 +378,10 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                   children: [
                     IconButton(
                       icon: Icon(Icons.add, size: 20, color: _isIncognito ? _incognitoText : null),
-                      padding: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.fromLTRB(8, 6, 0, 6),
                       constraints: const BoxConstraints(),
                       onPressed: _handleAttachmentButton,
                     ),
-                    const SizedBox(width: 2),
                     AnimatedBuilder(
                       animation: _searchPulseController,
                       builder: (context, child) {
@@ -384,7 +396,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                                 ? Theme.of(context).colorScheme.onPrimary
                                 : (_isIncognito ? _incognitoText : null),
                           ),
-                          padding: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.all(4),
                           constraints: const BoxConstraints(),
                           style: _viewModel.webSearchEnabled
                               ? IconButton.styleFrom(
@@ -548,8 +560,10 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
 
   double _chatBodyBottomPadding(BuildContext context) {
     final bottomSafeArea = MediaQuery.of(context).padding.bottom;
-    final composerPadding = _shouldShowExpanded ? _expandedComposerPadding : _collapsedComposerPadding;
-    final base = composerPadding + bottomSafeArea;
+    // Reserve a constant amount regardless of expand/collapse so tapping the
+    // prompt bar never reflows the conversation. The expanded text field grows
+    // upward over the translucent bottom area instead of pushing content.
+    final base = _collapsedComposerPadding + bottomSafeArea;
     if (!_viewModel.hasImageAttachments) return base;
 
     return base + _attachmentPreviewHeight(context) + _footerSpacing;

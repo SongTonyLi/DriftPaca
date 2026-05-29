@@ -236,7 +236,38 @@ class ChatPageViewModel extends ChangeNotifier {
 
   /// Retries the last prompt
   Future<void> retryLastPrompt() async {
-    await _chatProvider.retryLastPrompt();
+    _searchSegments.clear();
+    if (_webSearchEnabled) _beginWebSearch();
+    try {
+      await _chatProvider.retryLastPrompt(
+          searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
+    } finally {
+      if (_webSearchEnabled) _endWebSearch();
+    }
+  }
+
+  /// Regenerates the response for [message]
+  Future<void> regenerateMessage(OllamaMessage message) async {
+    _searchSegments.clear();
+    if (_webSearchEnabled) _beginWebSearch();
+    try {
+      await _chatProvider.regenerateMessage(message,
+          searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
+    } finally {
+      if (_webSearchEnabled) _endWebSearch();
+    }
+  }
+
+  /// Edits [message] and resends it as a new message
+  Future<void> editAndResend(OllamaMessage message, String newContent) async {
+    _searchSegments.clear();
+    if (_webSearchEnabled) _beginWebSearch();
+    try {
+      await _chatProvider.editAndResend(message, newContent,
+          searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
+    } finally {
+      if (_webSearchEnabled) _endWebSearch();
+    }
   }
 
   /// Fetches available models from the server
@@ -382,107 +413,9 @@ class ChatPageViewModel extends ChangeNotifier {
     final message = _chatProvider.displayUserMessage(prompt, images: images);
     notifyListeners();
 
-    // Set up web search callbacks if enabled
+    // Set up web search machinery (UI callbacks + segment persistence)
     if (_webSearchEnabled) {
-      _isSearching = true;
-      _searchSegments.clear();
-      notifyListeners();
-
-      _chatProvider.setWebSearchCallbacks(
-        onSearchThinking: (thinking) {
-          _searchSegments.add(ThinkingSegment(thinking));
-          notifyListeners();
-        },
-        segmentsProvider: () => _searchSegments,
-        onSearchStart: (query) {
-          _searchSegments.add(SearchCardSegment(query: query));
-          notifyListeners();
-        },
-        onSearchQueryUpdate: (query) {
-          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-          if (card != null) {
-            card.query = query;
-            notifyListeners();
-          }
-        },
-        // Populate URLs in `pending` state as soon as DDG returns. The
-        // SearchCard renders the list with a shimmer + spinner per row;
-        // onUrlFetched flips entries to success/failed one by one.
-        onUrlsKnown: (urls) {
-          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-          if (card == null) return;
-          card.urls = [
-            for (final r in urls)
-              SearchURLStatus(
-                url: r.url,
-                domain: Uri.tryParse(r.url)?.host ?? r.url,
-                title: r.title,
-                state: SearchURLState.pending,
-              ),
-          ];
-          // Warm favicon cache for these domains so the source-card
-          // dialog and any future inline citation render instantly.
-          FaviconCache.instance.preload(card.urls.map((u) => u.domain));
-          notifyListeners();
-        },
-        onUrlFetched: (url, success) {
-          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-          if (card == null) return;
-          for (final u in card.urls) {
-            if (u.url == url) {
-              u.state =
-                  success ? SearchURLState.success : SearchURLState.failed;
-              break;
-            }
-          }
-          notifyListeners();
-        },
-        onSearchComplete: (results) {
-          final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
-          if (card != null) {
-            if (results.isEmpty) {
-              card.error = 'No results found';
-            } else {
-              card.urls = results
-                  .map((r) => SearchURLStatus(
-                        url: r.url,
-                        domain: Uri.tryParse(r.url)?.host ?? r.url,
-                        title: r.title,
-                        state: r.pageContent != null
-                            ? SearchURLState.success
-                            : SearchURLState.failed,
-                      ))
-                  .toList();
-              card.resultCount = results.length;
-              final contentParts = <String>[];
-              final sources = <SearchSource>[];
-              for (final r in results) {
-                final content = r.chunks != null && r.chunks!.isNotEmpty
-                    ? r.chunks!.take(2).join('\n')
-                    : (r.pageContent ?? r.snippet);
-                if (content.isEmpty) continue;
-                final domain = Uri.tryParse(r.url)?.host ?? r.url;
-                contentParts.add('$domain:\n$content');
-                sources.add(SearchSource(
-                  url: r.url,
-                  domain: domain,
-                  title: r.title,
-                  content: content,
-                ));
-              }
-              card.extractedContent = contentParts.join('\n\n');
-              card.sources = sources;
-              // Preload favicons so inline citations and source cards
-              // render instantly from cache instead of triggering a
-              // network fetch when the assistant message paints.
-              FaviconCache.instance.preload(sources.map((s) => s.domain));
-            }
-            card.isComplete = true;
-            _searchSegments.add(AnswerSegment());
-            notifyListeners();
-          }
-        },
-      );
+      _beginWebSearch();
     }
 
     // Persist message and start the AI response stream
@@ -492,9 +425,7 @@ class ChatPageViewModel extends ChangeNotifier {
     } finally {
       // Always clean up search state, even on error
       if (_webSearchEnabled) {
-        _chatProvider.clearWebSearchCallbacks();
-        _isSearching = false;
-        notifyListeners();
+        _endWebSearch();
       }
 
       // Generate title for new chats — in finally so it runs even if
@@ -505,5 +436,120 @@ class ChatPageViewModel extends ChangeNotifier {
     }
 
     return true;
+  }
+
+  /// Wires web-search UI callbacks and segment persistence onto the
+  /// ChatProvider, then flags the searching state. Every path that can
+  /// trigger a search-augmented response funnels through this:
+  /// [sendMessage], [regenerateMessage], [editAndResend], [retryLastPrompt].
+  /// Pair with [_endWebSearch] in a finally block.
+  void _beginWebSearch() {
+    _isSearching = true;
+    _searchSegments.clear();
+    notifyListeners();
+
+    _chatProvider.setWebSearchCallbacks(
+      onSearchThinking: (thinking) {
+        _searchSegments.add(ThinkingSegment(thinking));
+        notifyListeners();
+      },
+      segmentsProvider: () => _searchSegments,
+      onSearchStart: (query) {
+        _searchSegments.add(SearchCardSegment(query: query));
+        notifyListeners();
+      },
+      onSearchQueryUpdate: (query) {
+        final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+        if (card != null) {
+          card.query = query;
+          notifyListeners();
+        }
+      },
+      // Populate URLs in `pending` state as soon as DDG returns. The
+      // SearchCard renders the list with a shimmer + spinner per row;
+      // onUrlFetched flips entries to success/failed one by one.
+      onUrlsKnown: (urls) {
+        final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+        if (card == null) return;
+        card.urls = [
+          for (final r in urls)
+            SearchURLStatus(
+              url: r.url,
+              domain: Uri.tryParse(r.url)?.host ?? r.url,
+              title: r.title,
+              state: SearchURLState.pending,
+            ),
+        ];
+        // Warm favicon cache for these domains so the source-card
+        // dialog and any future inline citation render instantly.
+        FaviconCache.instance.preload(card.urls.map((u) => u.domain));
+        notifyListeners();
+      },
+      onUrlFetched: (url, success) {
+        final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+        if (card == null) return;
+        for (final u in card.urls) {
+          if (u.url == url) {
+            u.state =
+                success ? SearchURLState.success : SearchURLState.failed;
+            break;
+          }
+        }
+        notifyListeners();
+      },
+      onSearchComplete: (results) {
+        final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
+        if (card != null) {
+          if (results.isEmpty) {
+            card.error = 'No results found';
+          } else {
+            card.urls = results
+                .map((r) => SearchURLStatus(
+                      url: r.url,
+                      domain: Uri.tryParse(r.url)?.host ?? r.url,
+                      title: r.title,
+                      state: r.pageContent != null
+                          ? SearchURLState.success
+                          : SearchURLState.failed,
+                    ))
+                .toList();
+            card.resultCount = results.length;
+            final contentParts = <String>[];
+            final sources = <SearchSource>[];
+            for (final r in results) {
+              final content = r.chunks != null && r.chunks!.isNotEmpty
+                  ? r.chunks!.take(2).join('\n')
+                  : (r.pageContent ?? r.snippet);
+              if (content.isEmpty) continue;
+              final domain = Uri.tryParse(r.url)?.host ?? r.url;
+              contentParts.add('$domain:\n$content');
+              sources.add(SearchSource(
+                url: r.url,
+                domain: domain,
+                title: r.title,
+                content: content,
+              ));
+            }
+            card.extractedContent = contentParts.join('\n\n');
+            card.sources = sources;
+            // Preload favicons so inline citations and source cards
+            // render instantly from cache instead of triggering a
+            // network fetch when the assistant message paints.
+            FaviconCache.instance.preload(sources.map((s) => s.domain));
+          }
+          card.isComplete = true;
+          _searchSegments.add(AnswerSegment());
+          notifyListeners();
+        }
+      },
+    );
+  }
+
+  /// Tears down web-search callbacks and clears the searching flag.
+  /// Pair with [_beginWebSearch].
+  void _endWebSearch() {
+    _chatProvider.clearWebSearchCallbacks();
+    _isSearching = false;
+    notifyListeners();
   }
 }

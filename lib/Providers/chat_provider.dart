@@ -712,7 +712,9 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Sends the edited text as a new message at the bottom, preserving all history.
-  Future<void> editAndResend(OllamaMessage originalMessage, String newContent) async {
+  Future<void> editAndResend(OllamaMessage originalMessage, String newContent, {
+    int searchAttemptsRemaining = 0,
+  }) async {
     final associatedChat = currentChat!;
 
     // Create a new user message with the edited content
@@ -730,10 +732,12 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.addMessage(newMessage, chat: associatedChat);
 
     // Start a new response
-    await _initializeChatStream(associatedChat);
+    await _initializeChatStream(associatedChat, searchAttemptsRemaining: searchAttemptsRemaining);
   }
 
-  Future<void> regenerateMessage(OllamaMessage message) async {
+  Future<void> regenerateMessage(OllamaMessage message, {
+    int searchAttemptsRemaining = 0,
+  }) async {
     final associatedChat = currentChat!;
 
     final messageIndex = _messages.indexOf(message);
@@ -751,10 +755,10 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.deleteMessages(removeMessages);
 
     // Reinitialize the chat stream with the messages in the chat
-    await _initializeChatStream(associatedChat);
+    await _initializeChatStream(associatedChat, searchAttemptsRemaining: searchAttemptsRemaining);
   }
 
-  Future<void> retryLastPrompt() async {
+  Future<void> retryLastPrompt({int searchAttemptsRemaining = 0}) async {
     if (_messages.isEmpty) return;
 
     final associatedChat = currentChat!;
@@ -765,7 +769,7 @@ class ChatProvider extends ChangeNotifier {
     }
 
     // Reinitialize the chat stream with the messages in the chat
-    await _initializeChatStream(associatedChat);
+    await _initializeChatStream(associatedChat, searchAttemptsRemaining: searchAttemptsRemaining);
 
     notifyListeners();
   }

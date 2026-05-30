@@ -98,10 +98,27 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       forceMaterialTransparency: true,
       elevation: 0,
       scrolledUnderElevation: 0,
+      // Fade the bar's surface from opaque at the top to fully transparent
+      // at the bottom so the blurred area doesn't end as a hard line — the
+      // chat content underneath emerges smoothly instead of stepping.
       flexibleSpace: ClipRect(
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-          child: Container(color: Colors.transparent),
+          filter: ImageFilter.blur(sigmaX: 2.5, sigmaY: 2.5),
+          // Container (not DecoratedBox) — without a child or constraints it
+          // expands to fill the BackdropFilter's bounds, so the blur and
+          // gradient actually have a paint area to land on.
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.3),
+                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.0),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

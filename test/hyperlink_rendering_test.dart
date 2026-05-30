@@ -403,6 +403,212 @@ void main() {
       );
       expect(result, 'See (1) and (note 1).');
     });
+
+    // -----------------------------------------------------------------------
+    // Comma-separated id lists inside a single bracket — `[1, 3, 5]`.
+    //
+    // Models sometimes group multiple sources as a comma list inside one
+    // pair of brackets instead of chaining them as `[1][3][5]`. The single-
+    // id regex doesn't match comma-separated content, so the bracket
+    // previously leaked through as raw text. The expansion pre-pass
+    // rewrites `[N, M, P]` (and `[N，M，P]` / `【N, M, P】` variants) into
+    // chained `[N][M][P]` form so each id flows through the per-id lookup.
+    // -----------------------------------------------------------------------
+    test('expands comma-list [1, 3, 5] into separate citation links', () {
+      final sourceUrls = {
+        1: 'http://one.com',
+        3: 'http://three.com',
+        5: 'http://five.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Both IDEs share core philosophies [1, 3, 5].',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'Both IDEs share core philosophies '
+        '[¹](http://one.com)[³](http://three.com)[⁵](http://five.com).',
+      );
+    });
+
+    test('expands comma-list with no spaces [1,3,5]', () {
+      final sourceUrls = {
+        1: 'http://one.com',
+        3: 'http://three.com',
+        5: 'http://five.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See [1,3,5] for details.',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'See [¹](http://one.com)[³](http://three.com)[⁵](http://five.com) for details.',
+      );
+    });
+
+    test('expands two-id comma-list [1, 7]', () {
+      // Regression for the Kiro vs Cursor table — many cells used
+      // `[1, 7]` / `[1, 2]` / `[2, 3]` shapes.
+      final sourceUrls = {1: 'http://one.com', 7: 'http://seven.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Leverages Claude Sonnet 4 [1, 7].',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'Leverages Claude Sonnet 4 [¹](http://one.com)[⁷](http://seven.com).',
+      );
+    });
+
+    test('expands comma-list with extra whitespace [ 1 , 3 , 5 ]', () {
+      final sourceUrls = {
+        1: 'http://one.com',
+        3: 'http://three.com',
+        5: 'http://five.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Padded [ 1 , 3 , 5 ] form.',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'Padded [¹](http://one.com)[³](http://three.com)[⁵](http://five.com) form.',
+      );
+    });
+
+    test('does not expand a comma list with any unknown id', () {
+      // Disambiguator: if even ONE piece isn't a known source id, the
+      // bracket isn't a citation list — could be a math range, a number
+      // range, or just unrelated bracketed numbers. Leave it raw rather
+      // than partial-expanding (which would render half-linked text).
+      final sourceUrls = {1: 'http://one.com', 5: 'http://five.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Mixed [1, 3, 5] case.',
+        sourceUrls,
+      );
+      expect(result, 'Mixed [1, 3, 5] case.');
+    });
+
+    test('does not expand comma list when sourceUrls is empty '
+        '(web search off)', () {
+      // No web-search citations means no sourceUrls means no comma-list
+      // bracket is ever a citation. `[2, 4]` here should stay raw — it
+      // could be a math range, an array index, or anything else.
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Range [2, 4] of values.',
+        {},
+      );
+      expect(result, 'Range [2, 4] of values.');
+    });
+
+    test('does not expand [1, 1000] — 1000 is not a plausible source id', () {
+      // Math/numeric range disambiguator: even though id 1 IS in the
+      // source map, id 1000 almost certainly isn't (web-search answers
+      // rarely have 1000+ sources), so the whole bracket is a range, not
+      // a citation list. The "every piece must be a known id" rule
+      // catches this without any magnitude heuristic.
+      final sourceUrls = {1: 'http://one.com', 2: 'http://two.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Pick a number in [1, 1000] for the test.',
+        sourceUrls,
+      );
+      expect(result, 'Pick a number in [1, 1000] for the test.');
+    });
+
+    test('expands [2, 4] when 2 AND 4 are both known sources', () {
+      // The opposite of the previous case: when web search IS on and
+      // both ids exist in sourceUrls, `[2, 4]` IS a citation list and
+      // should be expanded. The "every piece known" rule lets this
+      // through.
+      final sourceUrls = {2: 'http://two.com', 4: 'http://four.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Both [2, 4] confirm it.',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'Both [²](http://two.com)[⁴](http://four.com) confirm it.',
+      );
+    });
+
+    test('expands fullwidth Chinese comma list [1，3，5]', () {
+      // Chinese IMEs emit `，` (U+FF0C) instead of `,`. A Chinese-language
+      // answer can produce `[1，3，5]` instead of `[1, 3, 5]`.
+      final sourceUrls = {
+        1: 'http://one.com',
+        3: 'http://three.com',
+        5: 'http://five.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '参考 [1，3，5] 内容。',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '参考 [¹](http://one.com)[³](http://three.com)[⁵](http://five.com) 内容。',
+      );
+    });
+
+    test('expands fullwidth bracket comma list 【1, 3, 5】', () {
+      // qwen/deepseek-style fullwidth brackets paired with a comma list.
+      final sourceUrls = {
+        1: 'http://one.com',
+        3: 'http://three.com',
+        5: 'http://five.com',
+      };
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '据【1, 3, 5】所述。',
+        sourceUrls,
+      );
+      expect(
+        result,
+        '据[¹](http://one.com)[³](http://three.com)[⁵](http://five.com)所述。',
+      );
+    });
+
+    test('does not split a comma-list bracket already followed by (url)', () {
+      // The negative-lookahead guard `(?!\()` must apply to the split too,
+      // so an existing markdown link whose text happens to be `1, 3` is
+      // left alone.
+      final sourceUrls = {1: 'http://one.com', 3: 'http://three.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Range [1, 3](http://existing.com) reference.',
+        sourceUrls,
+      );
+      expect(
+        result,
+        'Range [1, 3](http://existing.com) reference.',
+      );
+    });
+
+    test('single bracket [1] still renders (no regression)', () {
+      // Sanity: the pre-pass must only fire on multi-id lists; a plain
+      // single id falls through to the existing per-id regex unchanged.
+      final sourceUrls = {1: 'http://one.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'See [1] alone.',
+        sourceUrls,
+      );
+      expect(result, 'See [¹](http://one.com) alone.');
+    });
+
+    test('does not match thousand-separator numbers like [2,000]', () {
+      // Brackets around a single number with thousand separator (e.g.
+      // `[2,000]`) is not a citation list — only one digit-run. The split
+      // requires at least two separate digit groups so this stays raw.
+      final sourceUrls = {2: 'http://two.com'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Limit [2,000] units.',
+        sourceUrls,
+      );
+      // Either rejected entirely OR the run `2,000` is read as a single
+      // contiguous number — what matters is the expected non-citation
+      // shape: no `[²]` / `[⁰]` links generated for digits inside it.
+      expect(result.contains('http://two.com'), isFalse,
+          reason: 'a single thousand-separator number must not become a '
+              'citation link');
+    });
   });
 
   // ===========================================================================

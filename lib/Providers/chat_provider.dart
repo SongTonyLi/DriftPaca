@@ -816,6 +816,54 @@ class ChatProvider extends ChangeNotifier {
     }).join();
   }
 
+  /// Matches a comma-separated id list inside a single bracket — `[1, 3, 5]`,
+  /// `[1，3，5]` (Chinese fullwidth comma U+FF0C), `[1、3、5]` (Chinese
+  /// enumeration mark U+3001), and the fullwidth-bracket variant
+  /// `【1, 3, 5】`. Requires AT LEAST one separator (so two digit groups)
+  /// — a single id like `[1]` falls through to the per-id regex unchanged.
+  static final _commaListCitationPattern = RegExp(
+    r'(?:'
+    r'\[\s*([\d²³¹⁰⁴-⁹]+'
+    r'(?:[\s,，、]+[\d²³¹⁰⁴-⁹]+)+)\s*\]'
+    r'|【\s*([\d²³¹⁰⁴-⁹]+'
+    r'(?:[\s,，、]+[\d²³¹⁰⁴-⁹]+)+)\s*】'
+    r')(?!\()',
+  );
+
+  static final _commaListSeparatorPattern = RegExp(r'[\s,，、]+');
+
+  /// Expands a comma-list citation bracket into chained per-id form so the
+  /// per-id regex below can handle each one. `[1, 3, 5]` → `[1][3][5]`.
+  ///
+  /// Requires EVERY piece to be a known source id (present in [sourceUrls])
+  /// before rewriting. This is the strongest disambiguator: it makes the
+  /// pre-pass a no-op when web search is disabled ([sourceUrls] is empty),
+  /// and rules out shapes that LOOK like citation lists but aren't —
+  ///   * math ranges like `[2, 4]` in a chat without web search,
+  ///   * `[1, 1000]` where 1000 can't be a small source id,
+  ///   * thousand-separator numbers like `[2,000]` where `0` isn't an id.
+  /// A real model citation list always references ids that the web-search
+  /// service actually fetched, so requiring all-known is safe.
+  static String _expandCommaListCitations(
+      String content, Map<int, String> sourceUrls) {
+    if (sourceUrls.isEmpty) return content;
+    return content.replaceAllMapped(_commaListCitationPattern, (m) {
+      final full = m.group(0)!;
+      final inner = m.group(1) ?? m.group(2) ?? '';
+      final pieces = inner
+          .split(_commaListSeparatorPattern)
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (pieces.length < 2) return full;
+      final allKnownIds = pieces.every((piece) {
+        final n = int.tryParse(_digitsToAscii(piece));
+        return n != null && sourceUrls.containsKey(n);
+      });
+      if (!allKnownIds) return full;
+      return pieces.map((p) => '[$p]').join();
+    });
+  }
+
   static String replaceCitationsWithLinks(String content, Map<int, String> sourceUrls) {
     // Match citation formats the model might emit:
     //   [1], [ 1 ]              — plain bracketed digit
@@ -838,7 +886,14 @@ class ChatProvider extends ChangeNotifier {
     //                              before the source-id lookup below.
     // Negative lookahead `(?!\()` skips brackets already followed by `(`,
     // which would be part of an existing markdown link.
-    return content.replaceAllMapped(
+    // Pre-pass: split comma-separated id lists like `[1, 3, 5]` into
+    // chained `[1][3][5]` so each id flows through the per-id regex below.
+    // Without this, the comma breaks the contiguous digit run and the
+    // whole bracket leaks through as raw text \u2014 observed on a Kiro vs
+    // Cursor comparison answer where the model emitted `[1, 3, 5]` lists.
+    final expanded = _expandCommaListCitations(content, sourceUrls);
+
+    return expanded.replaceAllMapped(
       RegExp(
         r'(?:'
         r'\[\s*(?:(?:id|src|source|\u6765\u6e90)\s*[:\uff1a]\s*)?([\d\u00b2\u00b3\u00b9\u2070\u2074-\u2079]+)\s*\]'

@@ -34,6 +34,14 @@ class RetainedPositionScrollPhysics extends ScrollPhysics {
       velocity: velocity,
     );
 
+    // While the user is actively scrolling (drag or fling), always lock the
+    // visual position by compensating for inserted content. Otherwise the
+    // "stick to bottom" branch below snaps each new streaming chunk to the
+    // bottom and fights the user's gesture, which feels laggy.
+    if (isScrolling || velocity != 0.0) {
+      return adjustPosition + widgetSizeProxy.deltaHeight;
+    }
+
     if (adjustPosition <= 44) {
       // 44 is just a threshold to adjust the position when the user scrolls to the bottom
       // if the user scrolls to the bottom, the adjustPosition is 0

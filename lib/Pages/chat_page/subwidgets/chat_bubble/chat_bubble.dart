@@ -129,7 +129,7 @@ class _ChatBubbleBody extends StatelessWidget {
 
   static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
     return MarkdownBody(
-      data: _fixEmphasisFlanking(_escapeCurrencyDollars(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapLatexCodeFences(data)))))),
+      data: _fixEmphasisFlanking(_escapeCurrencyDollars(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapBacktickWrappedLinks(_unwrapLatexCodeFences(data))))))),
       selectable: selectable,
       softLineBreak: true,
       styleSheet: context.markdownStyleSheet,
@@ -270,6 +270,27 @@ class _ChatBubbleBody extends StatelessWidget {
     );
   }
 
+  /// Strips inline-code backticks wrapping one or more contiguous citation
+  /// links: `` `[¹](url)[⁵](url)` `` → `[¹](url)[⁵](url)`.
+  ///
+  /// Some models (observed on Chinese financial-comparison answers) wrap an
+  /// entire run of citation markdown in single backticks, so the markdown
+  /// parser sees inline code and renders the bracket/paren/URL characters as
+  /// monospace literal text instead of clickable favicons.
+  ///
+  /// Only strip when the backtick span's content is *entirely* contiguous
+  /// `[text](url)` fragments — a backtick span that mixes prose with a link
+  /// (e.g. demonstrating markdown syntax in a code example) is left alone.
+  static final _backtickWrappedLinksPattern =
+      RegExp(r'`((?:\[[^\]\n]+\]\([^)\n]+\))+)`');
+
+  static String _unwrapBacktickWrappedLinks(String content) {
+    return content.replaceAllMapped(
+      _backtickWrappedLinksPattern,
+      (m) => m[1]!,
+    );
+  }
+
   /// Escapes paired `$` signs that surround currency-like content (e.g.
   /// `$852B ... $500B`) so they render as literal dollars instead of being
   /// consumed by [_InlineLatexSyntax].
@@ -305,19 +326,51 @@ class _ChatBubbleBody extends StatelessWidget {
   // between two figures. A doubled `~~strike~~` is left untouched.
   static final _approxTildePattern = RegExp(r'(?<!~)~(?!~)(?=[\$€£¥\d])');
 
+  // Natural-language sentence punctuation (ASCII + CJK fullwidth equivalents).
+  // Used by [_looksLikeCurrencyProse]; deliberately excludes `.` (decimal
+  // points are common in currency numerals).
+  static final _proseLikePunctuationPattern =
+      RegExp(r'[,;:，；：、。（）「」]');
+  // CJK Unified Ideographs — any of these in a `$...$` span is a strong
+  // signal it's Chinese prose with currency, not math (LaTeX expressions
+  // don't contain CJK characters outside `\text{}`).
+  static final _cjkIdeographPattern = RegExp(r'[一-鿿]');
+  // A run of 2+ Latin letters is "word"-like (e.g. `trillion`, `cap`, `USD`);
+  // single letters could be math variables, so we require at least two.
+  static final _multiLetterWordPattern = RegExp(r'[A-Za-z]{2,}');
+
+  /// Additional currency heuristic for `$...$` spans that the operator
+  /// check would reject as "math". Returns true when the span starts with a
+  /// digit, contains natural-language punctuation, contains
+  /// natural-language text (CJK ideographs or multi-letter Latin words),
+  /// and does NOT contain `\text` — the explicit LaTeX command that
+  /// embeds prose in math mode and signals the span IS real math.
+  ///
+  /// Catches financial deltas like `**$971.00**，较前一交易日上涨 **+5.14%**
+  /// （+$47.48）` where the `+` is a sign indicator inside Chinese prose,
+  /// not a math operator. The existing operator check would consume the
+  /// whole span as a non-wrapping LaTeX run.
+  static bool _looksLikeCurrencyProse(String inner) {
+    if (!_currencyLeadPattern.hasMatch(inner)) return false;
+    if (inner.contains(r'\text')) return false;
+    if (!_proseLikePunctuationPattern.hasMatch(inner)) return false;
+    return _cjkIdeographPattern.hasMatch(inner) ||
+        _multiLetterWordPattern.hasMatch(inner);
+  }
+
   static String _escapeCurrencyInText(String text) {
     final escaped = text.replaceAll(_approxTildePattern, r'\~');
     return escaped.replaceAllMapped(_inlineDollarPairPattern, (m) {
       final full = m[0]!;
       final inner = m[1]!;
       if (!_currencyLeadPattern.hasMatch(inner)) return full;
-      // A markdown link inside the span makes this prose with currency
-      // dollars, never a math expression — LaTeX has no `[text](url)`. Skip
-      // the operator heuristic, which would otherwise be fooled by `_`/`=`/`+`
-      // inside citation URLs (e.g. `internet_services`) and leave the `$`
-      // unescaped, letting the inline-LaTeX parser swallow the whole prose run
-      // as a single non-wrapping formula.
-      if (!inner.contains('](')) {
+      // Two escape hatches let us bypass the operator-based reject:
+      //   1. A markdown link inside the span — LaTeX has no `[text](url)`,
+      //      so the `_`/`=`/`+` inside the URL is irrelevant.
+      //   2. Prose-currency signal — CJK or multi-letter word + sentence
+      //      punctuation + no `\text` — the `+` is a sign indicator inside
+      //      natural-language prose, not a math operator.
+      if (!inner.contains('](') && !_looksLikeCurrencyProse(inner)) {
         // Drop `**` and our own escaped `\~` (inserted above for
         // "approximately") so neither the bold markers nor that backslash
         // are mistaken for LaTeX operators.
@@ -1342,12 +1395,21 @@ class _InlineLatexSyntax extends md.InlineSyntax {
   /// LaTeX: "$1+1=2$" — has +, =, ^, etc.
   static final _mathOperatorPattern = RegExp(r'[+=^_\\{}<>]|(?<!\*)\*(?!\*)');
 
-  /// Currency: starts with digit and contains NO LaTeX operators.
+  /// Currency: starts with digit and contains NO LaTeX operators — OR is
+  /// a prose-currency span the preprocessor would have escaped.
+  ///
+  /// `_ChatBubbleBody._escapeCurrencyDollars` normally escapes the `$` signs
+  /// before this parser ever sees the pair. Mirroring the prose-currency
+  /// heuristic here is defense in depth: if a future pipeline change ever
+  /// lets a prose-currency span reach this parser unescaped (e.g. through a
+  /// nested context the preprocessor doesn't traverse), it still renders as
+  /// text instead of a non-wrapping LaTeX run.
   static bool _isCurrency(String content) {
     if (!RegExp(r'^\s*[\d,.]').hasMatch(content)) return false;
     // Strip markdown bold markers before checking for math operators
     final stripped = content.replaceAll('**', '');
-    return !_mathOperatorPattern.hasMatch(stripped);
+    if (!_mathOperatorPattern.hasMatch(stripped)) return true;
+    return _ChatBubbleBody._looksLikeCurrencyProse(content);
   }
 
   @override

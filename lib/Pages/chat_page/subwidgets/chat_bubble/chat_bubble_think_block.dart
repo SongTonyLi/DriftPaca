@@ -232,7 +232,10 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
               child: Padding(
                 padding: const EdgeInsets.only(
                     left: 24.0, top: 4.0, bottom: 8.0),
-                child: SelectableText(
+                // Plain Text — selection is provided by the SelectionArea in
+                // chat_list_view. SelectableText here would intercept vertical
+                // drags inside the chat list and block page scroll.
+                child: Text(
                   widget.content,
                   style:
                       TextStyle(color: color, fontSize: 13, height: 1.4),

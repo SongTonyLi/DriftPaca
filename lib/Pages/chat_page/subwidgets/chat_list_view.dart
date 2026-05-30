@@ -96,7 +96,12 @@ class _ChatListViewState extends State<ChatListView> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        CustomScrollView(
+        // SelectionArea enables native iOS long-press selection (Copy / Look
+        // Up / Translate / Share) across all bubbles without intercepting
+        // vertical scroll — only long-press enters selection mode, so normal
+        // drags still scroll the conversation.
+        SelectionArea(
+          child: CustomScrollView(
           controller: _scrollController,
           reverse: true,
           physics: RetainedPositionScrollPhysics(
@@ -165,6 +170,7 @@ class _ChatListViewState extends State<ChatListView> {
                 child: SizedBox(height: widget.topPadding!),
               ),
           ],
+        ),
         ),
         Positioned(
           right: 16,

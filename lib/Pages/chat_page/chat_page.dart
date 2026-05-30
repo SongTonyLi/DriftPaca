@@ -70,7 +70,10 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   }
 
   void _onInputFocusChange() {
-    if (!_inputFocusNode.hasFocus && _viewModel.textFieldController.text.isEmpty && !_viewModel.isStreaming) {
+    // Collapse on focus loss when the field is empty, even during a stream.
+    // A non-empty draft still keeps the bar expanded so the user's text
+    // stays visible while the AI is still generating.
+    if (!_inputFocusNode.hasFocus && _viewModel.textFieldController.text.isEmpty) {
       setState(() => _isInputExpanded = false);
     }
   }
@@ -309,7 +312,11 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             ],
           ),
         ),
-        // Gradient fade below the input bar — content fades out in safe area
+        // Gradient fade below the input bar — content fades out in the safe
+        // area. Start at fully transparent so the top of the strip blends
+        // smoothly with the composer's translucent backdrop above; a 0.5 top
+        // creates a visible band where the composer (~18% tint) meets the
+        // 50%-opaque gradient.
         if (bottomSafeArea > 0)
           IgnorePointer(
             child: Container(
@@ -319,7 +326,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    bgColor.withValues(alpha: 0.5),
+                    bgColor.withValues(alpha: 0.0),
                     bgColor,
                   ],
                 ),

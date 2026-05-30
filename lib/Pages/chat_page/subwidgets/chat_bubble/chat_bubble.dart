@@ -128,25 +128,38 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 
   static Widget _buildMarkdown(BuildContext context, String data, {bool selectable = false}) {
-    return MarkdownBody(
-      data: _fixEmphasisFlanking(_escapeCurrencyDollars(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapBacktickWrappedLinks(_unwrapLatexCodeFences(data))))))),
-      selectable: selectable,
-      softLineBreak: true,
-      styleSheet: context.markdownStyleSheet,
-      syntaxHighlighter: CodeSyntaxHighlighter(
-        brightness: Theme.of(context).brightness,
+    // Material Scrollbar (used by flutter_markdown for wide-table horizontal
+    // scroll) reads MediaQuery.paddingOf(context) and inset its track by that
+    // amount. Inside a chat bubble that isn't anywhere near the screen edge,
+    // the iOS home-indicator inset (~34px) pushes the horizontal scrollbar
+    // up — making it appear mid-table instead of at the bottom. Stripping
+    // padding here keeps the scrollbar pinned to the table's actual bottom.
+    return MediaQuery.removePadding(
+      context: context,
+      removeTop: true,
+      removeBottom: true,
+      removeLeft: true,
+      removeRight: true,
+      child: MarkdownBody(
+        data: _fixEmphasisFlanking(_escapeCurrencyDollars(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapBacktickWrappedLinks(_unwrapLatexCodeFences(data))))))),
+        selectable: selectable,
+        softLineBreak: true,
+        styleSheet: context.markdownStyleSheet,
+        syntaxHighlighter: CodeSyntaxHighlighter(
+          brightness: Theme.of(context).brightness,
+        ),
+        extensionSet: _markdownExtensionSet,
+        builders: {
+          'a': _LinkBuilder(),
+          'latex': _SmartLatexBuilder(),
+          'br': _HtmlBrBuilder(),
+        },
+        // No onTapLink: flutter_markdown attaches the link's TapGestureRecognizer
+        // to the prose spans that FOLLOW the link, so an onTapLink handler would
+        // open the citation URL when the user taps that trailing text. The
+        // favicon from _LinkBuilder carries its own GestureDetector, so taps are
+        // already handled at the icon itself.
       ),
-      extensionSet: _markdownExtensionSet,
-      builders: {
-        'a': _LinkBuilder(),
-        'latex': _SmartLatexBuilder(),
-        'br': _HtmlBrBuilder(),
-      },
-      // No onTapLink: flutter_markdown attaches the link's TapGestureRecognizer
-      // to the prose spans that FOLLOW the link, so an onTapLink handler would
-      // open the citation URL when the user taps that trailing text. The
-      // favicon from _LinkBuilder carries its own GestureDetector, so taps are
-      // already handled at the icon itself.
     );
   }
 

@@ -384,24 +384,31 @@ class _GlassContextMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final menuColor = isDark
+        ? colorScheme.surface.withValues(alpha: 0.92)
+        : Colors.white.withValues(alpha: 0.96);
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(16.0),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
         child: Material(
-          color: colorScheme.surface.withValues(alpha: 0.82),
+          color: menuColor,
           borderRadius: BorderRadius.circular(16.0),
           child: Container(
             width: 180,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16.0),
               border: Border.all(
-                color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+                color: isDark
+                    ? colorScheme.outlineVariant.withValues(alpha: 0.3)
+                    : Colors.white.withValues(alpha: 0.8),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 20,
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 24,
                   offset: const Offset(0, 8),
                 ),
               ],

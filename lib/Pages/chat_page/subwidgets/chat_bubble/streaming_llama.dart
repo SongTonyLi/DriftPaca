@@ -1,8 +1,8 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 
-/// A tiny animated llama that runs while streaming, then cycles through
-/// idle behaviors (eating grass, looking around, sleeping) when done.
+/// A tiny animated llama that runs while streaming, then winds down through
+/// idle behaviors (eating grass, looking around) and falls asleep.
 class StreamingLlama extends StatefulWidget {
   final bool isRunning;
 
@@ -13,30 +13,63 @@ class StreamingLlama extends StatefulWidget {
 }
 
 class _StreamingLlamaState extends State<StreamingLlama>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _controller;
+
+  // Where the idle play-through settles: mid-sleep, so the final frozen
+  // frame shows a closed eye and zzz particles. Stopping (rather than
+  // looping) releases the ticker — a resting llama costs no frames, which
+  // matters because this widget stays in the bubble after streaming ends.
+  static const double _sleepPhase = 0.8;
+  static const Duration _runCycle = Duration(milliseconds: 300);
+  static const Duration _idleCycle = Duration(milliseconds: 12000);
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: Duration(milliseconds: widget.isRunning ? 300 : 12000),
-    )..repeat();
+    WidgetsBinding.instance.addObserver(this);
+    _controller = AnimationController(vsync: this);
+    _applyMode();
+  }
+
+  /// Running loops the gait cycle; idle plays eat → look → sleep once and
+  /// stops at [_sleepPhase].
+  void _applyMode() {
+    if (widget.isRunning) {
+      _controller.duration = _runCycle;
+      _controller.repeat();
+    } else {
+      _controller.duration = _idleCycle;
+      _controller.value = 0.0;
+      _controller.animateTo(_sleepPhase);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _controller.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      if (widget.isRunning) {
+        _controller.repeat();
+      } else if (_controller.value < _sleepPhase) {
+        _controller.animateTo(_sleepPhase);
+      }
+    }
   }
 
   @override
   void didUpdateWidget(StreamingLlama old) {
     super.didUpdateWidget(old);
     if (widget.isRunning != old.isRunning) {
-      _controller.duration =
-          Duration(milliseconds: widget.isRunning ? 300 : 12000);
-      _controller.repeat();
+      _applyMode();
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }

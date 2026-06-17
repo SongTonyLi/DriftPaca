@@ -1,8 +1,11 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:llamaseek/Utils/drift_speed.dart';
+import 'package:llamaseek/Widgets/gradient/blob_sprite.dart';
+import 'package:llamaseek/Widgets/gradient/mesh_atlas_painter.dart';
 import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
 
 /// Full-bleed animated mesh of soft radial-gradient blobs in [meshA]/[meshB]
@@ -39,6 +42,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
 
   late final Ticker _ticker;
   final Mesh _mesh = Mesh();
+  late final ui.Image _sprite = bakeBlobSprite();
   final ValueNotifier<int> _repaint = ValueNotifier<int>(0);
 
   Duration _last = Duration.zero;
@@ -95,6 +99,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   void dispose() {
     _ticker.dispose();
     _repaint.dispose();
+    _sprite.dispose();
     super.dispose();
   }
 
@@ -105,42 +110,8 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
         size: Size.infinite,
         isComplex: true,
         willChange: true,
-        painter: _MeshPainter(_mesh, _repaint),
+        painter: MeshAtlasPainter(_mesh, _sprite, _repaint),
       ),
     );
   }
-}
-
-class _MeshPainter extends CustomPainter {
-  final Mesh mesh;
-  // Hoisted out of paint() so the always-on animation doesn't allocate a Paint
-  // per blob every frame. Shaders still rebuild per frame (the blobs move), but
-  // the Paint objects are reused.
-  final Paint _bgPaint = Paint();
-  final List<Paint> _blobPaints = List.generate(kBlobs.length, (_) => Paint());
-
-  _MeshPainter(this.mesh, Listenable repaint) : super(repaint: repaint);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, _bgPaint..color = mesh.canvas);
-    for (var i = 0; i < kBlobs.length; i++) {
-      final blob = kBlobs[i];
-      final p = blobPlacement(blob, mesh.phase, size);
-      final color = blob.useA ? mesh.a : mesh.b;
-      final rect = Rect.fromCircle(center: p.center, radius: p.radius);
-      final shader = RadialGradient(
-        colors: [
-          color.withValues(alpha: blob.opacity),
-          color.withValues(alpha: blob.opacity),
-          color.withValues(alpha: 0.0),
-        ],
-        stops: const [0.0, 0.4, 1.0],
-      ).createShader(rect);
-      canvas.drawCircle(p.center, p.radius, _blobPaints[i]..shader = shader);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MeshPainter oldDelegate) => true;
 }

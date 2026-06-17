@@ -111,6 +111,7 @@ extension MarkdownStyleSheetExtension on BuildContext {
       codeblockAlign: WrapAlignment.start,
       // Tables — intrinsic width enables horizontal scroll for wide tables
       tableColumnWidth: const IntrinsicColumnWidth(),
+      textAlign: WrapAlignment.spaceBetween, // → TextAlign.justify for paragraphs
     );
   }
 }

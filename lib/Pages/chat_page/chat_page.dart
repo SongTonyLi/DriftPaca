@@ -238,6 +238,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             : null,
         bottomPadding: _chatBodyBottomPadding(context),
         topPadding: isMobile ? MediaQuery.of(context).padding.top + ChatAppBar.mobileOverlayHeight : null,
+        composerExpanded: _shouldShowExpanded,
       );
     }
   }
@@ -281,9 +282,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             ],
           ),
         ),
-        // Transparent gap so the composer floats above the home indicator;
+        // Transparent gap so the composer floats just above the home indicator;
         // the gradient shows through it (no colored strip).
-        SizedBox(height: MediaQuery.of(context).padding.bottom + 2),
+        SizedBox(height: MediaQuery.of(context).padding.bottom - 6),
       ],
     );
   }

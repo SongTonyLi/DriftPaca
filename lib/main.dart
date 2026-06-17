@@ -13,6 +13,7 @@ import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/gradient_settings.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
 import 'package:llamaseek/Utils/mode_palette.dart';
+import 'package:llamaseek/Utils/perf_probe.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -122,15 +123,18 @@ class DriftPacaApp extends StatelessWidget {
               useMaterial3: true,
             );
           }(),
-          builder: (context, child) => ResponsiveBreakpoints.builder(
-            breakpoints: [
-              const Breakpoint(start: 0, end: 450, name: MOBILE),
-              const Breakpoint(start: 451, end: 800, name: TABLET),
-              const Breakpoint(start: 801, end: 1920, name: DESKTOP),
-            ],
-            useShortestSide: true,
-            child: child!,
-          ),
+          builder: (context, child) {
+            final responsive = ResponsiveBreakpoints.builder(
+              breakpoints: [
+                const Breakpoint(start: 0, end: 450, name: MOBILE),
+                const Breakpoint(start: 451, end: 800, name: TABLET),
+                const Breakpoint(start: 801, end: 1920, name: DESKTOP),
+              ],
+              useShortestSide: true,
+              child: child!,
+            );
+            return kPerfProbe ? PerfProbeHud(child: responsive) : responsive;
+          },
           onGenerateRoute: (settings) {
             if (settings.name == '/') {
               return MaterialPageRoute(

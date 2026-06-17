@@ -10,6 +10,19 @@ void main() {
       expect(targetDriftSpeed(isGenerating: true), kGeneratingDriftSpeed);
       expect(kGeneratingDriftSpeed, greaterThan(kRestDriftSpeed));
     });
+    test('eases to a standstill when inactive', () {
+      expect(targetDriftSpeed(isGenerating: false, isActive: false),
+          kIdleDriftSpeed);
+      expect(kIdleDriftSpeed, 0.0);
+    });
+    test('inactive overrides generating', () {
+      expect(targetDriftSpeed(isGenerating: true, isActive: false),
+          kIdleDriftSpeed);
+    });
+    test('active + generating still fastest', () {
+      expect(targetDriftSpeed(isGenerating: true, isActive: true),
+          kGeneratingDriftSpeed);
+    });
   });
 
   group('easeDriftSpeed', () {

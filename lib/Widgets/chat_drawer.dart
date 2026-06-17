@@ -35,7 +35,7 @@ class ChatDrawer extends StatelessWidget {
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: Container(
                 decoration: BoxDecoration(
-                  color: colorScheme.surface.withValues(alpha: 0.40),
+                  color: colorScheme.surface.withValues(alpha: 0.28),
                   borderRadius: BorderRadius.circular(20.0),
                   border: Border.all(
                     color: colorScheme.outline.withValues(alpha: 0.15),

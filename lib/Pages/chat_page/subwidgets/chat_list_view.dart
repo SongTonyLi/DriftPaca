@@ -18,6 +18,7 @@ class ChatListView extends StatefulWidget {
   final double? bottomPadding;
   final double? topPadding;
   final List<MessageSegment> searchSegments;
+  final bool composerExpanded;
 
   const ChatListView({
     super.key,
@@ -28,6 +29,7 @@ class ChatListView extends StatefulWidget {
     this.bottomPadding,
     this.topPadding,
     this.searchSegments = const [],
+    this.composerExpanded = false,
   });
 
   @override
@@ -94,10 +96,13 @@ class _ChatListViewState extends State<ChatListView> {
 
   @override
   Widget build(BuildContext context) {
-    // Hide the scroll-to-bottom button while the keyboard is up (the composer
-    // is expanded and would otherwise cover it).
+    // Hide the scroll-to-bottom button whenever the composer is expanded — it
+    // grows upward over the button's fixed offset and would otherwise cover it.
+    // Covers both the keyboard-up case and an expanded draft kept open with the
+    // keyboard dismissed (e.g. a pending draft while a reply streams).
     final showScrollButton = _isScrollToBottomButtonVisible &&
-        MediaQuery.of(context).viewInsets.bottom == 0;
+        MediaQuery.of(context).viewInsets.bottom == 0 &&
+        !widget.composerExpanded;
     return Stack(
       children: [
         // Fade the conversation out at its bottom so it dissolves into the

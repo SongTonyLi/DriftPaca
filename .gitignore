@@ -47,3 +47,6 @@ app.*.map.json
 # Superpowers
 .superpowers/
 docs/superpowers/
+
+# Git worktrees
+.worktrees/

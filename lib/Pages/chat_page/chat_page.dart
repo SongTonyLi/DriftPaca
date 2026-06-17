@@ -283,7 +283,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
         ),
         // Transparent gap so the composer floats above the home indicator;
         // the gradient shows through it (no colored strip).
-        SizedBox(height: MediaQuery.of(context).padding.bottom + 10),
+        SizedBox(height: MediaQuery.of(context).padding.bottom + 2),
       ],
     );
   }

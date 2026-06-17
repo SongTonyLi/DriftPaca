@@ -13,8 +13,8 @@ extension MarkdownStyleSheetExtension on BuildContext {
 
     // Code block colors — soft gray, readable in both themes
     final codeBlockBg = isDark
-        ? colorScheme.surfaceContainerHighest
-        : const Color(0xFFF3F4F6);
+        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.55)
+        : const Color(0xFFF3F4F6).withValues(alpha: 0.6);
     final codeTextColor = isDark
         ? colorScheme.onSurface
         : const Color(0xFF374151);
@@ -78,7 +78,9 @@ extension MarkdownStyleSheetExtension on BuildContext {
       blockSpacing: 12,
       // Blockquote — sky-blue left border with rounded right corners
       blockquoteDecoration: BoxDecoration(
-        color: (isDark ? const Color(0xFF1A3A4A) : const Color(0xFFE8F4FD)),
+        color: (isDark
+            ? const Color(0xFF1A3A4A).withValues(alpha: 0.55)
+            : const Color(0xFFE8F4FD).withValues(alpha: 0.6)),
         borderRadius: const BorderRadius.only(
           topRight: Radius.circular(10),
           bottomRight: Radius.circular(10),
@@ -111,6 +113,7 @@ extension MarkdownStyleSheetExtension on BuildContext {
       codeblockAlign: WrapAlignment.start,
       // Tables — intrinsic width enables horizontal scroll for wide tables
       tableColumnWidth: const IntrinsicColumnWidth(),
+      textAlign: WrapAlignment.spaceBetween, // → TextAlign.justify for paragraphs
     );
   }
 }

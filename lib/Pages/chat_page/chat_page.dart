@@ -89,7 +89,6 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
       _viewModel.currentChat?.isIncognito == true || _viewModel.incognitoRequested;
 
   // Incognito palette
-  static const _incognitoBg = Color(0xFF0D0D1A);
   static const _incognitoSurface = Color(0xFF16162A);
   static const _incognitoAccent = Color(0xFF6C63FF);
   static const _incognitoBorder = Color(0xFF2A2A4A);
@@ -187,32 +186,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
       ],
     );
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Incognito gradient background (animated)
-        IgnorePointer(
-          child: AnimatedOpacity(
-            opacity: isIncognito ? 1.0 : 0.0,
-            duration: _transitionDuration,
-            curve: _transitionCurve,
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0.0, -0.4),
-                  radius: 1.2,
-                  colors: [
-                    Color(0xFF141428),
-                    _incognitoBg,
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        body,
-      ],
-    );
+    return body;
   }
 
   Widget _buildChatBody() {
@@ -270,11 +244,6 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
 
   Widget _buildBottomOverlay() {
     final footer = _buildChatFooter();
-    // Use theme surface — AnimatedTheme interpolates this in sync with
-    // the gradient overlay, so the bottom area transitions at the same
-    // rate as the main content area.
-    final bgColor = Theme.of(context).colorScheme.surface;
-    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -312,27 +281,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             ],
           ),
         ),
-        // Gradient fade below the input bar — content fades out in the safe
-        // area. Start at fully transparent so the top of the strip blends
-        // smoothly with the composer's translucent backdrop above; a 0.5 top
-        // creates a visible band where the composer (~18% tint) meets the
-        // 50%-opaque gradient.
-        if (bottomSafeArea > 0)
-          IgnorePointer(
-            child: Container(
-              height: bottomSafeArea,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    bgColor.withValues(alpha: 0.0),
-                    bgColor,
-                  ],
-                ),
-              ),
-            ),
-          ),
+        // Transparent gap so the composer floats above the home indicator;
+        // the gradient shows through it (no colored strip).
+        SizedBox(height: MediaQuery.of(context).padding.bottom + 10),
       ],
     );
   }

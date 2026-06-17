@@ -650,7 +650,16 @@ class ChatProvider extends ChangeNotifier {
         searchQuery,
         onUrlsKnown: _webSearchUrlsKnownCallback,
         onUrlFetched: _webSearchUrlFetchedCallback,
+        isCancelled: () => !_activeChatStreams.containsKey(associatedChat.id),
       );
+
+      // User hit stop during the search — don't update the UI with results
+      // and don't proceed to Call 2 (which would re-arm _activeChatStreams).
+      if (!_activeChatStreams.containsKey(associatedChat.id)) {
+        streamingMessage.createdAt = DateTime.now();
+        return streamingMessage;
+      }
+
       _webSearchCompleteCallback?.call(searchResults);
 
       if (searchResults.isEmpty) {

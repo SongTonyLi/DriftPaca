@@ -77,13 +77,17 @@ class WebSearchService {
     int maxResults = 8,
     void Function(List<WebSearchResult> urls)? onUrlsKnown,
     void Function(String url, bool success)? onUrlFetched,
+    bool Function()? isCancelled,
   }) async {
+    if (isCancelled?.call() == true) return [];
     final results = await searchAndFetch(
       query,
       maxResults: maxResults,
       onUrlsKnown: onUrlsKnown,
       onUrlFetched: onUrlFetched,
+      isCancelled: isCancelled,
     );
+    if (isCancelled?.call() == true) return [];
 
     for (final result in results) {
       if (result.pageContent != null && result.pageContent!.isNotEmpty) {
@@ -111,10 +115,13 @@ class WebSearchService {
     int maxResults = 8,
     void Function(List<WebSearchResult> urls)? onUrlsKnown,
     void Function(String url, bool success)? onUrlFetched,
+    bool Function()? isCancelled,
   }) async {
     // Overfetch to compensate for filtered sources
-    final results = await search(query, maxResults: maxResults + 4);
+    final results = await search(query,
+        maxResults: maxResults + 4, isCancelled: isCancelled);
     if (results.isEmpty) return results;
+    if (isCancelled?.call() == true) return [];
 
     // Drop unreliable sources, keep DDG relevance order
     results.removeWhere((r) => !_isReliableSource(r.url));
@@ -122,6 +129,7 @@ class WebSearchService {
     // Only fetch pages for what we need
     final toFetch = results.take(maxResults).toList();
 
+    if (isCancelled?.call() == true) return toFetch;
     // Notify the UI of the URL list before fetching starts so the
     // search card can render each row in a "pending" state.
     onUrlsKnown?.call(toFetch);
@@ -129,7 +137,9 @@ class WebSearchService {
     final semaphore = _Semaphore(_maxConcurrentFetches);
     await Future.wait(
       toFetch.map((r) => semaphore.run(() async {
+            if (isCancelled?.call() == true) return;
             await _fetchPageContent(r);
+            if (isCancelled?.call() == true) return;
             final ok = r.pageContent != null && r.pageContent!.isNotEmpty;
             onUrlFetched?.call(r.url, ok);
           })),
@@ -141,14 +151,17 @@ class WebSearchService {
 
   /// Searches DuckDuckGo via WebView (primary) with HTTP fallback.
   Future<List<WebSearchResult>> search(String query,
-      {int maxResults = 5}) async {
+      {int maxResults = 5, bool Function()? isCancelled}) async {
+    if (isCancelled?.call() == true) return [];
     // Try WebView first (bypasses CAPTCHA)
     try {
-      final results = await _searchViaWebView(query, maxResults: maxResults);
+      final results = await _searchViaWebView(query,
+          maxResults: maxResults, isCancelled: isCancelled);
       if (results.isNotEmpty) return results;
     } catch (e) {
       // WebView failed, fall back to HTTP
     }
+    if (isCancelled?.call() == true) return [];
 
     // Fall back to HTTP (may be CAPTCHA-blocked)
     try {
@@ -157,7 +170,9 @@ class WebSearchService {
       if (e is TimeoutException ||
           e is SocketException ||
           e is http.ClientException) {
+        if (isCancelled?.call() == true) return [];
         await Future.delayed(_retryBackoff);
+        if (isCancelled?.call() == true) return [];
         try {
           return await _searchOnce(query, maxResults: maxResults);
         } catch (_) {
@@ -278,7 +293,7 @@ ${sourceContext.toString().trim()}
 
   /// Searches DuckDuckGo using a headless WebView (bypasses CAPTCHA).
   Future<List<WebSearchResult>> _searchViaWebView(String query,
-      {int maxResults = 5}) async {
+      {int maxResults = 5, bool Function()? isCancelled}) async {
     final completer = Completer<List<WebSearchResult>>();
     HeadlessInAppWebView? headless;
 
@@ -287,6 +302,18 @@ ${sourceContext.toString().trim()}
         completer.complete([]);
       }
     });
+
+    // Poll cancellation alongside the result poll so a stop during the
+    // 12s WebView load short-circuits without waiting for the timeout.
+    Timer? cancelPoll;
+    if (isCancelled != null) {
+      cancelPoll = Timer.periodic(const Duration(milliseconds: 100), (t) {
+        if (isCancelled() && !completer.isCompleted) {
+          completer.complete([]);
+          t.cancel();
+        }
+      });
+    }
 
     try {
       final encodedQuery = Uri.encodeComponent(query);
@@ -378,6 +405,7 @@ ${sourceContext.toString().trim()}
       return await completer.future;
     } finally {
       timer.cancel();
+      cancelPoll?.cancel();
       headless?.dispose();
     }
   }

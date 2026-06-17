@@ -10,7 +10,9 @@ import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/services.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
+import 'package:llamaseek/Utils/gradient_settings.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
+import 'package:llamaseek/Utils/mode_palette.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -101,20 +103,25 @@ class DriftPacaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder(
       valueListenable: Hive.box('settings').listenable(
-        keys: ['color', 'brightness'],
+        keys: ['bgColor1', 'bgColor2', 'brightness'],
       ),
       builder: (context, box, _) {
         return MaterialApp(
           title: AppConstants.appName,
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              brightness: _brightness ?? MediaQuery.platformBrightnessOf(context),
-              dynamicSchemeVariant: DynamicSchemeVariant.neutral,
-              seedColor: box.get('color', defaultValue: Colors.grey),
-            ),
-            appBarTheme: const AppBarTheme(centerTitle: true),
-            useMaterial3: true,
-          ),
+          theme: () {
+            final pair = readGradientPair(box);
+            final brightness =
+                _brightness ?? MediaQuery.platformBrightnessOf(context);
+            final palette = resolvePalette(
+              pair,
+              brightness == Brightness.dark ? AppMode.dark : AppMode.normal,
+            );
+            return ThemeData(
+              colorScheme: palette.scheme,
+              appBarTheme: const AppBarTheme(centerTitle: true),
+              useMaterial3: true,
+            );
+          }(),
           builder: (context, child) => ResponsiveBreakpoints.builder(
             breakpoints: [
               const Breakpoint(start: 0, end: 450, name: MOBILE),

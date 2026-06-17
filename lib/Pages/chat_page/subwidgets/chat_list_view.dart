@@ -94,14 +94,27 @@ class _ChatListViewState extends State<ChatListView> {
 
   @override
   Widget build(BuildContext context) {
+    // Hide the scroll-to-bottom button while the keyboard is up (the composer
+    // is expanded and would otherwise cover it).
+    final showScrollButton = _isScrollToBottomButtonVisible &&
+        MediaQuery.of(context).viewInsets.bottom == 0;
     return Stack(
       children: [
-        // SelectionArea enables native iOS long-press selection (Copy / Look
-        // Up / Translate / Share) across all bubbles without intercepting
-        // vertical scroll — only long-press enters selection mode, so normal
-        // drags still scroll the conversation.
-        SelectionArea(
-          child: CustomScrollView(
+        // Fade the conversation out at its bottom so it dissolves into the
+        // animated gradient behind it. The scroll-to-bottom button is a sibling
+        // in this Stack (below), so it is NOT affected by this mask.
+        ShaderMask(
+          shaderCallback: (rect) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.white, Colors.white, Colors.transparent],
+            stops: [0.0, 0.9, 1.0],
+          ).createShader(rect),
+          blendMode: BlendMode.dstIn,
+          // SelectionArea enables native iOS long-press selection across
+          // bubbles without intercepting vertical scroll.
+          child: SelectionArea(
+            child: CustomScrollView(
           controller: _scrollController,
           reverse: true,
           physics: RetainedPositionScrollPhysics(
@@ -172,18 +185,19 @@ class _ChatListViewState extends State<ChatListView> {
           ],
         ),
         ),
+        ),
         Positioned(
           right: 16,
           bottom: _scrollToBottomButtonBottomOffset(),
           child: AnimatedScale(
-            scale: _isScrollToBottomButtonVisible ? 1.0 : 0.0,
+            scale: showScrollButton ? 1.0 : 0.0,
             duration: const Duration(milliseconds: 250),
             curve: _isScrollToBottomButtonVisible ? Curves.easeOutBack : Curves.easeIn,
             child: AnimatedOpacity(
-              opacity: _isScrollToBottomButtonVisible ? 1.0 : 0.0,
+              opacity: showScrollButton ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 200),
               child: IgnorePointer(
-                ignoring: !_isScrollToBottomButtonVisible,
+                ignoring: !showScrollButton,
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,

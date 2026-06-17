@@ -45,7 +45,7 @@ ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
     case AppMode.normal:
       final a = _clampL(base.c1, 0.45, 0.72);
       final b = _clampL(base.c2, 0.45, 0.72);
-      final canvas = _setL(base.c1, 0.96);
+      final canvas = _setL(Color.lerp(base.c1, base.c2, 0.5)!, 0.90);
       return ResolvedPalette(
         meshA: a, meshB: b, canvas: canvas,
         scheme: _scheme(a, b, Brightness.light),

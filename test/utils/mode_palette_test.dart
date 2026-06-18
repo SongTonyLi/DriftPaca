@@ -53,18 +53,20 @@ void main() {
     expect(_light(resolvePalette(base, AppMode.incognitoLight).idle), greaterThan(0.92));
   });
 
-  test('idle tints are thinner (less saturated) than the source mix', () {
+  test('normal idle is a thinner (less saturated) wash of the mix', () {
     final mixSat = _sat(Color.lerp(base.c1, base.c2, 0.5)!);
     expect(_sat(resolvePalette(base, AppMode.normal).idle), lessThan(mixSat));
-    expect(_sat(resolvePalette(base, AppMode.incognitoLight).idle), lessThan(mixSat));
   });
 
-  test('both incognito idles use the complementary hue of the mix', () {
-    final mixHue = HSLColor.fromColor(Color.lerp(base.c1, base.c2, 0.5)!).hue;
-    for (final m in const [AppMode.incognitoLight, AppMode.incognitoDark]) {
-      final idleHue = HSLColor.fromColor(resolvePalette(base, m).idle).hue;
-      expect(_hueDist(mixHue, idleHue), greaterThan(150), reason: '$m');
-    }
+  test('incognito uses a fixed muted indigo tint, independent of user colours', () {
+    const warm = GradientPair(Color(0xFFFF5500), Color(0xFFFFAA00));
+    final a = HSLColor.fromColor(resolvePalette(base, AppMode.incognitoDark).idle);
+    final b = HSLColor.fromColor(resolvePalette(warm, AppMode.incognitoDark).idle);
+    // Same incognito tint regardless of the user's gradient pair:
+    expect(_hueDist(a.hue, b.hue), lessThan(1));
+    // Muted indigo/violet:
+    expect(a.hue, inInclusiveRange(230, 285));
+    expect(a.saturation, lessThan(0.35));
   });
 
   test('incognito-dark mesh colors are heavily desaturated', () {

@@ -42,15 +42,9 @@ Color _clampL(Color c, double min, double max) {
 
 Color _setL(Color c, double l) => _hsl(c).withLightness(l.clamp(0.0, 1.0)).toColor();
 
-/// The complementary hue of [c] (opposite on the colour wheel), same S/L.
-Color _complement(Color c) {
-  final h = _hsl(c);
-  return h.withHue((h.hue + 180) % 360).toColor();
-}
-
 /// A thin, subtle background wash: [base]'s hue at a softened saturation and the
-/// given [lightness]. Used for the flat idle background so it reads as a faint
-/// tint of the chosen colours rather than a strong fill.
+/// given [lightness]. Used for the normal/dark flat idle background so it reads
+/// as a faint tint of the chosen colours rather than a strong fill.
 Color _idleTint(Color base, double lightness, {double satScale = 0.45}) {
   final h = _hsl(base);
   return HSLColor.fromAHSL(
@@ -60,6 +54,12 @@ Color _idleTint(Color base, double lightness, {double satScale = 0.45}) {
     lightness,
   ).toColor();
 }
+
+/// Iconic "incognito" tint: a muted, desaturated indigo/violet that is
+/// independent of the user's colours, at the given [lightness]. Gives incognito
+/// the classic private-browsing feel rather than a hue derived from the palette.
+Color _incognitoTint(double lightness) =>
+    HSLColor.fromAHSL(1.0, 258, 0.20, lightness).toColor();
 
 ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
   final mix = Color.lerp(base.c1, base.c2, 0.5)!;
@@ -83,28 +83,27 @@ ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
         scheme: _scheme(a, b, Brightness.dark),
       );
     case AppMode.incognitoLight:
-      // Light incognito: the same desaturated character as the dark variant but
-      // a light surface, with a complementary-hue idle so it reads as a contrast.
+      // Light incognito: muted desaturated mesh over the iconic indigo tint.
       final a = _clampL(_scale(base.c1, s: 0.30), 0.52, 0.74);
       final b = _clampL(_scale(base.c2, s: 0.30), 0.52, 0.74);
-      final canvas = _setL(mix, 0.92);
+      final canvas = _incognitoTint(0.93);
       final accent = _clampL(_scale(base.c1, s: 0.9), 0.40, 0.55);
       final scheme = _scheme(accent, b, Brightness.light).copyWith(surface: canvas);
       return ResolvedPalette(
         meshA: a, meshB: b, canvas: canvas,
-        idle: _idleTint(_complement(mix), 0.96), // light contrast wash
+        idle: _incognitoTint(0.95), // pale indigo wash (iconic incognito)
         scheme: scheme,
       );
     case AppMode.incognitoDark:
       final a = _clampL(_scale(base.c1, s: 0.22, l: 0.32), 0.16, 0.34);
       final b = _clampL(_scale(base.c2, s: 0.22, l: 0.32), 0.16, 0.34);
-      final canvas = _setL(base.c1, 0.04);
+      final canvas = _incognitoTint(0.06);
       // One vivid accent keeps buttons/outgoing bubbles readable.
       final accent = _clampL(_scale(base.c1, s: 0.9), 0.55, 0.70);
       final scheme = _scheme(accent, b, Brightness.dark).copyWith(surface: canvas);
       return ResolvedPalette(
         meshA: a, meshB: b, canvas: canvas,
-        idle: _idleTint(_complement(mix), 0.06), // dark contrast wash
+        idle: _incognitoTint(0.09), // dark indigo wash (iconic incognito)
         scheme: scheme,
       );
   }

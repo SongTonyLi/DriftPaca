@@ -108,6 +108,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
     }
 
     final isIncognito = _isIncognito;
+    // The incognito badge belongs on a real (non-empty) conversation; the empty
+    // incognito welcome already announces the mode, so it isn't needed there.
+    final showIncognitoBadge = isIncognito && _viewModel.messages.isNotEmpty;
 
     Widget body = Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -130,15 +133,15 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                 right: 0,
                 child: Center(
                   child: AnimatedOpacity(
-                    opacity: isIncognito ? 1.0 : 0.0,
+                    opacity: showIncognitoBadge ? 1.0 : 0.0,
                     duration: _transitionDuration,
                     curve: _transitionCurve,
                     child: AnimatedSlide(
-                      offset: isIncognito ? Offset.zero : const Offset(0, -0.5),
+                      offset: showIncognitoBadge ? Offset.zero : const Offset(0, -0.5),
                       duration: _transitionDuration,
                       curve: Curves.easeOutCubic,
                       child: IgnorePointer(
-                        ignoring: !isIncognito,
+                        ignoring: !showIncognitoBadge,
                         child: _incognitoBadge(context),
                       ),
                     ),

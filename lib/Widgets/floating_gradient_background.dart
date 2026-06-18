@@ -1,36 +1,29 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:llamaseek/Utils/drift_speed.dart';
-import 'package:llamaseek/Utils/idle_activity_controller.dart';
-import 'package:llamaseek/Widgets/gradient/blob_sprite.dart';
-import 'package:llamaseek/Widgets/gradient/mesh_atlas_painter.dart';
 import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
 
-/// Full-bleed animated mesh of soft radial-gradient blobs in [meshA]/[meshB]
-/// over [canvas]. Drift advances via an accumulated phase whose rate eases up
-/// while [isGenerating] is true, so speed changes never jump. Place at the
-/// bottom of a Stack behind app content.
+/// Full-bleed background that is a flat [idleColor] at rest. Only while
+/// [isGenerating] does a drifting mesh of soft radial-gradient blobs in
+/// [meshA]/[meshB] over [canvas] slowly fade in; when generation stops the mesh
+/// fades back out to [idleColor] and the ticker stops, so an idle screen
+/// produces no frames at all. Place at the bottom of a Stack behind content.
 class FloatingGradientBackground extends StatefulWidget {
   final Color meshA;
   final Color meshB;
-  final Color canvas;
+  final Color canvas; // tinted base under the blobs while generating
+  final Color idleColor; // flat background at rest (white / near-black)
   final bool isGenerating;
-
-  /// When supplied, the drift eases to a standstill and the ticker stops once
-  /// the screen has been idle (no pointer/scroll) and no generation is running,
-  /// resuming instantly on the next activity. Null => always animating.
-  final IdleActivityController? activity;
 
   const FloatingGradientBackground({
     super.key,
     required this.meshA,
     required this.meshB,
     required this.canvas,
+    required this.idleColor,
     required this.isGenerating,
-    this.activity,
   });
 
   @override
@@ -40,122 +33,86 @@ class FloatingGradientBackground extends StatefulWidget {
 
 class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     with SingleTickerProviderStateMixin {
-  static const double _restLoopSeconds = 15.0; // Medium motion
-  static const double _colorFadeSeconds = 0.4; // matches AnimatedTheme
+  static const double _restLoopSeconds = 15.0; // medium drift
   static final double _baseRate = 2 * math.pi / _restLoopSeconds;
-  // Cap repaints to ~30fps. The drift is slow, so painting every vsync (up to
-  // 120fps) wastes GPU/battery for no visible benefit.
+  // Cap repaints to ~30fps; the drift is slow so painting every vsync wastes GPU.
   static const double _minFrameInterval = 1 / 30;
-  // Drift is "stopped" once the eased speed falls below this; we then freeze the
-  // ticker outright so no further frames are produced.
-  static const double _freezeEpsilon = 0.003;
+  // "Very slow" fade (opacity change per second): ~2.5s in, ~4s out.
+  static const double _fadeInPerSecond = 1 / 2.5;
+  static const double _fadeOutPerSecond = 1 / 4.0;
+  // Below this, a non-generating mesh is fully hidden and the ticker stops.
+  static const double _hideEpsilon = 0.001;
 
   late final Ticker _ticker;
   final Mesh _mesh = Mesh();
-  late final ui.Image _sprite = bakeBlobSprite();
   final ValueNotifier<int> _repaint = ValueNotifier<int>(0);
 
   Duration _last = Duration.zero;
   bool _resetClock = false;
   double _speed = kRestDriftSpeed;
-  double _colorT = 1.0;
-  late Color _fromA, _fromB, _fromCanvas;
 
   @override
   void initState() {
     super.initState();
-    _mesh.a = _fromA = widget.meshA;
-    _mesh.b = _fromB = widget.meshB;
-    _mesh.canvas = _fromCanvas = widget.canvas;
-    widget.activity?.addListener(_onActivityChanged);
-    _ticker = createTicker(_onTick)..start();
-  }
-
-  bool get _effectiveActive =>
-      (widget.activity?.isActive ?? true) || widget.isGenerating;
-
-  void _onActivityChanged() {
-    // Resume instantly when the user (or generation) wakes the screen.
-    if (_effectiveActive && !_ticker.isActive) {
-      _resetClock = true;
-      _ticker.start();
-    }
+    _mesh.a = widget.meshA;
+    _mesh.b = widget.meshB;
+    _mesh.canvas = widget.canvas;
+    _ticker = createTicker(_onTick);
+    // Only animate if we open mid-generation; otherwise stay flat/idle.
+    if (widget.isGenerating) _ticker.start();
   }
 
   @override
   void didUpdateWidget(FloatingGradientBackground old) {
     super.didUpdateWidget(old);
-    if (old.activity != widget.activity) {
-      old.activity?.removeListener(_onActivityChanged);
-      widget.activity?.addListener(_onActivityChanged);
-    }
-    // Generation can wake a frozen screen.
+    // Colors are read live by the painter; keep them current (also updates the
+    // flat idleColor via a fresh painter + repaint on the rebuild that follows).
+    _mesh.a = widget.meshA;
+    _mesh.b = widget.meshB;
+    _mesh.canvas = widget.canvas;
+    // Generation starting wakes the ticker to fade the mesh in.
     if (widget.isGenerating && !_ticker.isActive) {
       _resetClock = true;
       _ticker.start();
     }
-    if (old.meshA != widget.meshA ||
-        old.meshB != widget.meshB ||
-        old.canvas != widget.canvas) {
-      _fromA = _mesh.a;
-      _fromB = _mesh.b;
-      _fromCanvas = _mesh.canvas;
-      _colorT = 0.0; // restart the color cross-fade; phase is untouched
-      // A mid-fade screen must keep ticking to render the fade.
-      if (!_ticker.isActive) {
-        _resetClock = true;
-        _ticker.start();
-      }
-    }
   }
 
   void _onTick(Duration elapsed) {
-    // After a restart the ticker clock starts over; capture a fresh baseline
-    // and skip one frame so dt is never huge (no phase jump) or negative.
+    // After a restart the ticker clock starts over; capture a baseline and skip
+    // one frame so dt is never huge (no phase jump) or negative.
     if (_resetClock) {
       _last = elapsed;
       _resetClock = false;
       return;
     }
     final dt = (elapsed - _last).inMicroseconds / 1e6;
-    // Throttle to ~30fps: skip sub-interval ticks to save battery. _last only
-    // advances on a real frame, so dt accumulates and phase stays continuous.
-    if (dt < _minFrameInterval) return;
+    if (dt < _minFrameInterval) return; // ~30fps throttle
     _last = elapsed;
 
-    // isGenerating/activity are read live each tick (not handled in
-    // didUpdateWidget, like phase) so the speed target tracks state immediately.
+    // Fade the mesh toward the generation state (very slow).
+    if (widget.isGenerating) {
+      _mesh.opacity = math.min(1.0, _mesh.opacity + dt * _fadeInPerSecond);
+    } else {
+      _mesh.opacity = math.max(0.0, _mesh.opacity - dt * _fadeOutPerSecond);
+    }
+
+    // Drift: brisk while generating, gentle (rest) while fading out.
     _speed = easeDriftSpeed(
-        _speed,
-        targetDriftSpeed(
-            isGenerating: widget.isGenerating, isActive: _effectiveActive),
-        dt);
+        _speed, targetDriftSpeed(isGenerating: widget.isGenerating), dt);
     _mesh.phase += dt * _baseRate * _speed;
 
-    if (_colorT < 1.0) {
-      _colorT = math.min(1.0, _colorT + dt / _colorFadeSeconds);
-      final e = Curves.easeInOutCubic.transform(_colorT);
-      _mesh.a = Color.lerp(_fromA, widget.meshA, e)!;
-      _mesh.b = Color.lerp(_fromB, widget.meshB, e)!;
-      _mesh.canvas = Color.lerp(_fromCanvas, widget.canvas, e)!;
-    }
     _repaint.value++; // repaint only the painter, no widget rebuild
 
-    // Freeze once idle and settled: stop ticking so no frames are produced
-    // (which also halts any backdrop blur stacked above this layer). Wait for
-    // any color cross-fade to finish so we never freeze mid-fade.
-    if (!_effectiveActive && _colorT >= 1.0 && _speed < _freezeEpsilon) {
-      _speed = 0.0;
+    // Once fully faded out and not generating, stop: flat idle color, no frames.
+    if (!widget.isGenerating && _mesh.opacity <= _hideEpsilon) {
       _ticker.stop();
     }
   }
 
   @override
   void dispose() {
-    widget.activity?.removeListener(_onActivityChanged);
     _ticker.dispose();
     _repaint.dispose();
-    _sprite.dispose();
     super.dispose();
   }
 
@@ -166,8 +123,51 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
         size: Size.infinite,
         isComplex: true,
         willChange: true,
-        painter: MeshAtlasPainter(_mesh, _sprite, _repaint),
+        painter: _MeshPainter(_mesh, widget.idleColor, _repaint),
       ),
     );
   }
+}
+
+/// Paints a flat [idleColor], then crossfades the tinted [Mesh.canvas] + the six
+/// drifting blobs in over it at [Mesh.opacity]. At opacity 0 it is just the flat
+/// colour (and the host stops ticking), so idle rendering is a single rect.
+class _MeshPainter extends CustomPainter {
+  final Mesh mesh;
+  final Color idleColor;
+  final Paint _bgPaint = Paint();
+  final List<Paint> _blobPaints = List.generate(kBlobs.length, (_) => Paint());
+
+  _MeshPainter(this.mesh, this.idleColor, Listenable repaint)
+      : super(repaint: repaint);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    canvas.drawRect(rect, _bgPaint..color = idleColor);
+
+    final o = mesh.opacity;
+    if (o <= 0) return; // idle: just the flat colour
+
+    // Tinted canvas fades in over the flat base.
+    canvas.drawRect(rect, _bgPaint..color = mesh.canvas.withValues(alpha: o));
+    for (var i = 0; i < kBlobs.length; i++) {
+      final blob = kBlobs[i];
+      final p = blobPlacement(blob, mesh.phase, size);
+      final color = blob.useA ? mesh.a : mesh.b;
+      final r = Rect.fromCircle(center: p.center, radius: p.radius);
+      final shader = RadialGradient(
+        colors: [
+          color.withValues(alpha: blob.opacity * o),
+          color.withValues(alpha: blob.opacity * o),
+          color.withValues(alpha: 0.0),
+        ],
+        stops: const [0.0, 0.4, 1.0],
+      ).createShader(r);
+      canvas.drawCircle(p.center, p.radius, _blobPaints[i]..shader = shader);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_MeshPainter old) => true;
 }

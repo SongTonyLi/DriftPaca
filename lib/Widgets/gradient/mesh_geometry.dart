@@ -2,10 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Mutable per-frame values both painters read. [phase] advances continuously;
-/// the colors cross-fade on theme change.
+/// Mutable per-frame values the painter reads. [phase] advances continuously;
+/// [opacity] (0..1) fades the whole mesh in/out over the flat idle background.
 class Mesh {
   double phase = 0;
+  double opacity = 0; // 0 = hidden (flat idle bg), 1 = full mesh
   Color a = const Color(0xFF000000);
   Color b = const Color(0xFF000000);
   Color canvas = const Color(0xFF000000);

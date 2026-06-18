@@ -11,7 +11,6 @@ import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/services.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/gradient_settings.dart';
-import 'package:llamaseek/Utils/idle_activity_controller.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
 import 'package:llamaseek/Utils/mode_palette.dart';
 import 'package:llamaseek/Utils/perf_probe.dart';
@@ -92,7 +91,6 @@ void main() async {
             imageService: context.read(),
           ),
         ),
-        ChangeNotifierProvider(create: (_) => IdleActivityController()),
       ],
       child: const DriftPacaApp(),
     ),

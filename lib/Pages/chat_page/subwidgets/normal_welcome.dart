@@ -20,7 +20,7 @@ class NormalWelcome extends StatelessWidget {
   Widget build(BuildContext context) {
     return WelcomeScaffold(
       accent: Theme.of(context).colorScheme.primary,
-      eyebrow: 'DRIFTPACA',
+      eyebrow: 'WELCOME',
       title: 'Start a conversation',
       ctaLabel: selectedModelName ?? 'Select a model to start',
       onCta: onSelectModel,

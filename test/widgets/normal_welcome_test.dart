@@ -21,7 +21,7 @@ void main() {
     await tester.pumpWidget(_host(onSelect: () => tapped = true));
     await tester.pumpAndSettle(); // let the one-shot entrance finish
 
-    expect(find.text('DRIFTPACA'), findsOneWidget);
+    expect(find.text('WELCOME'), findsOneWidget);
     expect(find.text('Start a conversation'), findsOneWidget);
     expect(find.text('Select a model to start'), findsOneWidget);
 

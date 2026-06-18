@@ -139,38 +139,38 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                       curve: Curves.easeOutCubic,
                       child: IgnorePointer(
                         ignoring: !isIncognito,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: _incognitoSurface.withValues(alpha: 0.9),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: _incognitoAccent.withValues(alpha: 0.15),
-                              width: 0.5,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: _incognitoAccent.withValues(alpha: 0.08),
-                                blurRadius: 12,
-                                spreadRadius: 1,
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.visibility_off_outlined, size: 13, color: _incognitoAccent.withValues(alpha: 0.7)),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Incognito',
-                                style: TextStyle(
-                                  color: _incognitoText,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                  letterSpacing: 0.8,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                              decoration: BoxDecoration(
+                                // Translucent, frosted glass — see-through pill.
+                                color: _incognitoSurface.withValues(alpha: 0.32),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: _incognitoAccent.withValues(alpha: 0.30),
+                                  width: 0.7,
                                 ),
                               ),
-                            ],
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.visibility_off_rounded, size: 13, color: _incognitoAccent.withValues(alpha: 0.85)),
+                                  const SizedBox(width: 7),
+                                  Text(
+                                    'Incognito',
+                                    style: TextStyle(
+                                      color: _incognitoText,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 1.0,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -205,9 +205,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
           );
         } else {
           return ChatEmpty(
-            child: ChatSelectModelButton(
-              currentModelName: _viewModel.selectedModel?.name,
-              onPressed: _showModelSelectionBottomSheet,
+            child: NormalWelcome(
+              selectedModelName: _viewModel.selectedModel?.name,
+              onSelectModel: _showModelSelectionBottomSheet,
             ),
           );
         }

@@ -14,6 +14,11 @@ double _contrast(Color a, Color b) {
 double _sat(Color c) => HSLColor.fromColor(c).saturation;
 double _light(Color c) => HSLColor.fromColor(c).lightness;
 
+double _hueDist(double a, double b) {
+  final d = (a - b).abs() % 360;
+  return d > 180 ? 360 - d : d;
+}
+
 void main() {
   const base = GradientPair(Color(0xFF4FB4FF), Color(0xFFFF73B3));
 
@@ -30,6 +35,24 @@ void main() {
 
   test('incognito canvas is near-black', () {
     expect(_light(resolvePalette(base, AppMode.incognito).canvas), lessThan(0.07));
+  });
+
+  test('normal idle equals the light canvas mix', () {
+    final p = resolvePalette(base, AppMode.normal);
+    expect(p.idle, p.canvas);
+  });
+
+  test('dark and incognito idle are dark', () {
+    expect(_light(resolvePalette(base, AppMode.dark).idle), lessThan(0.12));
+    expect(_light(resolvePalette(base, AppMode.incognito).idle), lessThan(0.12));
+  });
+
+  test('incognito idle uses the complementary hue of the mix', () {
+    final mix = Color.lerp(base.c1, base.c2, 0.5)!;
+    final mixHue = HSLColor.fromColor(mix).hue;
+    final idleHue =
+        HSLColor.fromColor(resolvePalette(base, AppMode.incognito).idle).hue;
+    expect(_hueDist(mixHue, idleHue), greaterThan(150));
   });
 
   test('incognito mesh colors are heavily desaturated', () {

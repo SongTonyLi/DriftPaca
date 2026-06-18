@@ -13,7 +13,6 @@ import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/gradient_settings.dart';
 import 'package:llamaseek/Utils/material_color_adapter.dart';
 import 'package:llamaseek/Utils/mode_palette.dart';
-import 'package:llamaseek/Utils/perf_probe.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -137,7 +136,7 @@ class DriftPacaApp extends StatelessWidget {
               useShortestSide: true,
               child: child!,
             );
-            return kPerfProbe ? PerfProbeHud(child: responsive) : responsive;
+            return responsive;
           },
           onGenerateRoute: (settings) {
             if (settings.name == '/') {

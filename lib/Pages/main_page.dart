@@ -38,12 +38,6 @@ class DriftPacaMainPage extends StatelessWidget {
   }
 }
 
-/// The flat idle background: pure white in light mode, soft near-black in dark
-/// and incognito. The floating colour mesh only fades in over this while the
-/// assistant is generating.
-Color _idleBackground(AppMode mode) =>
-    mode == AppMode.normal ? Colors.white : const Color(0xFF0B0B0F);
-
 class _DriftPacaMobileMainPage extends StatelessWidget {
   const _DriftPacaMobileMainPage();
 
@@ -93,7 +87,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
               meshA: palette.meshA,
               meshB: palette.meshB,
               canvas: palette.canvas,
-              idleColor: _idleBackground(mode),
+              idleColor: palette.idle,
               isGenerating: isGenerating,
             ),
           ),
@@ -127,7 +121,7 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
             meshA: palette.meshA,
             meshB: palette.meshB,
             canvas: palette.canvas,
-            idleColor: _idleBackground(mode),
+            idleColor: palette.idle,
             isGenerating: isGenerating,
           ),
         ),

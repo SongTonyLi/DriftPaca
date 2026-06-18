@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
-import 'package:llamaseek/Widgets/memory_status_indicator.dart';
 import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
 
 import 'chat_page_view_model.dart';
@@ -91,7 +90,6 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   // Incognito palette
   static const _incognitoSurface = Color(0xFF16162A);
   static const _incognitoAccent = Color(0xFF6C63FF);
-  static const _incognitoBorder = Color(0xFF2A2A4A);
   static const _incognitoText = Color(0xFF9898B0);
 
   @override
@@ -448,48 +446,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   }
 
   Widget _buildIncognitoWelcome() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          Icons.visibility_off_outlined,
-          size: 48,
-          color: _incognitoAccent.withValues(alpha: 0.5),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          'Incognito Mode',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: _incognitoText,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Text(
-            'Your profile is unknown in this mode.\n'
-            'Conversations won\'t be used to build your memory.\n'
-            'Agent memory is not available here.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 13,
-              color: _incognitoText.withValues(alpha: 0.6),
-              height: 1.5,
-            ),
-          ),
-        ),
-        const SizedBox(height: 24),
-        TextButton.icon(
-          onPressed: _showModelSelectionBottomSheet,
-          icon: Icon(Icons.auto_awesome_outlined, size: 16, color: _incognitoAccent),
-          label: Text(
-            _viewModel.selectedModel?.name ?? 'Select a model to start',
-            style: TextStyle(color: _incognitoAccent),
-          ),
-        ),
-      ],
+    return IncognitoWelcome(
+      selectedModelName: _viewModel.selectedModel?.name,
+      onSelectModel: _showModelSelectionBottomSheet,
     );
   }
 

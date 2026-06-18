@@ -4,12 +4,10 @@ import 'package:llamaseek/Pages/chat_page/chat_page.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Pages/openwebui_page.dart';
 import 'package:llamaseek/Utils/gradient_settings.dart';
-import 'package:llamaseek/Utils/idle_activity_controller.dart';
 import 'package:llamaseek/Utils/mode_palette.dart';
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Widgets/chat_drawer.dart';
 import 'package:llamaseek/Widgets/floating_gradient_background.dart';
-import 'package:llamaseek/Widgets/idle_activity_detector.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -40,6 +38,12 @@ class DriftPacaMainPage extends StatelessWidget {
   }
 }
 
+/// The flat idle background: pure white in light mode, soft near-black in dark
+/// and incognito. The floating colour mesh only fades in over this while the
+/// assistant is generating.
+Color _idleBackground(AppMode mode) =>
+    mode == AppMode.normal ? Colors.white : const Color(0xFF0B0B0F);
+
 class _DriftPacaMobileMainPage extends StatelessWidget {
   const _DriftPacaMobileMainPage();
 
@@ -56,7 +60,6 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
         ? AppMode.incognito
         : (baseTheme.brightness == Brightness.dark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
-    final activity = context.read<IdleActivityController>();
 
     final scaffold = Scaffold(
       backgroundColor: Colors.transparent,
@@ -83,21 +86,19 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
       data: isIncognito ? incognitoTheme : baseTheme,
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeInOutCubic,
-      child: IdleActivityDetector(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: FloatingGradientBackground(
-                meshA: palette.meshA,
-                meshB: palette.meshB,
-                canvas: palette.canvas,
-                isGenerating: isGenerating,
-                activity: activity,
-              ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: FloatingGradientBackground(
+              meshA: palette.meshA,
+              meshB: palette.meshB,
+              canvas: palette.canvas,
+              idleColor: _idleBackground(mode),
+              isGenerating: isGenerating,
             ),
-            scaffold,
-          ],
-        ),
+          ),
+          scaffold,
+        ],
       ),
     );
   }
@@ -118,33 +119,30 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
         ? AppMode.incognito
         : (baseTheme.brightness == Brightness.dark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
-    final activity = context.read<IdleActivityController>();
 
-    return IdleActivityDetector(
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: FloatingGradientBackground(
-              meshA: palette.meshA,
-              meshB: palette.meshB,
-              canvas: palette.canvas,
-              isGenerating: isGenerating,
-              activity: activity,
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: FloatingGradientBackground(
+            meshA: palette.meshA,
+            meshB: palette.meshB,
+            canvas: palette.canvas,
+            idleColor: _idleBackground(mode),
+            isGenerating: isGenerating,
+          ),
+        ),
+        const Scaffold(
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            child: Row(
+              children: [
+                ChatDrawer(),
+                Expanded(child: ChatPage()),
+              ],
             ),
           ),
-          const Scaffold(
-            backgroundColor: Colors.transparent,
-            body: SafeArea(
-              child: Row(
-                children: [
-                  ChatDrawer(),
-                  Expanded(child: ChatPage()),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -121,6 +121,10 @@ class DriftPacaApp extends StatelessWidget {
               colorScheme: palette.scheme,
               appBarTheme: const AppBarTheme(centerTitle: true),
               useMaterial3: true,
+              // PingFang SC (苹方): iOS/macOS system font. Non-Apple platforms
+              // fall back to the platform default. Monospace accents
+              // (Kode/JetBrains Mono) set their own family and are unaffected.
+              fontFamily: 'PingFang SC',
             );
           }(),
           builder: (context, child) {

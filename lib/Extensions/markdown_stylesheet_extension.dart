@@ -39,8 +39,9 @@ extension MarkdownStyleSheetExtension on BuildContext {
       theme.copyWith(
         textTheme: theme.textTheme.copyWith(
           bodyMedium: theme.textTheme.bodyMedium?.copyWith(
-            fontSize: 15,
-            height: 1.65,
+            fontSize: 16,
+            height: 1.48,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),

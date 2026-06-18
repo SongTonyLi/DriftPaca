@@ -50,9 +50,10 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
 
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
+    final systemDark = baseTheme.brightness == Brightness.dark;
     final mode = isIncognito
-        ? AppMode.incognito
-        : (baseTheme.brightness == Brightness.dark ? AppMode.dark : AppMode.normal);
+        ? (systemDark ? AppMode.incognitoDark : AppMode.incognitoLight)
+        : (systemDark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
 
     final scaffold = Scaffold(
@@ -66,7 +67,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
 
     // Incognito theme now derives from the resolver instead of a hardcoded scheme.
     final incognitoTheme = baseTheme.copyWith(
-      brightness: Brightness.dark,
+      brightness: baseTheme.brightness, // incognito follows the system light/dark
       colorScheme: palette.scheme,
       scaffoldBackgroundColor: Colors.transparent,
       iconTheme: baseTheme.iconTheme.copyWith(color: palette.scheme.onSurface),
@@ -109,9 +110,10 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
     final isGenerating = viewModel.isStreaming || viewModel.isThinking;
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
+    final systemDark = baseTheme.brightness == Brightness.dark;
     final mode = isIncognito
-        ? AppMode.incognito
-        : (baseTheme.brightness == Brightness.dark ? AppMode.dark : AppMode.normal);
+        ? (systemDark ? AppMode.incognitoDark : AppMode.incognitoLight)
+        : (systemDark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
 
     return Stack(

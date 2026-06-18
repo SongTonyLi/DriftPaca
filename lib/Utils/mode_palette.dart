@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Constants/gradient_presets.dart';
 
-enum AppMode { normal, dark, incognito }
+enum AppMode { normal, dark, incognitoLight, incognitoDark }
 
 /// Per-mode result: the two mesh colors, the canvas behind them, and a
 /// Material scheme seeded from both colors.
@@ -42,15 +42,23 @@ Color _clampL(Color c, double min, double max) {
 
 Color _setL(Color c, double l) => _hsl(c).withLightness(l.clamp(0.0, 1.0)).toColor();
 
-/// The complementary hue of [c] (opposite on the wheel), darkened — the
-/// incognito idle background, so it reads as a contrast to the mixed colour.
-Color _complementDark(Color c) {
+/// The complementary hue of [c] (opposite on the colour wheel), same S/L.
+Color _complement(Color c) {
   final h = _hsl(c);
-  return h
-      .withHue((h.hue + 180) % 360)
-      .withSaturation(h.saturation.clamp(0.3, 1.0))
-      .withLightness(0.10)
-      .toColor();
+  return h.withHue((h.hue + 180) % 360).toColor();
+}
+
+/// A thin, subtle background wash: [base]'s hue at a softened saturation and the
+/// given [lightness]. Used for the flat idle background so it reads as a faint
+/// tint of the chosen colours rather than a strong fill.
+Color _idleTint(Color base, double lightness, {double satScale = 0.45}) {
+  final h = _hsl(base);
+  return HSLColor.fromAHSL(
+    1.0,
+    h.hue,
+    (h.saturation * satScale).clamp(0.0, 1.0),
+    lightness,
+  ).toColor();
 }
 
 ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
@@ -59,22 +67,35 @@ ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
     case AppMode.normal:
       final a = _clampL(base.c1, 0.45, 0.72);
       final b = _clampL(base.c2, 0.45, 0.72);
-      final canvas = _setL(mix, 0.90);
       return ResolvedPalette(
-        meshA: a, meshB: b, canvas: canvas,
-        idle: canvas, // light mix; idle == canvas → seamless idle↔generating
+        meshA: a, meshB: b,
+        canvas: _setL(mix, 0.90),
+        idle: _idleTint(mix, 0.96), // near-white wash of the mix
         scheme: _scheme(a, b, Brightness.light),
       );
     case AppMode.dark:
       final a = _clampL(_scale(base.c1, s: 0.85, l: 0.45), 0.18, 0.40);
       final b = _clampL(_scale(base.c2, s: 0.85, l: 0.45), 0.18, 0.40);
-      final canvas = _setL(base.c1, 0.08);
       return ResolvedPalette(
-        meshA: a, meshB: b, canvas: canvas,
-        idle: _setL(mix, 0.10), // same mixed hue, dark
+        meshA: a, meshB: b,
+        canvas: _setL(base.c1, 0.08),
+        idle: _idleTint(mix, 0.06), // near-black wash of the mix
         scheme: _scheme(a, b, Brightness.dark),
       );
-    case AppMode.incognito:
+    case AppMode.incognitoLight:
+      // Light incognito: the same desaturated character as the dark variant but
+      // a light surface, with a complementary-hue idle so it reads as a contrast.
+      final a = _clampL(_scale(base.c1, s: 0.30), 0.52, 0.74);
+      final b = _clampL(_scale(base.c2, s: 0.30), 0.52, 0.74);
+      final canvas = _setL(mix, 0.92);
+      final accent = _clampL(_scale(base.c1, s: 0.9), 0.40, 0.55);
+      final scheme = _scheme(accent, b, Brightness.light).copyWith(surface: canvas);
+      return ResolvedPalette(
+        meshA: a, meshB: b, canvas: canvas,
+        idle: _idleTint(_complement(mix), 0.96), // light contrast wash
+        scheme: scheme,
+      );
+    case AppMode.incognitoDark:
       final a = _clampL(_scale(base.c1, s: 0.22, l: 0.32), 0.16, 0.34);
       final b = _clampL(_scale(base.c2, s: 0.22, l: 0.32), 0.16, 0.34);
       final canvas = _setL(base.c1, 0.04);
@@ -83,7 +104,7 @@ ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
       final scheme = _scheme(accent, b, Brightness.dark).copyWith(surface: canvas);
       return ResolvedPalette(
         meshA: a, meshB: b, canvas: canvas,
-        idle: _complementDark(mix), // opposite hue, dark
+        idle: _idleTint(_complement(mix), 0.06), // dark contrast wash
         scheme: scheme,
       );
   }

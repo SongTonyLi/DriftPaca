@@ -139,40 +139,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                       curve: Curves.easeOutCubic,
                       child: IgnorePointer(
                         ignoring: !isIncognito,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                              decoration: BoxDecoration(
-                                // Translucent, frosted glass — see-through pill.
-                                color: _incognitoSurface.withValues(alpha: 0.32),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: _incognitoAccent.withValues(alpha: 0.30),
-                                  width: 0.7,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.visibility_off_rounded, size: 13, color: _incognitoAccent.withValues(alpha: 0.85)),
-                                  const SizedBox(width: 7),
-                                  Text(
-                                    'Incognito',
-                                    style: TextStyle(
-                                      color: _incognitoText,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 1.0,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
+                        child: _incognitoBadge(context),
                       ),
                     ),
                   ),
@@ -436,6 +403,51 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                         onPressed: _viewModel.cancelStreaming,
                       ),
                   ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The frosted "Incognito" badge pill. The fill flips with the mode — a light
+  /// lavender frost in light mode, a dark indigo frost in dark mode — so the
+  /// label (themed onSurface) keeps strong contrast either way. Stays
+  /// translucent (backdrop-blurred) so it reads as glass over the background.
+  Widget _incognitoBadge(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final fill = (isDark ? _incognitoSurface : const Color(0xFFE9E8FF))
+        .withValues(alpha: isDark ? 0.42 : 0.55);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: _incognitoAccent.withValues(alpha: 0.35),
+              width: 0.7,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.visibility_off_rounded,
+                  size: 13, color: _incognitoAccent),
+              const SizedBox(width: 7),
+              Text(
+                'Incognito',
+                style: TextStyle(
+                  color: onSurface.withValues(alpha: 0.92),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.0,
                 ),
               ),
             ],

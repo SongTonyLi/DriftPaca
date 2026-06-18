@@ -48,10 +48,10 @@ void main() {
   testWidgets('stops animating once faded out after generation ends',
       (tester) async {
     await tester.pumpWidget(_host(generating: true));
-    await tester.pump(const Duration(seconds: 3)); // fade in
+    await tester.pump(const Duration(seconds: 6)); // fade fully in (clamped at 1.0)
     await tester.pumpWidget(_host(generating: false));
-    // Fade-out is ~4s; pump well past it so opacity reaches 0 and the ticker stops.
-    await tester.pump(const Duration(seconds: 6));
+    // Fade-out is ~8s; pump well past it so opacity reaches 0 and the ticker stops.
+    await tester.pump(const Duration(seconds: 10));
     await tester.pump(const Duration(seconds: 1));
     expect(tester.binding.hasScheduledFrame, isFalse,
         reason: 'ticker should stop once the mesh has faded out');

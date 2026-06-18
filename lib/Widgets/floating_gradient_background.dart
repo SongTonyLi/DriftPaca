@@ -37,9 +37,9 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   static final double _baseRate = 2 * math.pi / _restLoopSeconds;
   // Cap repaints to ~30fps; the drift is slow so painting every vsync wastes GPU.
   static const double _minFrameInterval = 1 / 30;
-  // "Very slow" fade (opacity change per second): ~2.5s in, ~4s out.
-  static const double _fadeInPerSecond = 1 / 2.5;
-  static const double _fadeOutPerSecond = 1 / 4.0;
+  // "Very slow" fade (opacity change per second): ~5s in, ~8s out.
+  static const double _fadeInPerSecond = 1 / 5.0;
+  static const double _fadeOutPerSecond = 1 / 8.0;
   // Below this, a non-generating mesh is fully hidden and the ticker stops.
   static const double _hideEpsilon = 0.001;
 

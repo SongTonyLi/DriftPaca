@@ -17,6 +17,7 @@ class FloatingGradientBackground extends StatefulWidget {
   final Color canvas; // tinted base under the blobs while generating
   final Color idleColor; // flat background at rest (white / near-black)
   final bool isGenerating;
+  final bool isWelcome; // empty welcome screen — plays a brief corner-breathe intro
 
   const FloatingGradientBackground({
     super.key,
@@ -25,6 +26,7 @@ class FloatingGradientBackground extends StatefulWidget {
     required this.canvas,
     required this.idleColor,
     required this.isGenerating,
+    this.isWelcome = false,
   });
 
   @override
@@ -56,6 +58,13 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   bool _resetClock = false;
   double _speed = kRestDriftSpeed;
 
+  // Welcome-screen intro: four corner blobs breathe briefly, then fade out.
+  static const double _welcomeHoldSeconds = 5.0;
+  static const double _welcomeFadeInPerSecond = 1 / 0.8;
+  static const double _welcomeFadeOutPerSecond = 1 / 4.0;
+  bool _introActive = false;
+  double _welcomeElapsed = 0;
+
   @override
   void initState() {
     super.initState();
@@ -64,8 +73,22 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     _mesh.canvas = widget.canvas;
     _ticker = createTicker(_onTick);
     _loadShader();
-    // Only animate if we open mid-generation; otherwise stay flat/idle.
-    if (widget.isGenerating) _ticker.start();
+    // Animate if we open mid-generation; or play the welcome intro if we open on
+    // the empty welcome screen. Otherwise stay flat/idle.
+    if (widget.isGenerating) {
+      _ticker.start();
+    } else if (widget.isWelcome) {
+      _startWelcomeIntro();
+    }
+  }
+
+  void _startWelcomeIntro() {
+    _mesh.welcome = true;
+    _introActive = true;
+    _welcomeElapsed = 0;
+    _mesh.opacity = 0;
+    _resetClock = true;
+    if (!_ticker.isActive) _ticker.start();
   }
 
   Future<void> _loadShader() async {
@@ -94,10 +117,16 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     _mesh.a = widget.meshA;
     _mesh.b = widget.meshB;
     _mesh.canvas = widget.canvas;
-    // Generation starting wakes the ticker to fade the mesh in.
-    if (widget.isGenerating && !_ticker.isActive) {
-      _resetClock = true;
-      _ticker.start();
+    if (widget.isGenerating && !old.isGenerating) {
+      // Generation starts: wake the (conversation) mesh; cancel any welcome intro.
+      _introActive = false;
+      if (!_ticker.isActive) {
+        _resetClock = true;
+        _ticker.start();
+      }
+    } else if (!widget.isGenerating && widget.isWelcome && !old.isWelcome) {
+      // Returned to the empty welcome screen: replay the corner-breathe intro.
+      _startWelcomeIntro();
     }
   }
 
@@ -113,23 +142,46 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     if (dt < _minFrameInterval) return; // ~24fps throttle
     _last = elapsed;
 
-    // Fade the mesh toward the generation state (very slow).
     if (widget.isGenerating) {
+      // Conversation: fade the drifting mesh in.
+      _mesh.welcome = false;
+      _introActive = false;
       _mesh.opacity = math.min(1.0, _mesh.opacity + dt * _fadeInPerSecond);
+      _speed =
+          easeDriftSpeed(_speed, targetDriftSpeed(isGenerating: true), dt);
+      _mesh.phase += dt * _baseRate * _speed;
+    } else if (_introActive) {
+      // Welcome intro: appear, breathe the corners for the hold, then fade out.
+      _mesh.welcome = true;
+      _welcomeElapsed += dt;
+      if (_welcomeElapsed < _welcomeHoldSeconds) {
+        _mesh.opacity =
+            math.min(1.0, _mesh.opacity + dt * _welcomeFadeInPerSecond);
+      } else {
+        _mesh.opacity =
+            math.max(0.0, _mesh.opacity - dt * _welcomeFadeOutPerSecond);
+      }
+      _mesh.phase += dt; // corner breathe runs on real seconds
     } else {
+      // Generation ended: fade the conversation mesh back out.
+      _mesh.welcome = false;
       _mesh.opacity = math.max(0.0, _mesh.opacity - dt * _fadeOutPerSecond);
+      _speed =
+          easeDriftSpeed(_speed, targetDriftSpeed(isGenerating: false), dt);
+      _mesh.phase += dt * _baseRate * _speed;
     }
-
-    // Drift: brisk while generating, gentle (rest) while fading out.
-    _speed = easeDriftSpeed(
-        _speed, targetDriftSpeed(isGenerating: widget.isGenerating), dt);
-    _mesh.phase += dt * _baseRate * _speed;
 
     _repaint.value++; // repaint only the painter, no widget rebuild
 
-    // Once fully faded out and not generating, stop: flat idle color, no frames.
+    // Once fully faded out with nothing active, stop: flat idle, no frames.
     if (!widget.isGenerating && _mesh.opacity <= _hideEpsilon) {
-      _ticker.stop();
+      if (_introActive && _welcomeElapsed >= _welcomeHoldSeconds) {
+        _introActive = false;
+      }
+      if (!_introActive) {
+        _ticker.stop();
+        _mesh.welcome = false;
+      }
     }
   }
 

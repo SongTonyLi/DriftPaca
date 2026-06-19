@@ -1,7 +1,15 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 /// An animated llama that trots across the welcome screen.
+///
+/// Motion is driven by a single [Ticker] whose phase advances on real elapsed
+/// time, but repaints are throttled to [_minFrameInterval] (~30fps). The trot
+/// (600ms) and walk (5s, reversing) cycles are unchanged — we just sample them
+/// less often than the display's native 60/120Hz, which roughly halves (60Hz)
+/// or quarters (120Hz) the per-frame paint cost on this otherwise-idle screen
+/// with no perceptible difference for a small stylized mascot.
 class WelcomeLlama extends StatefulWidget {
   const WelcomeLlama({super.key});
 
@@ -10,63 +18,105 @@ class WelcomeLlama extends StatefulWidget {
 }
 
 class _WelcomeLlamaState extends State<WelcomeLlama>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
-  late AnimationController _trot;
-  late AnimationController _walk;
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  late final Ticker _ticker;
+  final ValueNotifier<int> _repaint = ValueNotifier<int>(0);
+
+  // ~30fps cap: a gentle trot does not need 60/120fps.
+  static const double _minFrameInterval = 1 / 30;
+  static const double _trotSeconds = 0.6; // one gait cycle
+  static const double _walkSeconds = 5.0; // one direction of the patrol
+
+  Duration _last = Duration.zero;
+  bool _resetClock = true;
+  double _clock = 0; // accumulated real seconds (continuous across pauses)
+  double _lastPaintClock = 0;
+
+  // Sampled animation state read by build()/painter.
+  double _trotValue = 0;
+  double _walkValue = 0;
+  bool _facingLeft = false;
+
+  // Color-derived geometry/colors, recomputed only when the theme color changes.
+  _LlamaVisuals? _visuals;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _trot = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    )..repeat();
-    _walk = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 5000),
-    )..repeat(reverse: true);
+    _ticker = createTicker(_onTick)..start();
+  }
+
+  void _onTick(Duration elapsed) {
+    // Skip one frame after (re)start so dt is never huge or negative.
+    if (_resetClock) {
+      _last = elapsed;
+      _resetClock = false;
+      return;
+    }
+    final dt = (elapsed - _last).inMicroseconds / 1e6;
+    _last = elapsed;
+    _clock += dt;
+
+    if (_clock - _lastPaintClock < _minFrameInterval) return; // ~30fps throttle
+    _lastPaintClock = _clock;
+
+    _trotValue = (_clock / _trotSeconds) % 1.0;
+    // Walk patrols 0->1 then 1->0 (period 2x _walkSeconds); facing flips on the
+    // return leg, matching the previous repeat(reverse: true) controller.
+    final w = (_clock / _walkSeconds) % 2.0;
+    if (w < 1.0) {
+      _walkValue = w;
+      _facingLeft = false;
+    } else {
+      _walkValue = 2.0 - w;
+      _facingLeft = true;
+    }
+
+    _repaint.value++;
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      _trot.stop();
-      _walk.stop();
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _ticker.stop();
     } else if (state == AppLifecycleState.resumed) {
-      _trot.repeat();
-      _walk.repeat(reverse: true);
+      if (!_ticker.isActive) {
+        _resetClock = true; // resume the phase where it left off, no jump
+        _ticker.start();
+      }
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _trot.dispose();
-    _walk.dispose();
+    _ticker.dispose();
+    _repaint.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([_trot, _walk]),
-      builder: (context, _) {
-        final dx = (_walk.value - 0.5) * 50;
-        final facingLeft = _walk.status == AnimationStatus.reverse;
+    final bodyColor = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFFF0EBE4)
+        : const Color(0xFFD6CCC0);
+    if (_visuals == null || _visuals!.body != bodyColor) {
+      _visuals = _LlamaVisuals.build(bodyColor);
+    }
 
+    return ValueListenableBuilder<int>(
+      valueListenable: _repaint,
+      builder: (context, _, __) {
+        final dx = (_walkValue - 0.5) * 50;
         return Transform.translate(
           offset: Offset(dx, 0),
           child: Transform.flip(
-            flipX: facingLeft,
+            flipX: _facingLeft,
             child: CustomPaint(
               size: const Size(130, 120),
-              painter: _LlamaPainter(
-                phase: _trot.value,
-                bodyColor: Theme.of(context).brightness == Brightness.dark
-                    ? const Color(0xFFF0EBE4)
-                    : const Color(0xFFD6CCC0),
-              ),
+              painter: _LlamaPainter(phase: _trotValue, visuals: _visuals!),
             ),
           ),
         );
@@ -75,21 +125,130 @@ class _WelcomeLlamaState extends State<WelcomeLlama>
   }
 }
 
+/// One precomputed fleece puff: a fixed position/radius/colour that depends only
+/// on the body colour (deterministic Random(42)), so it is built once per colour.
+class _Puff {
+  final double x, y, r;
+  final Color color;
+  const _Puff(this.x, this.y, this.r, this.color);
+}
+
+/// All body-colour-derived values for the llama, computed once and reused across
+/// frames. Previously these (HSL darken/lighten conversions and a Random(42)
+/// fleece layout) were recomputed on every paint.
+class _LlamaVisuals {
+  final Color body;
+  final Color lightFluff; // lighten 0.06
+  final Color darkFluff; // darken 0.04
+  final Color outline; // darken 0.18 (body + neck)
+  final Color headColor; // darken 0.05
+  final Color headOutline; // darken 0.22
+  final Color muzzle; // lighten 0.08
+  final Color nostril; // darken 0.40
+  final Color mouth; // darken 0.25
+  final Color earOutline; // darken 0.20
+  final Color legBack; // darken 0.12
+  final Color legFront; // darken 0.08
+  final Color hoof; // darken 0.35
+  final Color dust; // darken 0.10
+  final List<_Puff> puffs; // 18 inner-fleece puffs
+  final List<double> highlightRadii; // 5 top-highlight radii
+
+  const _LlamaVisuals({
+    required this.body,
+    required this.lightFluff,
+    required this.darkFluff,
+    required this.outline,
+    required this.headColor,
+    required this.headOutline,
+    required this.muzzle,
+    required this.nostril,
+    required this.mouth,
+    required this.earOutline,
+    required this.legBack,
+    required this.legFront,
+    required this.hoof,
+    required this.dust,
+    required this.puffs,
+    required this.highlightRadii,
+  });
+
+  factory _LlamaVisuals.build(Color body) {
+    Color darken(double amt) {
+      final hsl = HSLColor.fromColor(body);
+      return hsl.withLightness((hsl.lightness - amt).clamp(0.0, 1.0)).toColor();
+    }
+
+    Color lighten(double amt) {
+      final hsl = HSLColor.fromColor(body);
+      return hsl.withLightness((hsl.lightness + amt).clamp(0.0, 1.0)).toColor();
+    }
+
+    final lightFluff = lighten(0.06);
+    final darkFluff = darken(0.04);
+
+    // Deterministic fleece layout — same RNG sequence as the original painter:
+    // 18 puffs (3 draws each) then 5 highlight radii, all from Random(42).
+    final rng = Random(42);
+    final puffs = <_Puff>[];
+    for (int i = 0; i < 18; i++) {
+      final fx = 16.0 + rng.nextDouble() * 56;
+      final fy = 34.0 + rng.nextDouble() * 32;
+      final fr = 3.5 + rng.nextDouble() * 3.5;
+      final c = i % 3 == 0 ? lightFluff : (i % 3 == 1 ? body : darkFluff);
+      puffs.add(_Puff(fx, fy, fr, c));
+    }
+    final highlightRadii = <double>[
+      for (int i = 0; i < 5; i++) 3.0 + rng.nextDouble() * 2,
+    ];
+
+    return _LlamaVisuals(
+      body: body,
+      lightFluff: lightFluff,
+      darkFluff: darkFluff,
+      outline: darken(0.18),
+      headColor: darken(0.05),
+      headOutline: darken(0.22),
+      muzzle: lighten(0.08),
+      nostril: darken(0.4),
+      mouth: darken(0.25),
+      earOutline: darken(0.2),
+      legBack: darken(0.12),
+      legFront: darken(0.08),
+      hoof: darken(0.35),
+      dust: darken(0.1),
+      puffs: puffs,
+      highlightRadii: highlightRadii,
+    );
+  }
+}
+
+// Static fleece-edge scallop positions [x, y, radius]; phase only wobbles them.
+const List<List<double>> _scallops = [
+  // Top row (back)
+  [14.0, 36.0, 8.0], [24.0, 30.0, 9.0], [35.0, 28.0, 9.5],
+  [46.0, 29.0, 9.0], [56.0, 31.0, 8.5], [66.0, 34.0, 8.0],
+  // Left side (rump)
+  [10.0, 48.0, 8.0], [8.0, 56.0, 7.5], [12.0, 64.0, 7.0],
+  // Right side (chest)
+  [74.0, 44.0, 7.0], [76.0, 54.0, 7.0], [74.0, 64.0, 6.5],
+];
+
+const List<List<double>> _neckFluff = [
+  [62.0, 36.0, 6.0], [63.0, 28.0, 5.5], [65.0, 22.0, 5.0],
+  [67.0, 16.0, 5.0], [70.0, 10.0, 4.5],
+];
+
+const List<List<double>> _chestFluff = [
+  [80.0, 38.0, 5.0], [80.0, 30.0, 4.5], [80.0, 22.0, 4.0],
+  [82.0, 14.0, 4.0],
+];
+
 class _LlamaPainter extends CustomPainter {
   final double phase;
-  final Color bodyColor;
+  final _LlamaVisuals visuals;
 
-  _LlamaPainter({required this.phase, required this.bodyColor});
-
-  Color _darken(Color c, double amt) {
-    final hsl = HSLColor.fromColor(c);
-    return hsl.withLightness((hsl.lightness - amt).clamp(0.0, 1.0)).toColor();
-  }
-
-  Color _lighten(Color c, double amt) {
-    final hsl = HSLColor.fromColor(c);
-    return hsl.withLightness((hsl.lightness + amt).clamp(0.0, 1.0)).toColor();
-  }
+  _LlamaPainter({required this.phase, required this.visuals});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -117,7 +276,7 @@ class _LlamaPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(20 - p * 18, 105 + p * 4),
         1.0 + p * 2.0,
-        Paint()..color = _darken(bodyColor, 0.1).withValues(alpha: (1.0 - p) * 0.1),
+        Paint()..color = visuals.dust.withValues(alpha: (1.0 - p) * 0.1),
       );
     }
   }
@@ -137,41 +296,27 @@ class _LlamaPainter extends CustomPainter {
     core.quadraticBezierTo(76, 34 + by, 78, 46 + by); // chest
     core.quadraticBezierTo(80, 58 + by, 72, 72 + by); // front down
     core.close();
-    canvas.drawPath(core, Paint()..color = bodyColor);
-
-    // Fleece: layers of overlapping fluffy circles along the body
-    final rng = Random(42); // deterministic fluff positions
-    final fleeceColor = bodyColor;
-    final lightFluff = _lighten(bodyColor, 0.06);
-    final darkFluff = _darken(bodyColor, 0.04);
+    canvas.drawPath(core, Paint()..color = visuals.body);
 
     // Outer fleece edge — big scallops along top & sides
-    final scallops = [
-      // Top row (back)
-      [14.0, 36.0, 8.0], [24.0, 30.0, 9.0], [35.0, 28.0, 9.5],
-      [46.0, 29.0, 9.0], [56.0, 31.0, 8.5], [66.0, 34.0, 8.0],
-      // Left side (rump)
-      [10.0, 48.0, 8.0], [8.0, 56.0, 7.5], [12.0, 64.0, 7.0],
-      // Right side (chest)
-      [74.0, 44.0, 7.0], [76.0, 54.0, 7.0], [74.0, 64.0, 6.5],
-    ];
-    for (final s in scallops) {
+    for (final s in _scallops) {
       final wobble = sin(phase * 3 * pi + s[0] * 0.2) * 0.5;
       canvas.drawCircle(
         Offset(s[0], s[1] + by + wobble),
         s[2],
-        Paint()..color = fleeceColor,
+        Paint()..color = visuals.body,
       );
     }
 
-    // Inner fleece detail — smaller puffs for texture
-    for (int i = 0; i < 18; i++) {
-      final fx = 16.0 + rng.nextDouble() * 56;
-      final fy = 34.0 + rng.nextDouble() * 32;
-      final fr = 3.5 + rng.nextDouble() * 3.5;
+    // Inner fleece detail — smaller puffs for texture (fixed layout)
+    for (int i = 0; i < visuals.puffs.length; i++) {
+      final p = visuals.puffs[i];
       final wobble = sin(phase * 4 * pi + i * 0.8) * 0.4;
-      final c = i % 3 == 0 ? lightFluff : (i % 3 == 1 ? fleeceColor : darkFluff);
-      canvas.drawCircle(Offset(fx, fy + by + wobble), fr, Paint()..color = c);
+      canvas.drawCircle(
+        Offset(p.x, p.y + by + wobble),
+        p.r,
+        Paint()..color = p.color,
+      );
     }
 
     // White highlights on top
@@ -180,7 +325,7 @@ class _LlamaPainter extends CustomPainter {
       final hy = 32.0 + by + sin(phase * 3 * pi + i) * 0.5;
       canvas.drawCircle(
         Offset(hx, hy),
-        3.0 + rng.nextDouble() * 2,
+        visuals.highlightRadii[i],
         Paint()..color = Colors.white.withValues(alpha: 0.2),
       );
     }
@@ -189,7 +334,7 @@ class _LlamaPainter extends CustomPainter {
     canvas.drawPath(
       core,
       Paint()
-        ..color = _darken(bodyColor, 0.18)
+        ..color = visuals.outline
         ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke,
     );
@@ -207,33 +352,25 @@ class _LlamaPainter extends CustomPainter {
     neck.lineTo(84, 8 + by * 0.2);  // top
     neck.quadraticBezierTo(82, 22 + by * 0.5, 80, 40 + by); // right edge down
     neck.close();
-    canvas.drawPath(neck, Paint()..color = bodyColor);
+    canvas.drawPath(neck, Paint()..color = visuals.body);
 
     // Neck wool scallops along left edge (visible fluffy side)
-    final neckFluff = [
-      [62.0, 36.0, 6.0], [63.0, 28.0, 5.5], [65.0, 22.0, 5.0],
-      [67.0, 16.0, 5.0], [70.0, 10.0, 4.5],
-    ];
-    for (final f in neckFluff) {
+    for (final f in _neckFluff) {
       final wobble = sin(phase * 3 * pi + f[1] * 0.3) * 0.4;
       canvas.drawCircle(
         Offset(f[0], f[1] + by * (f[1] / 40) + wobble),
         f[2],
-        Paint()..color = bodyColor,
+        Paint()..color = visuals.body,
       );
     }
 
     // Right edge fluff (chest side)
-    final chestFluff = [
-      [80.0, 38.0, 5.0], [80.0, 30.0, 4.5], [80.0, 22.0, 4.0],
-      [82.0, 14.0, 4.0],
-    ];
-    for (final f in chestFluff) {
+    for (final f in _chestFluff) {
       final wobble = sin(phase * 3 * pi + f[1] * 0.2 + 1) * 0.3;
       canvas.drawCircle(
         Offset(f[0], f[1] + by * (f[1] / 40) + wobble),
         f[2],
-        Paint()..color = bodyColor,
+        Paint()..color = visuals.body,
       );
     }
 
@@ -253,7 +390,7 @@ class _LlamaPainter extends CustomPainter {
     canvas.drawPath(
       neck,
       Paint()
-        ..color = _darken(bodyColor, 0.18)
+        ..color = visuals.outline
         ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke,
     );
@@ -263,9 +400,9 @@ class _LlamaPainter extends CustomPainter {
 
   void _drawHead(Canvas canvas, double bounce) {
     final by = bounce * 0.2;
-    final headColor = _darken(bodyColor, 0.05);
+    final headColor = visuals.headColor;
     final outlinePaint = Paint()
-      ..color = _darken(bodyColor, 0.22)
+      ..color = visuals.headOutline
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
 
@@ -288,14 +425,14 @@ class _LlamaPainter extends CustomPainter {
         width: 5,
         height: 6,
       ),
-      Paint()..color = _lighten(bodyColor, 0.08),
+      Paint()..color = visuals.muzzle,
     );
 
     // Nostril
     canvas.drawCircle(
       Offset(95, 10 + by),
       0.8,
-      Paint()..color = _darken(bodyColor, 0.4),
+      Paint()..color = visuals.nostril,
     );
 
     // Mouth line
@@ -303,7 +440,7 @@ class _LlamaPainter extends CustomPainter {
       Rect.fromCenter(center: Offset(93, 12 + by), width: 4, height: 2),
       0.2, 2.5, false,
       Paint()
-        ..color = _darken(bodyColor, 0.25)
+        ..color = visuals.mouth
         ..strokeWidth = 0.7
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round,
@@ -334,9 +471,9 @@ class _LlamaPainter extends CustomPainter {
     ear.quadraticBezierTo(bx + dx - 1, by + dy, bx + dx + 1, by + dy + 1);
     ear.quadraticBezierTo(bx + dx + 3, by + dy + 3, bx + 1.5, by);
     ear.close();
-    canvas.drawPath(ear, Paint()..color = bodyColor);
+    canvas.drawPath(ear, Paint()..color = visuals.body);
     canvas.drawPath(ear, Paint()
-      ..color = _darken(bodyColor, 0.2)
+      ..color = visuals.earOutline
       ..strokeWidth = 0.8
       ..style = PaintingStyle.stroke);
 
@@ -372,7 +509,7 @@ class _LlamaPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(p[0], p[1]),
         p[2],
-        Paint()..color = bodyColor,
+        Paint()..color = visuals.body,
       );
     }
     // Highlight
@@ -387,10 +524,10 @@ class _LlamaPainter extends CustomPainter {
 
   void _drawBackLegs(Canvas canvas, double bounce, double lp) {
     final legPaint = Paint()
-      ..color = _darken(bodyColor, 0.12)
+      ..color = visuals.legBack
       ..strokeWidth = 3.0
       ..strokeCap = StrokeCap.round;
-    final hoofPaint = Paint()..color = _darken(bodyColor, 0.35);
+    final hoofPaint = Paint()..color = visuals.hoof;
     final by = bounce;
 
     // Back-left
@@ -403,10 +540,10 @@ class _LlamaPainter extends CustomPainter {
 
   void _drawFrontLegs(Canvas canvas, double bounce, double lp) {
     final legPaint = Paint()
-      ..color = _darken(bodyColor, 0.08)
+      ..color = visuals.legFront
       ..strokeWidth = 3.0
       ..strokeCap = StrokeCap.round;
-    final hoofPaint = Paint()..color = _darken(bodyColor, 0.35);
+    final hoofPaint = Paint()..color = visuals.hoof;
     final by = bounce;
 
     // Front-left
@@ -437,5 +574,5 @@ class _LlamaPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LlamaPainter old) =>
-      phase != old.phase || bodyColor != old.bodyColor;
+      phase != old.phase || visuals != old.visuals;
 }

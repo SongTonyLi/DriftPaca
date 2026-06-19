@@ -40,9 +40,9 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   static final double _baseRate = 2 * math.pi / _restLoopSeconds;
   // Cap repaints to ~24fps; the drift is slow so painting every vsync wastes GPU.
   static const double _minFrameInterval = 1 / 24;
-  // "Very slow" fade (opacity change per second): ~5s in, ~8s out.
-  static const double _fadeInPerSecond = 1 / 5.0;
-  static const double _fadeOutPerSecond = 1 / 8.0;
+  // Fade (opacity change per second): ~2s in, ~3s out.
+  static const double _fadeInPerSecond = 1 / 2.0;
+  static const double _fadeOutPerSecond = 1 / 3.0;
   // Below this, a non-generating mesh is fully hidden and the ticker stops.
   static const double _hideEpsilon = 0.001;
 
@@ -60,10 +60,14 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
 
   // Welcome-screen intro: four corner blobs breathe briefly, then fade out.
   static const double _welcomeHoldSeconds = 5.0;
-  static const double _welcomeFadeInPerSecond = 1 / 0.8;
-  static const double _welcomeFadeOutPerSecond = 1 / 4.0;
+  static const double _welcomeFadeInPerSecond = 1 / 0.6;
+  static const double _welcomeFadeOutPerSecond = 1 / 2.5;
   bool _introActive = false;
   double _welcomeElapsed = 0;
+
+  // Glassy legibility layer over the blobs; its opacity tracks the mesh, so it is
+  // absent in the flat idle (pure-colour) state and present whenever blobs show.
+  final ValueNotifier<double> _glassOpacity = ValueNotifier<double>(0);
 
   @override
   void initState() {
@@ -172,6 +176,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     }
 
     _repaint.value++; // repaint only the painter, no widget rebuild
+    _glassOpacity.value = _mesh.opacity; // glass tracks the mesh
 
     // Once fully faded out with nothing active, stop: flat idle, no frames.
     if (!widget.isGenerating && _mesh.opacity <= _hideEpsilon) {
@@ -179,6 +184,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
         _introActive = false;
       }
       if (!_introActive) {
+        _glassOpacity.value = 0; // no lingering blur in the flat idle state
         _ticker.stop();
         _mesh.welcome = false;
       }
@@ -190,17 +196,38 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     _ticker.dispose();
     _shader?.dispose();
     _repaint.dispose();
+    _glassOpacity.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Frosted "glass" over the blobs lifts text legibility; it blurs only the
+    // mesh (below it), never the content (which sits above this widget).
+    final glass = IgnorePointer(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 38, sigmaY: 38),
+        child: Container(color: widget.idleColor.withValues(alpha: 0.12)),
+      ),
+    );
     return RepaintBoundary(
-      child: CustomPaint(
-        size: Size.infinite,
-        isComplex: true,
-        willChange: true,
-        painter: _MeshPainter(_mesh, widget.idleColor, _shader, _repaint),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CustomPaint(
+            size: Size.infinite,
+            isComplex: true,
+            willChange: true,
+            painter: _MeshPainter(_mesh, widget.idleColor, _shader, _repaint),
+          ),
+          ValueListenableBuilder<double>(
+            valueListenable: _glassOpacity,
+            child: glass,
+            builder: (_, o, child) => o <= 0.01
+                ? const SizedBox.shrink()
+                : Opacity(opacity: o, child: child),
+          ),
+        ],
       ),
     );
   }

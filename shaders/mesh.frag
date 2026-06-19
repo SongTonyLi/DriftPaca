@@ -13,22 +13,51 @@ uniform vec4 uC3; uniform vec4 uC4; uniform vec4 uC5;  // rgb colour (w unused)
 
 out vec4 fragColor;
 
-// srcOver one blob: alpha = blob.w * the [0,0.4,1]->[1,1,0] radial falloff.
-vec3 blob(vec3 col, vec2 p, vec4 b, vec4 c) {
-  float d = distance(p, b.xy) / b.z;
-  float a = clamp((1.0 - d) / 0.6, 0.0, 1.0) * b.w;
-  return mix(col, c.rgb, a);
+// One blob's field contribution: a compact, smooth (Wyvill) falloff scaled by the
+// blob's alpha (blob.opacity * fade o). Returns colour*weight in rgb, weight in a,
+// so the six can be summed into coverage + coverage-weighted colour.
+vec4 blobField(vec2 p, vec4 b, vec4 c) {
+  float d2 = dot(p - b.xy, p - b.xy);
+  float r = b.z;                               // radius comes fully-sized from Dart
+  float x = clamp(1.0 - d2 / (r * r), 0.0, 1.0);
+  float g = x * x * x * b.w;                    // weight; fades with o via b.w
+  return vec4(c.rgb * g, g);
+}
+
+// Cheap screen-fixed hash for the grain.
+float grainHash(vec2 q) {
+  return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
   vec2 p = FlutterFragCoord().xy;
-  vec3 col = uIdle.rgb;
-  col = mix(col, uCanvas.rgb, uCanvas.a);   // tint fades in with o
-  col = blob(col, p, uB0, uC0);
-  col = blob(col, p, uB1, uC1);
-  col = blob(col, p, uB2, uC2);
-  col = blob(col, p, uB3, uC3);
-  col = blob(col, p, uB4, uC4);
-  col = blob(col, p, uB5, uC5);
-  fragColor = vec4(col, 1.0);               // opaque full-bleed base
+
+  // Base: flat idle, with the canvas tint faded in by o (uCanvas.a == o).
+  vec3 base = mix(uIdle.rgb, uCanvas.rgb, uCanvas.a);
+
+  // Accumulate the six blobs -> coverage (a) + coverage-weighted colour (rgb).
+  vec4 acc = blobField(p, uB0, uC0) + blobField(p, uB1, uC1)
+           + blobField(p, uB2, uC2) + blobField(p, uB3, uC3)
+           + blobField(p, uB4, uC4) + blobField(p, uB5, uC5);
+  float cov = acc.a;
+  vec3 mesh = cov > 1e-4 ? acc.rgb / cov : base;
+  float alpha = clamp(cov, 0.0, 1.0);
+
+  // Screen-space halftone dissolve: the dot radius tracks coverage, so dense
+  // cores read solid and the soft edges break into shrinking dots.
+  const float DOT = 13.0;      // dot cell, logical px
+  const float ANGLE = 0.384;   // ~22deg rotated screen
+  const float GAMMA = 0.60;    // dots all-over vs edge-only
+  const float AA = 0.41;       // dot softness
+  float ca = cos(ANGLE), sa = sin(ANGLE);
+  vec2 rp = mat2(ca, -sa, sa, ca) * p;
+  vec2 fc = fract(rp / DOT) - 0.5;
+  float dist = length(fc) * 2.0;
+  float radius = pow(alpha, GAMMA) * 1.45;
+  float dotm = smoothstep(radius, radius - AA, dist);
+
+  vec3 col = mix(base, mesh, dotm);
+  col += mesh * smoothstep(0.55, 1.0, alpha) * 0.08;   // faint luminous core
+  col += (grainHash(p) - 0.5) * (3.0 / 255.0);         // fine grain
+  fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);         // opaque full-bleed base
 }

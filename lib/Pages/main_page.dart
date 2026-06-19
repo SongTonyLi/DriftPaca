@@ -47,6 +47,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
     final isIncognito =
         viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
     final isGenerating = viewModel.isStreaming || viewModel.isThinking;
+    final isWelcome = viewModel.messages.isEmpty;
 
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
@@ -90,6 +91,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
               canvas: palette.canvas,
               idleColor: palette.idle,
               isGenerating: isGenerating,
+              isWelcome: isWelcome,
             ),
           ),
           scaffold,
@@ -108,6 +110,7 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
     final isIncognito =
         viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
     final isGenerating = viewModel.isStreaming || viewModel.isThinking;
+    final isWelcome = viewModel.messages.isEmpty;
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
     final systemDark = baseTheme.brightness == Brightness.dark;
@@ -125,6 +128,7 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
             canvas: palette.canvas,
             idleColor: palette.idle,
             isGenerating: isGenerating,
+            isWelcome: isWelcome,
           ),
         ),
         const Scaffold(

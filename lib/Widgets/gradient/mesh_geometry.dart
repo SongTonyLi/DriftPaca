@@ -11,6 +11,7 @@ class Mesh {
   Color a = const Color(0xFF000000);
   Color b = const Color(0xFF000000);
   Color canvas = const Color(0xFF000000);
+  bool welcome = false; // true during the welcome corner-breathe intro
 }
 
 /// Static description of one soft radial blob. Centers/amps are fractions of
@@ -34,6 +35,16 @@ const List<Blob> kBlobs = [
   Blob(0.46, 0.56, 0.20, 0.22, 1.1, 0.9, 5.2, 1.7, 0.76, 0.75, false),
 ];
 
+/// Conversation mesh blobs are scaled up so they overlap into a near-full field,
+/// leaving only thin dotted seams between them.
+const double kConvBlobScale = 1.05;
+
+/// Welcome intro: four breathing corner blobs (radius as a fraction of the short
+/// side), independent of the drifting conversation mesh.
+const double kWelcomeCornerSize = 0.55;
+const double kWelcomeBreatheAmt = 0.16;
+const double kWelcomeBreatheSpeed = 1.6;
+
 /// Where a blob sits this frame: on-screen [center] and [radius] in pixels.
 class BlobPlacement {
   final Offset center;
@@ -55,8 +66,10 @@ BlobPlacement blobPlacement(Blob blob, double phase, Size size) {
 
 /// Packs the mesh's per-frame state into the uniform buffer that shaders/mesh.frag
 /// declares, in declaration order. Returns 56 floats:
-///   uIdle(rgb,1) · uCanvas(rgb,o) · 6×(cx,cy,r,blob.opacity·o) · 6×(colour rgb,0).
-/// Pure: no GPU or Flutter binding needed, so it is unit-testable.
+///   uIdle(rgb,1) · uCanvas(rgb,o) · 6×(cx,cy,r,alpha) · 6×(colour rgb,0).
+/// The active mode decides the blobs: the welcome intro breathes four corner
+/// blobs; otherwise the six drifting mesh blobs (scaled up so they overlap into a
+/// near-full field with only thin dotted seams). Pure — unit-testable.
 Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
   final o = mesh.opacity;
   final u = Float32List(56);
@@ -65,13 +78,54 @@ Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
 
   w(idle.r); w(idle.g); w(idle.b); w(1.0);
   w(mesh.canvas.r); w(mesh.canvas.g); w(mesh.canvas.b); w(o);
-  for (final blob in kBlobs) {
-    final p = blobPlacement(blob, mesh.phase, size);
-    w(p.center.dx); w(p.center.dy); w(p.radius); w(blob.opacity * o);
+
+  final blobs = <(Offset, double, Color, double)>[]; // center, radius, colour, alpha
+  if (mesh.welcome) {
+    final short = size.shortestSide;
+    final corners = <Offset>[
+      Offset.zero,
+      Offset(size.width, 0),
+      Offset(0, size.height),
+      Offset(size.width, size.height),
+    ];
+    for (var i = 0; i < 4; i++) {
+      final breathe = 1 +
+          kWelcomeBreatheAmt *
+              math.sin(mesh.phase * kWelcomeBreatheSpeed + i * 1.7);
+      blobs.add((
+        corners[i],
+        kWelcomeCornerSize * short * breathe,
+        (i == 0 || i == 3) ? mesh.a : mesh.b,
+        0.9 * o,
+      ));
+    }
+  } else {
+    for (final blob in kBlobs) {
+      final p = blobPlacement(blob, mesh.phase, size);
+      blobs.add((
+        p.center,
+        p.radius * kConvBlobScale,
+        blob.useA ? mesh.a : mesh.b,
+        blob.opacity * o,
+      ));
+    }
   }
-  for (final blob in kBlobs) {
-    final c = blob.useA ? mesh.a : mesh.b;
-    w(c.r); w(c.g); w(c.b); w(0.0);
+
+  for (var i = 0; i < 6; i++) {
+    if (i < blobs.length) {
+      final b = blobs[i];
+      w(b.$1.dx); w(b.$1.dy); w(b.$2); w(b.$4);
+    } else {
+      w(0); w(0); w(1); w(0); // unused slot: radius 1 avoids /0, alpha 0 = no draw
+    }
+  }
+  for (var i = 0; i < 6; i++) {
+    if (i < blobs.length) {
+      final c = blobs[i].$3;
+      w(c.r); w(c.g); w(c.b); w(0.0);
+    } else {
+      w(0); w(0); w(0); w(0);
+    }
   }
   return u;
 }

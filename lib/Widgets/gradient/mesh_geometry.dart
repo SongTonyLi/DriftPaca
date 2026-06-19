@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -50,4 +51,27 @@ BlobPlacement blobPlacement(Blob blob, double phase, Size size) {
       size.height;
   final r = blob.radius * short * (1 + 0.10 * math.sin(phase * 0.6 + blob.phaseX));
   return BlobPlacement(Offset(cx, cy), r);
+}
+
+/// Packs the mesh's per-frame state into the uniform buffer that shaders/mesh.frag
+/// declares, in declaration order. Returns 56 floats:
+///   uIdle(rgb,1) · uCanvas(rgb,o) · 6×(cx,cy,r,blob.opacity·o) · 6×(colour rgb,0).
+/// Pure: no GPU or Flutter binding needed, so it is unit-testable.
+Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
+  final o = mesh.opacity;
+  final u = Float32List(56);
+  var k = 0;
+  void w(double v) => u[k++] = v;
+
+  w(idle.r); w(idle.g); w(idle.b); w(1.0);
+  w(mesh.canvas.r); w(mesh.canvas.g); w(mesh.canvas.b); w(o);
+  for (final blob in kBlobs) {
+    final p = blobPlacement(blob, mesh.phase, size);
+    w(p.center.dx); w(p.center.dy); w(p.radius); w(blob.opacity * o);
+  }
+  for (final blob in kBlobs) {
+    final c = blob.useA ? mesh.a : mesh.b;
+    w(c.r); w(c.g); w(c.b); w(0.0);
+  }
+  return u;
 }

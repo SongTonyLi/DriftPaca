@@ -24,11 +24,6 @@ vec4 blobField(vec2 p, vec4 b, vec4 c) {
   return vec4(c.rgb * g, g);
 }
 
-// Cheap screen-fixed hash for the grain.
-float grainHash(vec2 q) {
-  return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
 void main() {
   vec2 p = FlutterFragCoord().xy;
 
@@ -58,6 +53,7 @@ void main() {
 
   vec3 col = mix(base, mesh, dotm);
   col += mesh * smoothstep(0.55, 1.0, alpha) * 0.08;   // faint luminous core
-  col += (grainHash(p) - 0.5) * (3.0 / 255.0);         // fine grain
+  // (No fine grain: the 38px glass BackdropFilter over this mesh averages any
+  //  per-pixel dither to ~0, so computing it per fragment was wasted GPU work.)
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);         // opaque full-bleed base
 }

@@ -74,10 +74,15 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
       final program = await _programFuture!;
       if (!mounted) return;
       setState(() => _shader = program.fragmentShader());
-    } catch (_) {
-      // Shader unavailable (headless test env / unsupported renderer): stay on
-      // the flat idleColor fallback and allow a later mount to retry.
-      _programFuture = null;
+    } catch (e, st) {
+      // Shader unavailable (headless test env / unsupported renderer / a broken
+      // mesh.frag): stay on the flat idleColor fallback. Keep the cached future
+      // so we don't re-attempt a load that fails the same way, and log in debug
+      // so a real regression hiding behind the plausible flat fallback is visible.
+      assert(() {
+        debugPrint('FloatingGradientBackground: mesh.frag failed to load: $e\n$st');
+        return true;
+      }());
     }
   }
 
@@ -105,7 +110,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
       return;
     }
     final dt = (elapsed - _last).inMicroseconds / 1e6;
-    if (dt < _minFrameInterval) return; // ~30fps throttle
+    if (dt < _minFrameInterval) return; // ~24fps throttle
     _last = elapsed;
 
     // Fade the mesh toward the generation state (very slow).

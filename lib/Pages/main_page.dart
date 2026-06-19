@@ -47,6 +47,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
     final isIncognito =
         viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
     final isGenerating = viewModel.isStreaming || viewModel.isThinking;
+    final isWelcome = viewModel.messages.isEmpty;
 
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
@@ -55,6 +56,13 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
         ? (systemDark ? AppMode.incognitoDark : AppMode.incognitoLight)
         : (systemDark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
+
+    // Text/icon colour adapts to the average background luminance for contrast.
+    final meshAvg = Color.lerp(palette.meshA, palette.meshB, 0.5)!;
+    final avgBg = Color.lerp(palette.canvas, meshAvg, 0.4)!;
+    final onBg = ThemeData.estimateBrightnessForColor(avgBg) == Brightness.dark
+        ? const Color(0xFFF3F5F9)
+        : const Color(0xFF14171C);
 
     final scaffold = Scaffold(
       backgroundColor: Colors.transparent,
@@ -65,20 +73,22 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
       drawerScrimColor: Colors.transparent,
     );
 
-    // Incognito theme now derives from the resolver instead of a hardcoded scheme.
-    final incognitoTheme = baseTheme.copyWith(
+    ThemeData withContrastText(ThemeData t) => t.copyWith(
+          iconTheme: t.iconTheme.copyWith(color: onBg),
+          textTheme: t.textTheme.apply(bodyColor: onBg, displayColor: onBg),
+        );
+
+    // Incognito derives its scheme from the resolver; both modes take the
+    // contrast-adapted text colour.
+    final incognitoTheme = withContrastText(baseTheme.copyWith(
       brightness: baseTheme.brightness, // incognito follows the system light/dark
       colorScheme: palette.scheme,
       scaffoldBackgroundColor: Colors.transparent,
-      iconTheme: baseTheme.iconTheme.copyWith(color: palette.scheme.onSurface),
-      textTheme: baseTheme.textTheme.apply(
-        bodyColor: palette.scheme.onSurface,
-        displayColor: palette.scheme.onSurface,
-      ),
-    );
+    ));
+    final normalTheme = withContrastText(baseTheme);
 
     return AnimatedTheme(
-      data: isIncognito ? incognitoTheme : baseTheme,
+      data: isIncognito ? incognitoTheme : normalTheme,
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeInOutCubic,
       child: Stack(
@@ -90,6 +100,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
               canvas: palette.canvas,
               idleColor: palette.idle,
               isGenerating: isGenerating,
+              isWelcome: isWelcome,
             ),
           ),
           scaffold,
@@ -108,6 +119,7 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
     final isIncognito =
         viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
     final isGenerating = viewModel.isStreaming || viewModel.isThinking;
+    final isWelcome = viewModel.messages.isEmpty;
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
     final systemDark = baseTheme.brightness == Brightness.dark;
@@ -116,29 +128,43 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
         : (systemDark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: FloatingGradientBackground(
-            meshA: palette.meshA,
-            meshB: palette.meshB,
-            canvas: palette.canvas,
-            idleColor: palette.idle,
-            isGenerating: isGenerating,
-          ),
-        ),
-        const Scaffold(
-          backgroundColor: Colors.transparent,
-          body: SafeArea(
-            child: Row(
-              children: [
-                ChatDrawer(),
-                Expanded(child: ChatPage()),
-              ],
+    // Text/icon colour adapts to the average background luminance for contrast.
+    final meshAvg = Color.lerp(palette.meshA, palette.meshB, 0.5)!;
+    final avgBg = Color.lerp(palette.canvas, meshAvg, 0.4)!;
+    final onBg = ThemeData.estimateBrightnessForColor(avgBg) == Brightness.dark
+        ? const Color(0xFFF3F5F9)
+        : const Color(0xFF14171C);
+
+    return Theme(
+      data: baseTheme.copyWith(
+        iconTheme: baseTheme.iconTheme.copyWith(color: onBg),
+        textTheme: baseTheme.textTheme.apply(bodyColor: onBg, displayColor: onBg),
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: FloatingGradientBackground(
+              meshA: palette.meshA,
+              meshB: palette.meshB,
+              canvas: palette.canvas,
+              idleColor: palette.idle,
+              isGenerating: isGenerating,
+              isWelcome: isWelcome,
             ),
           ),
-        ),
-      ],
+          const Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Row(
+                children: [
+                  ChatDrawer(),
+                  Expanded(child: ChatPage()),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

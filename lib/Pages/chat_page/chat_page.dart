@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
-import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
+import 'package:llamaseek/Pages/model_select_page/model_select_route.dart';
 
 import 'chat_page_view_model.dart';
 import 'subwidgets/subwidgets.dart';
@@ -528,9 +528,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   }
 
   Future<void> _showModelSelectionBottomSheet() async {
-    final selectedModel = await showModelSelectionBottomSheet(
+    final selectedModel = await showModelSelectWheel(
       context: context,
-      title: "Select a Model",
+      title: "Select a model",
       currentModelName: _viewModel.selectedModel?.name,
     );
 

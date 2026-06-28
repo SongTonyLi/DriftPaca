@@ -1,8 +1,6 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'package:llamaseek/Constants/brand_logos.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
@@ -61,7 +59,6 @@ class _ModelSelectPageState extends State<ModelSelectPage>
   // exactly where the disc sits (it isn't screen-centred) — no snap on close.
   final GlobalKey _discKey = GlobalKey();
   Offset? _discCenter;
-  double? _discSize;
 
   @override
   void initState() {
@@ -75,7 +72,7 @@ class _ModelSelectPageState extends State<ModelSelectPage>
         : brandForModel(_modelByName(_selectedName)).accent;
     _infoCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 480),
+      duration: const Duration(milliseconds: 340),
     );
   }
 
@@ -99,13 +96,13 @@ class _ModelSelectPageState extends State<ModelSelectPage>
   }
 
   void _openInfo() {
+    FocusScope.of(context).unfocus(); // drop the keyboard before the flip
     // Capture where the disc actually is so the flip is anchored to it.
     final discBox = _discKey.currentContext?.findRenderObject() as RenderBox?;
     final selfBox = context.findRenderObject() as RenderBox?;
     if (discBox != null && selfBox != null && discBox.hasSize) {
       final topLeft = discBox.localToGlobal(Offset.zero, ancestor: selfBox);
       _discCenter = topLeft + discBox.size.center(Offset.zero);
-      _discSize = discBox.size.shortestSide;
     }
     _infoCtrl.forward();
   }
@@ -175,89 +172,86 @@ class _ModelSelectPageState extends State<ModelSelectPage>
         : brandForModel(_modelByName(_selectedName)).accent;
     final brightness = Theme.of(context).brightness;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        forceMaterialTransparency: true,
-        centerTitle: true,
-        title: Text(
-          widget.title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-        ),
-      ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            // Animate the mesh accent as the docked brand changes.
-            child: TweenAnimationBuilder<Color?>(
-              duration: const Duration(milliseconds: 600),
-              curve: Curves.easeInOut,
-              tween: ColorTween(begin: _firstAccent, end: accent),
-              builder: (context, c, _) {
-                final acc = c ?? accent;
-                final m = _MeshColors.fromAccent(acc, brightness);
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    FloatingGradientBackground(
-                      meshA: m.a,
-                      meshB: m.b,
-                      canvas: m.canvas,
-                      idleColor: m.idle,
-                      // Power-restrained: a brief corner-breathe intro on open,
-                      // then the mesh settles to a flat brand-tinted idle and the
-                      // ticker stops — no perpetual floating. The brand tint still
-                      // shifts (cheaply) when the docked model changes.
-                      isGenerating: false,
-                      isWelcome: true,
-                    ),
-                    // Static brand-tinted spotlight behind the wheel for depth —
-                    // it only re-tints (cheaply) on selection; no animation.
-                    IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: RadialGradient(
-                            center: const Alignment(0, -0.08),
-                            radius: 0.95,
-                            colors: [
-                              acc.withValues(
-                                  alpha: brightness == Brightness.light
-                                      ? 0.16
-                                      : 0.22),
-                              acc.withValues(alpha: 0.0),
-                            ],
-                          ),
-                        ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Full-bleed background OUTSIDE the Scaffold, so the keyboard resizing
+        // the body can't shrink it (which left a black gap above the keyboard).
+        // It animates its tint as the docked brand changes.
+        TweenAnimationBuilder<Color?>(
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+          tween: ColorTween(begin: _firstAccent, end: accent),
+          builder: (context, c, _) {
+            final acc = c ?? accent;
+            final m = _MeshColors.fromAccent(acc, brightness);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                FloatingGradientBackground(
+                  meshA: m.a,
+                  meshB: m.b,
+                  canvas: m.canvas,
+                  idleColor: m.idle,
+                  // Power-restrained: a brief corner-breathe intro on open, then
+                  // the mesh settles to a flat brand-tinted idle and the ticker
+                  // stops. The brand tint still shifts (cheaply) on selection.
+                  isGenerating: false,
+                  isWelcome: true,
+                ),
+                // Static brand-tinted spotlight behind the wheel for depth.
+                IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0, -0.08),
+                        radius: 0.95,
+                        colors: [
+                          acc.withValues(
+                              alpha:
+                                  brightness == Brightness.light ? 0.16 : 0.22),
+                          acc.withValues(alpha: 0.0),
+                        ],
                       ),
                     ),
-                  ],
-                );
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            forceMaterialTransparency: true,
+            centerTitle: true,
+            title: Text(
+              widget.title,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+            ),
+          ),
+          body: SafeArea(child: _buildBody(context, accent)),
+        ),
+        // Logo→info flip overlay (full-screen, above the Scaffold).
+        if (widget.models.isNotEmpty)
+          Positioned.fill(
+            child: _InfoOverlay(
+              animation: _infoCtrl,
+              center: _discCenter,
+              model: _modelByName(_selectedName),
+              brand: brandForModel(_modelByName(_selectedName)),
+              onClose: _closeInfo,
+              onSelect: () {
+                _closeInfo();
+                _confirm();
               },
             ),
           ),
-          SafeArea(child: _buildBody(context, accent)),
-          // Logo→info flip overlay.
-          if (widget.models.isNotEmpty)
-            Positioned.fill(
-              child: _FlipInfo(
-                animation: _infoCtrl,
-                center: _discCenter,
-                discSize: _discSize,
-                model: _modelByName(_selectedName),
-                brand: brandForModel(_modelByName(_selectedName)),
-                onClose: _closeInfo,
-                onSelect: () {
-                  _closeInfo();
-                  _confirm();
-                },
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -684,18 +678,16 @@ class _ConfirmPill extends StatelessWidget {
 /// The logo→info-card flip overlay. As [progress] runs 0→1 the center logo disc
 /// rotates about Y; past 90° it swaps to the original info window, which faces
 /// the user at progress 1. A dimmed, dismissible barrier sits behind it.
-class _FlipInfo extends StatelessWidget {
+class _InfoOverlay extends StatelessWidget {
   final Animation<double> animation;
   final Offset? center; // real disc centre (overlay coords); null → screen centre
-  final double? discSize; // real disc diameter
   final OllamaModel model;
   final BrandLogo brand;
   final VoidCallback onClose;
   final VoidCallback onSelect;
-  const _FlipInfo({
+  const _InfoOverlay({
     required this.animation,
     this.center,
-    this.discSize,
     required this.model,
     required this.brand,
     required this.onClose,
@@ -707,42 +699,28 @@ class _FlipInfo extends StatelessWidget {
     final size = MediaQuery.of(context).size;
     final cardW = math.min(size.width * 0.86, 380.0);
     final cardMaxH = size.height * 0.66;
-    final fallbackDisc =
-        (math.min(size.width * 0.92, size.height * 0.86)).clamp(0.0, 440.0).toDouble() *
-            0.52;
-    final disc = discSize ?? fallbackDisc;
     final screenCenter = Offset(size.width / 2, size.height / 2);
     final shift = (center ?? screenCenter) - screenCenter;
 
-    // Build each face ONCE and cache it as a raster (RepaintBoundary), so the
-    // flip only transforms a texture instead of re-laying-out / re-painting the
-    // card on every frame. The info card is a solid surface (no BackdropFilter)
-    // — blur under a 3D rotation is what made the flip lag and flicker; the
-    // dimmed barrier behind makes the blur unnecessary anyway.
-    final back = Transform(
-      alignment: Alignment.center,
-      transform: Matrix4.identity()..rotateY(math.pi),
-      child: RepaintBoundary(
-        child: ModelInfoCard(
-          model: model,
-          brand: brand,
-          maxWidth: cardW,
-          maxHeight: cardMaxH,
-          onSelect: onSelect,
-          onClose: onClose,
-        ),
+    // Built once and cached, so the zoom only transforms a texture.
+    final card = RepaintBoundary(
+      child: ModelInfoCard(
+        model: model,
+        brand: brand,
+        maxWidth: cardW,
+        maxHeight: cardMaxH,
+        onSelect: onSelect,
+        onClose: onClose,
       ),
     );
-    final front = RepaintBoundary(child: _frontDisc(context, disc));
 
     return AnimatedBuilder(
       animation: animation,
       builder: (context, _) {
-        final p = animation.value.clamp(0.0, 1.0);
+        final p = animation.value.clamp(0.0, 1.0).toDouble();
         if (p == 0) return const SizedBox.shrink();
-        final cp = Curves.easeInOutCubic.transform(p);
-        final angle = cp * math.pi; // 0 → pi
-        final showBack = angle > math.pi / 2;
+        final cp = Curves.easeOutCubic.transform(p);
+        final scale = 0.6 + 0.4 * cp; // zoom the window out of the disc
         return Stack(
           children: [
             ModalBarrier(
@@ -750,82 +728,19 @@ class _FlipInfo extends StatelessWidget {
               dismissible: true,
               onDismiss: onClose,
             ),
-            // Anchor the flip to the real disc's position (not screen centre)
-            // so the logo doesn't snap when the card flips closed.
+            // Anchored at the disc, so the window grows out of where it sits.
             Transform.translate(
               offset: shift,
               child: Center(
-                child: Transform(
-                  alignment: Alignment.center,
-                  transform: Matrix4.identity()
-                    ..setEntry(3, 2, 0.0012)
-                    ..rotateY(angle),
-                  child: showBack ? back : front,
+                child: Opacity(
+                  opacity: cp,
+                  child: Transform.scale(scale: scale, child: card),
                 ),
               ),
             ),
           ],
         );
       },
-    );
-  }
-
-  Widget _frontDisc(BuildContext context, double d) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      width: d,
-      height: d,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: cs.surface.withValues(alpha: 0.9),
-        border: Border.all(
-            color: Color.lerp(cs.outline, brand.accent, 0.55)!
-                .withValues(alpha: 0.5)),
-        boxShadow: [
-          BoxShadow(
-              color: brand.accent.withValues(alpha: 0.3),
-              blurRadius: 40,
-              spreadRadius: 2),
-        ],
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(d * 0.16),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: SizedBox(
-            width: d * 0.7,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: d * 0.34,
-                  width: d * 0.34,
-                  child: SvgPicture.asset(
-                    brand.asset,
-                    fit: BoxFit.contain,
-                    colorFilter: brand.tinted
-                        ? ColorFilter.mode(
-                            cs.onSurface.withValues(alpha: 0.8), BlendMode.srcIn)
-                        : null,
-                  ),
-                ),
-                SizedBox(height: d * 0.06),
-                Text(
-                  model.name,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.jetBrainsMono(
-                    fontSize: (d * 0.08).clamp(11.0, 16.0),
-                    fontWeight: FontWeight.w600,
-                    color: cs.onSurface,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

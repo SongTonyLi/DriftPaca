@@ -12,7 +12,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 class BrandNode extends StatelessWidget {
   final String asset;
   final Color accent;
-  final bool isFallback;
+  final bool tinted;
   final double size;
   final double prominence;
 
@@ -21,7 +21,7 @@ class BrandNode extends StatelessWidget {
     required this.asset,
     required this.accent,
     required this.size,
-    this.isFallback = false,
+    this.tinted = false,
     this.prominence = 0,
   });
 
@@ -39,7 +39,7 @@ class BrandNode extends StatelessWidget {
 
     // Fallback marks are flat silhouettes — tint them to the foreground so they
     // read in every mode. Real brand logos keep their own colours.
-    final tint = isFallback ? cs.onSurface.withValues(alpha: 0.72) : null;
+    final tint = tinted ? cs.onSurface.withValues(alpha: 0.72) : null;
 
     return Container(
       width: size,

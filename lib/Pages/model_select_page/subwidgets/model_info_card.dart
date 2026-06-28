@@ -133,7 +133,7 @@ class ModelInfoCard extends StatelessWidget {
                           child: SvgPicture.asset(
                             brand.asset,
                             fit: BoxFit.contain,
-                            colorFilter: brand.isFallback
+                            colorFilter: brand.tinted
                                 ? ColorFilter.mode(
                                     cs.onSurface.withValues(alpha: 0.8),
                                     BlendMode.srcIn)

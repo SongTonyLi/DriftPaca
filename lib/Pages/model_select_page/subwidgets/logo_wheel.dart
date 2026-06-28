@@ -13,11 +13,11 @@ import 'brand_node.dart';
 class WheelNode {
   final String asset;
   final Color accent;
-  final bool isFallback;
+  final bool tinted; // draw the logo tinted to the foreground (mono/fallback)
   const WheelNode({
     required this.asset,
     required this.accent,
-    this.isFallback = false,
+    this.tinted = false,
   });
 }
 
@@ -54,7 +54,7 @@ class LogoWheel extends StatefulWidget {
 }
 
 class _LogoWheelState extends State<LogoWheel>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // Rotation of the ring in radians. Item i sits at screen angle
   // (-pi/2 + i*step - rotation); item i is docked when rotation == i*step.
   final ValueNotifier<double> _rotation = ValueNotifier<double>(0);
@@ -62,11 +62,11 @@ class _LogoWheelState extends State<LogoWheel>
   final ValueNotifier<int> _tick = ValueNotifier<int>(0);
 
   late final AnimationController _spin; // 0..1 driver for momentum + snap
+  late final AnimationController _entrance; // one-shot bloom-in on mount
   double _animBegin = 0;
   double _animEnd = 0;
 
   int _lastDetent = 0;
-  double _lastBuiltRotation = 0; // for the comet-trail speed estimate
 
   // Drag state.
   double? _lastAngle;
@@ -79,19 +79,24 @@ class _LogoWheelState extends State<LogoWheel>
   @override
   void initState() {
     super.initState();
-    _spin = AnimationController.unbounded(vsync: this)
+    // Bounded 0..1 progress driver for momentum/snap. (Unbounded + forward()
+    // would animate toward +infinity, blowing up Curves.transform.)
+    _spin = AnimationController(vsync: this)
       ..addListener(_onSpinTick)
       ..addStatusListener((s) {
         if (s == AnimationStatus.completed) HapticFeedback.lightImpact();
       });
     _rotation.value = widget.initialIndex * _step;
-    _lastBuiltRotation = _rotation.value;
     _lastDetent = widget.initialIndex;
+    _entrance = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 720))
+      ..forward();
   }
 
   @override
   void dispose() {
     _spin.dispose();
+    _entrance.dispose();
     _rotation.dispose();
     _tick.dispose();
     super.dispose();
@@ -214,8 +219,18 @@ class _LogoWheelState extends State<LogoWheel>
           width: widget.diameter,
           height: widget.diameter,
           child: AnimatedBuilder(
-            animation: _rotation,
-            builder: (context, _) => _buildRing(),
+            animation: _entrance,
+            builder: (context, child) {
+              final e = Curves.easeOutCubic.transform(_entrance.value);
+              return Opacity(
+                opacity: e,
+                child: Transform.scale(scale: 0.9 + 0.1 * e, child: child),
+              );
+            },
+            child: AnimatedBuilder(
+              animation: _rotation,
+              builder: (context, _) => _buildRing(),
+            ),
           ),
         ),
       ),
@@ -225,91 +240,94 @@ class _LogoWheelState extends State<LogoWheel>
   Widget _buildRing() {
     final half = widget.diameter / 2;
     final holeR = widget.centerHole / 2;
-    final ringR = holeR + (half - holeR) * 0.52; // node-center orbit radius
-    final nodeSize = widget.diameter * 0.145;
+    final ringR = holeR + (half - holeR) * 0.56;
     const topAngle = -math.pi / 2;
 
-    final rotation = _rotation.value;
-    final speed = rotation - _lastBuiltRotation;
-    _lastBuiltRotation = rotation;
-    final trailing = speed.abs() > 0.05; // show a comet trail when spinning fast
+    // Even spacing along the ring; size logos so neighbours never overlap, and
+    // only render logos within a small arc of the notch — the rest are quiet
+    // brand-coloured dots, so a long model list reads as a calm ring of dots
+    // instead of a pile-up of logos.
+    final spacing = (2 * math.pi * ringR) / math.max(1, _n);
+    final rawLogo = math.min(widget.diameter * 0.15, spacing * 0.9);
+    final logoSize = rawLogo < 20.0 ? 20.0 : rawLogo;
+    final dotSize = (widget.diameter * 0.022).clamp(4.5, 9.0).toDouble();
+    final topArc = _step * 2.5;
 
-    final ghosts = <Widget>[];
-    final nodes = <Widget>[];
+    final rotation = _rotation.value;
+    final children = <Widget>[];
 
     for (var i = 0; i < _n; i++) {
       final node = widget.nodes[i];
       final ang = topAngle + i * _step - rotation;
       final dist = _norm(ang - topAngle).abs(); // 0 at notch → pi at bottom
-      final t = (dist / math.pi).clamp(0.0, 1.0);
-      final prominence = 1.0 - t;
-      final scale = lerpDouble(1.16, 0.6, Curves.easeOut.transform(t))!;
-      final opacity = lerpDouble(1.0, 0.32, t)!;
+      final depth = 1.0 - (dist / math.pi).clamp(0.0, 1.0);
+      final cx = half + math.cos(ang) * ringR;
+      final cy = half + math.sin(ang) * ringR;
 
-      Widget place(double a, double extraScale, double op, Widget child) {
-        final dx = math.cos(a) * ringR;
-        final dy = math.sin(a) * ringR;
-        return Positioned(
-          left: half + dx - nodeSize / 2,
-          top: half + dy - nodeSize / 2,
-          width: nodeSize,
-          height: nodeSize,
-          child: Opacity(
-            opacity: op,
-            child: Transform.scale(scale: scale * extraScale, child: child),
-          ),
-        );
-      }
-
-      // Comet-trail ghosts lag behind the direction of travel.
-      if (trailing) {
-        final sign = speed.sign;
-        for (var g = 1; g <= 2; g++) {
-          ghosts.add(place(
-            ang + sign * 0.085 * g,
-            0.92,
-            (opacity * (0.22 / g)).clamp(0.0, 1.0),
-            BrandNode(
-              asset: node.asset,
-              accent: node.accent,
-              isFallback: node.isFallback,
-              size: nodeSize,
-            ),
-          ));
+      if (dist < topArc) {
+        // Near the notch: bloom from a dot into a full logo.
+        final w = (dist / topArc).clamp(0.0, 1.0).toDouble(); // 0 notch → 1 edge
+        final logoOpacity =
+            (1.0 - Curves.easeIn.transform(w)).clamp(0.0, 1.0).toDouble();
+        final scale = lerpDouble(1.0, 0.62, Curves.easeOut.transform(w))!;
+        // A dot fades in toward the arc edge so the logo→dot handoff is seamless.
+        if (w > 0.4) {
+          children.add(_dot(cx, cy, dotSize, node, depth * w));
         }
-      }
-
-      nodes.add(place(
-        ang,
-        1.0,
-        opacity,
-        GestureDetector(
-          onTap: () => _selectIndex(i),
-          child: BrandNode(
-            asset: node.asset,
-            accent: node.accent,
-            isFallback: node.isFallback,
-            size: nodeSize,
-            prominence: prominence,
+        children.add(Positioned(
+          left: cx - logoSize / 2,
+          top: cy - logoSize / 2,
+          width: logoSize,
+          height: logoSize,
+          child: Opacity(
+            opacity: logoOpacity,
+            child: Transform.scale(
+              scale: scale,
+              child: GestureDetector(
+                onTap: () => _selectIndex(i),
+                child: BrandNode(
+                  asset: node.asset,
+                  accent: node.accent,
+                  tinted: node.tinted,
+                  size: logoSize,
+                  prominence: depth,
+                ),
+              ),
+            ),
           ),
-        ),
-      ));
+        ));
+      } else {
+        // Everything else is a quiet dot.
+        children.add(_dot(cx, cy, dotSize, node, 0.25 + 0.45 * depth));
+      }
     }
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        ...ghosts,
-        ...nodes,
-        // Notch marker pinned at the top, pulsing on each detent crossing.
-        Positioned(
-          left: half - 16,
-          top: half - (half - 8) - 2,
-          width: 32,
-          height: 26,
-          child: _NotchPulse(tick: _tick),
+    // Notch marker pinned at the top, pulsing on each detent crossing.
+    children.add(Positioned(
+      left: half - 16,
+      top: half - (half - 8) - 2,
+      width: 32,
+      height: 26,
+      child: _NotchPulse(tick: _tick),
+    ));
+
+    return Stack(clipBehavior: Clip.none, children: children);
+  }
+
+  Widget _dot(
+      double cx, double cy, double size, WheelNode node, double opacity) {
+    final color = node.accent;
+    return Positioned(
+      left: cx - size / 2,
+      top: cy - size / 2,
+      width: size,
+      height: size,
+      child: Opacity(
+        opacity: opacity.clamp(0.0, 1.0).toDouble(),
+        child: DecoratedBox(
+          decoration: BoxDecoration(shape: BoxShape.circle, color: color),
         ),
-      ],
+      ),
     );
   }
 }

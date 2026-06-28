@@ -22,15 +22,24 @@ class BrandLogo {
   /// Human label, e.g. `Qwen`.
   final String label;
 
+  /// True if the mark is a single-colour (`currentColor`) silhouette that must
+  /// be tinted to the foreground to read in both light and dark (e.g. OpenAI).
+  final bool monochrome;
+
   const BrandLogo({
     required this.key,
     required this.asset,
     required this.accent,
     required this.label,
+    this.monochrome = false,
   });
 
   /// True for the catch-all Ollama mark (an unrecognised model).
   bool get isFallback => key == 'ollama';
+
+  /// Whether to draw the logo tinted to the foreground (fallback or monochrome
+  /// marks) instead of in its own colours.
+  bool get tinted => isFallback || monochrome;
 }
 
 const String _dir = 'assets/images/model_logos';
@@ -47,6 +56,7 @@ const BrandLogo kOllamaBrand = BrandLogo(
 /// Every known provider brand. Accent colours are sampled from each logo's own
 /// palette (see the `*-color.svg` sources).
 const List<BrandLogo> kBrands = [
+  BrandLogo(key: 'openai', asset: '$_dir/openai.svg', accent: Color(0xFF10A37F), label: 'OpenAI', monochrome: true),
   BrandLogo(key: 'qwen', asset: '$_dir/qwen.svg', accent: Color(0xFF6B57F0), label: 'Qwen'),
   BrandLogo(key: 'deepseek', asset: '$_dir/deepseek.svg', accent: Color(0xFF4D6BFE), label: 'DeepSeek'),
   BrandLogo(key: 'gemma', asset: '$_dir/gemma.svg', accent: Color(0xFF446EFF), label: 'Gemma'),
@@ -63,6 +73,9 @@ const List<BrandLogo> kBrands = [
 /// lowercased `"<family> <name>"` of a model. Multiple keywords can map to one
 /// brand (e.g. `mixtral`/`codestral` → mistral, `glm` → chatglm).
 const List<(String, String)> _matchers = [
+  ('gpt-oss', 'openai'),
+  ('gpt', 'openai'),
+  ('openai', 'openai'),
   ('qwen', 'qwen'),
   ('deepseek', 'deepseek'),
   ('gemma', 'gemma'),

@@ -57,15 +57,38 @@ class _ModelSelectPageState extends State<ModelSelectPage>
   // Drives the logo→info-card flip (0 = logo, 1 = info window).
   late final AnimationController _infoCtrl;
 
+  // Measured position/size of the real center disc, so the flip animates from
+  // exactly where the disc sits (it isn't screen-centred) — no snap on close.
+  final GlobalKey _discKey = GlobalKey();
+  Offset? _discCenter;
+  double? _discSize;
+
   @override
   void initState() {
     super.initState();
     _selectedName = _initialName();
-    _firstAccent = brandForModel(_modelByName(_selectedName)).accent;
+    // Guard the empty case: the in-app loader builds this page with an empty
+    // list while models are still loading, and `_modelByName` would otherwise
+    // call `.first` on an empty list ("Bad state: No element").
+    _firstAccent = widget.models.isEmpty
+        ? kOllamaBrand.accent
+        : brandForModel(_modelByName(_selectedName)).accent;
     _infoCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 480),
     );
+  }
+
+  @override
+  void didUpdateWidget(ModelSelectPage old) {
+    super.didUpdateWidget(old);
+    // Models arrived (loading → loaded): dock the requested current model
+    // instead of staying on the empty-state placeholder.
+    if (!identical(old.models, widget.models) &&
+        widget.models.isNotEmpty &&
+        !widget.models.any((m) => m.name == _selectedName)) {
+      _selectedName = _initialName();
+    }
   }
 
   @override
@@ -75,7 +98,18 @@ class _ModelSelectPageState extends State<ModelSelectPage>
     super.dispose();
   }
 
-  void _openInfo() => _infoCtrl.forward();
+  void _openInfo() {
+    // Capture where the disc actually is so the flip is anchored to it.
+    final discBox = _discKey.currentContext?.findRenderObject() as RenderBox?;
+    final selfBox = context.findRenderObject() as RenderBox?;
+    if (discBox != null && selfBox != null && discBox.hasSize) {
+      final topLeft = discBox.localToGlobal(Offset.zero, ancestor: selfBox);
+      _discCenter = topLeft + discBox.size.center(Offset.zero);
+      _discSize = discBox.size.shortestSide;
+    }
+    _infoCtrl.forward();
+  }
+
   void _closeInfo() => _infoCtrl.reverse();
 
   String _initialName() {
@@ -164,18 +198,43 @@ class _ModelSelectPageState extends State<ModelSelectPage>
               curve: Curves.easeInOut,
               tween: ColorTween(begin: _firstAccent, end: accent),
               builder: (context, c, _) {
-                final m = _MeshColors.fromAccent(c ?? accent, brightness);
-                return FloatingGradientBackground(
-                  meshA: m.a,
-                  meshB: m.b,
-                  canvas: m.canvas,
-                  idleColor: m.idle,
-                  // Power-restrained: a brief corner-breathe intro on open, then
-                  // the mesh settles to a flat brand-tinted idle and the ticker
-                  // stops — no perpetual floating. The brand tint still shifts
-                  // (cheaply) when the docked model changes.
-                  isGenerating: false,
-                  isWelcome: true,
+                final acc = c ?? accent;
+                final m = _MeshColors.fromAccent(acc, brightness);
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    FloatingGradientBackground(
+                      meshA: m.a,
+                      meshB: m.b,
+                      canvas: m.canvas,
+                      idleColor: m.idle,
+                      // Power-restrained: a brief corner-breathe intro on open,
+                      // then the mesh settles to a flat brand-tinted idle and the
+                      // ticker stops — no perpetual floating. The brand tint still
+                      // shifts (cheaply) when the docked model changes.
+                      isGenerating: false,
+                      isWelcome: true,
+                    ),
+                    // Static brand-tinted spotlight behind the wheel for depth —
+                    // it only re-tints (cheaply) on selection; no animation.
+                    IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: const Alignment(0, -0.08),
+                            radius: 0.95,
+                            colors: [
+                              acc.withValues(
+                                  alpha: brightness == Brightness.light
+                                      ? 0.16
+                                      : 0.22),
+                              acc.withValues(alpha: 0.0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -186,6 +245,8 @@ class _ModelSelectPageState extends State<ModelSelectPage>
             Positioned.fill(
               child: _FlipInfo(
                 animation: _infoCtrl,
+                center: _discCenter,
+                discSize: _discSize,
                 model: _modelByName(_selectedName),
                 brand: brandForModel(_modelByName(_selectedName)),
                 onClose: _closeInfo,
@@ -321,10 +382,11 @@ class _ModelSelectPageState extends State<ModelSelectPage>
                               onSelectedChanged: _onWheelSelected,
                             ),
                             WheelCenterDisc(
+                              key: _discKey,
                               diameter: holeD,
                               asset: brand.asset,
                               accent: accent,
-                              isFallback: brand.isFallback,
+                              tinted: brand.tinted,
                               modelName: model.name,
                               paramSize: model.parameterSize,
                               think: caps?.thinking ?? false,
@@ -362,7 +424,7 @@ class _ModelSelectPageState extends State<ModelSelectPage>
 
   WheelNode _nodeFor(OllamaModel m) {
     final b = brandForModel(m);
-    return WheelNode(asset: b.asset, accent: b.accent, isFallback: b.isFallback);
+    return WheelNode(asset: b.asset, accent: b.accent, tinted: b.tinted);
   }
 }
 
@@ -624,12 +686,16 @@ class _ConfirmPill extends StatelessWidget {
 /// the user at progress 1. A dimmed, dismissible barrier sits behind it.
 class _FlipInfo extends StatelessWidget {
   final Animation<double> animation;
+  final Offset? center; // real disc centre (overlay coords); null → screen centre
+  final double? discSize; // real disc diameter
   final OllamaModel model;
   final BrandLogo brand;
   final VoidCallback onClose;
   final VoidCallback onSelect;
   const _FlipInfo({
     required this.animation,
+    this.center,
+    this.discSize,
     required this.model,
     required this.brand,
     required this.onClose,
@@ -641,9 +707,12 @@ class _FlipInfo extends StatelessWidget {
     final size = MediaQuery.of(context).size;
     final cardW = math.min(size.width * 0.86, 380.0);
     final cardMaxH = size.height * 0.66;
-    final discSize =
-        (math.min(size.width * 0.92, size.height * 0.86)).clamp(0.0, 440.0) *
+    final fallbackDisc =
+        (math.min(size.width * 0.92, size.height * 0.86)).clamp(0.0, 440.0).toDouble() *
             0.52;
+    final disc = discSize ?? fallbackDisc;
+    final screenCenter = Offset(size.width / 2, size.height / 2);
+    final shift = (center ?? screenCenter) - screenCenter;
 
     // Build each face ONCE and cache it as a raster (RepaintBoundary), so the
     // flip only transforms a texture instead of re-laying-out / re-painting the
@@ -664,7 +733,7 @@ class _FlipInfo extends StatelessWidget {
         ),
       ),
     );
-    final front = RepaintBoundary(child: _frontDisc(context, discSize));
+    final front = RepaintBoundary(child: _frontDisc(context, disc));
 
     return AnimatedBuilder(
       animation: animation,
@@ -681,13 +750,18 @@ class _FlipInfo extends StatelessWidget {
               dismissible: true,
               onDismiss: onClose,
             ),
-            Center(
-              child: Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.identity()
-                  ..setEntry(3, 2, 0.0012)
-                  ..rotateY(angle),
-                child: showBack ? back : front,
+            // Anchor the flip to the real disc's position (not screen centre)
+            // so the logo doesn't snap when the card flips closed.
+            Transform.translate(
+              offset: shift,
+              child: Center(
+                child: Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, 0.0012)
+                    ..rotateY(angle),
+                  child: showBack ? back : front,
+                ),
               ),
             ),
           ],
@@ -729,7 +803,7 @@ class _FlipInfo extends StatelessWidget {
                   child: SvgPicture.asset(
                     brand.asset,
                     fit: BoxFit.contain,
-                    colorFilter: brand.isFallback
+                    colorFilter: brand.tinted
                         ? ColorFilter.mode(
                             cs.onSurface.withValues(alpha: 0.8), BlendMode.srcIn)
                         : null,

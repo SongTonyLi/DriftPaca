@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/model_capabilities.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Pages/model_select_page/model_select_page.dart';
+import 'package:llamaseek/Pages/model_select_page/subwidgets/brand_node.dart';
 
 OllamaModel _mk(
   String name,
@@ -86,5 +87,37 @@ void main() {
     await tester.enterText(find.byType(TextField), 'zzzz');
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.textContaining('No models match'), findsOneWidget);
+  });
+
+  testWidgets('spinning the wheel (momentum/snap) does not throw', (tester) async {
+    _phoneSurface(tester);
+    await tester.pumpWidget(MaterialApp(
+      home: ModelSelectPage(models: _models, currentModelName: 'qwen3:8b'),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Tapping a ring node animates it to the notch via the snap controller —
+    // exercises the momentum/snap AnimationController (regression: it was
+    // declared .unbounded, so forward() ran to infinity and threw every frame).
+    await tester.tap(find.byType(BrandNode).first, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('empty model list (loading) renders without crashing',
+      (tester) async {
+    _phoneSurface(tester);
+    // The in-app loader builds the page with an empty list while fetching —
+    // regression: this used to throw "Bad state: No element" in initState.
+    await tester.pumpWidget(MaterialApp(
+      home: ModelSelectPage(
+          models: const [], currentModelName: 'qwen3:8b', isLoading: true),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
+    expect(find.text('Loading models…'), findsOneWidget);
   });
 }

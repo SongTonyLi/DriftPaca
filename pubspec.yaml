@@ -118,6 +118,7 @@ flutter:
   assets:
     - assets/images/
     - assets/images/icons/
+    - assets/images/model_logos/
 
   shaders:
     - shaders/mesh.frag

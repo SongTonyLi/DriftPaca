@@ -42,7 +42,7 @@ void _phoneSurface(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('builds, flips to the info window, and selects', (tester) async {
+  testWidgets('builds, opens the info window, and selects', (tester) async {
     _phoneSurface(tester);
     OllamaModel? picked;
     await tester.pumpWidget(MaterialApp(

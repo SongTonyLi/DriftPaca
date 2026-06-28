@@ -12,7 +12,7 @@ class WheelCenterDisc extends StatelessWidget {
   final double diameter;
   final String asset;
   final Color accent;
-  final bool isFallback;
+  final bool tinted;
   final String modelName;
   final String paramSize;
   final bool think;
@@ -26,7 +26,7 @@ class WheelCenterDisc extends StatelessWidget {
     required this.asset,
     required this.accent,
     required this.modelName,
-    this.isFallback = false,
+    this.tinted = false,
     this.paramSize = '',
     this.think = false,
     this.vision = false,
@@ -58,7 +58,7 @@ class WheelCenterDisc extends StatelessWidget {
             child: SvgPicture.asset(
               asset,
               fit: BoxFit.contain,
-              colorFilter: isFallback
+              colorFilter: tinted
                   ? ColorFilter.mode(
                       cs.onSurface.withValues(alpha: 0.8), BlendMode.srcIn)
                   : null,

@@ -17,6 +17,13 @@ void main() {
       expect(brandForFamilyName('minimax-m2').key, 'minimax');
       expect(brandForFamilyName('essential-web').key, 'essentialai');
       expect(brandForFamilyName('gemini-2.5-flash').key, 'gemini');
+      expect(brandForFamilyName('gpt-oss').key, 'openai');
+      expect(brandForFamilyName('gpt-oss:20b').key, 'openai');
+    });
+
+    test('the OpenAI mark is monochrome (tinted to the foreground)', () {
+      expect(brandForFamilyName('gpt-oss:20b').tinted, isTrue);
+      expect(brandForFamilyName('qwen3:8b').tinted, isFalse);
     });
 
     test('gemma and gemini do not collide', () {

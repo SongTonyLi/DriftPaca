@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
+import 'package:llamaseek/Pages/model_select_page/model_select_route.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:provider/provider.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
@@ -130,9 +130,9 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   Future<void> _handleModelSelectionButton(BuildContext context) async {
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
 
-    final selectedModel = await showModelSelectionBottomSheet(
+    final selectedModel = await showModelSelectWheel(
       context: context,
-      title: "Change The Model",
+      title: "Change the model",
       currentModelName: chatProvider.currentChat?.model,
     );
 

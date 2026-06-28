@@ -212,6 +212,10 @@ class _LogoWheelState extends State<LogoWheel>
     return Listener(
       onPointerSignal: _onPointerSignal,
       child: GestureDetector(
+        // Opaque so a drag can start anywhere in the wheel — not only when the
+        // finger lands on a (small) dot or logo. Otherwise most of the ring is
+        // dead space and it's hard to slide.
+        behavior: HitTestBehavior.opaque,
         onPanStart: _onPanStart,
         onPanUpdate: _onPanUpdate,
         onPanEnd: _onPanEnd,
@@ -250,7 +254,7 @@ class _LogoWheelState extends State<LogoWheel>
     final spacing = (2 * math.pi * ringR) / math.max(1, _n);
     final rawLogo = math.min(widget.diameter * 0.15, spacing * 0.9);
     final logoSize = rawLogo < 20.0 ? 20.0 : rawLogo;
-    final dotSize = (widget.diameter * 0.022).clamp(4.5, 9.0).toDouble();
+    final dotSize = (widget.diameter * 0.028).clamp(6.0, 11.0).toDouble();
     final topArc = _step * 2.5;
 
     final rotation = _rotation.value;

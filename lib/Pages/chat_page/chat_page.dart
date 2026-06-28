@@ -176,7 +176,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
         } else {
           return ChatEmpty(
             child: NormalWelcome(
-              selectedModelName: _viewModel.selectedModel?.name,
+              selectedModel: _viewModel.selectedModel,
               onSelectModel: _showModelSelectionBottomSheet,
             ),
           );
@@ -468,7 +468,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
 
   Widget _buildIncognitoWelcome() {
     return IncognitoWelcome(
-      selectedModelName: _viewModel.selectedModel?.name,
+      selectedModel: _viewModel.selectedModel,
       onSelectModel: _showModelSelectionBottomSheet,
     );
   }

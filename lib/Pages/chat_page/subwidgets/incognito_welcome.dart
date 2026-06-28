@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:llamaseek/Models/ollama_model.dart';
 
+import 'model_brand_mark.dart';
 import 'welcome_scaffold.dart';
 
 /// The incognito-mode welcome: a private, "off the record" panel built on the
@@ -9,24 +11,27 @@ import 'welcome_scaffold.dart';
 class IncognitoWelcome extends StatelessWidget {
   static const Color _accent = Color(0xFF6C63FF);
 
-  final String? selectedModelName;
+  final OllamaModel? selectedModel;
   final VoidCallback onSelectModel;
 
   const IncognitoWelcome({
     super.key,
-    required this.selectedModelName,
+    required this.selectedModel,
     required this.onSelectModel,
   });
 
   @override
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
+    final model = selectedModel;
     return WelcomeScaffold(
       accent: _accent,
       eyebrow: 'PRIVATE SESSION',
       title: 'Incognito Mode',
       details: _facts(onSurface),
-      ctaLabel: selectedModelName ?? 'Select a model to start',
+      ctaLabel: model?.name ?? 'Select a model to start',
+      ctaLeading:
+          model == null ? null : ModelBrandMark(model: model, tint: _accent),
       onCta: onSelectModel,
     );
   }

@@ -14,6 +14,11 @@ class WelcomeScaffold extends StatefulWidget {
   final List<Widget> details;
   final String ctaLabel;
   final IconData ctaIcon;
+
+  /// Optional leading widget for the CTA pill, shown in place of [ctaIcon]
+  /// (e.g. the selected model's provider logo). Sized to ~17–18px to sit level
+  /// with the default icon.
+  final Widget? ctaLeading;
   final VoidCallback onCta;
   final Color accent;
 
@@ -26,6 +31,7 @@ class WelcomeScaffold extends StatefulWidget {
     required this.accent,
     this.details = const [],
     this.ctaIcon = Icons.auto_awesome,
+    this.ctaLeading,
   });
 
   @override
@@ -174,7 +180,8 @@ class _WelcomeScaffoldState extends State<WelcomeScaffold>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(widget.ctaIcon, size: 17, color: accent),
+                widget.ctaLeading ??
+                    Icon(widget.ctaIcon, size: 17, color: accent),
                 const SizedBox(width: 9),
                 Flexible(
                   child: Text(

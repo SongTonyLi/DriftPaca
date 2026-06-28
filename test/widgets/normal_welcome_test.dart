@@ -1,13 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Pages/chat_page/subwidgets/model_brand_mark.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/normal_welcome.dart';
 
-Widget _host({String? model, VoidCallback? onSelect}) {
+OllamaModel _model(String name) => OllamaModel(
+      name: name,
+      model: name,
+      modifiedAt: DateTime(2024, 1, 1),
+      size: 0,
+      digest: 'digest-$name',
+      parameterSize: '8B',
+      family: name,
+    );
+
+Widget _host({OllamaModel? model, VoidCallback? onSelect}) {
   return MaterialApp(
     home: Scaffold(
       body: Center(
         child: NormalWelcome(
-          selectedModelName: model,
+          selectedModel: model,
           onSelectModel: onSelect ?? () {},
         ),
       ),
@@ -24,16 +36,20 @@ void main() {
     expect(find.text('WELCOME'), findsOneWidget);
     expect(find.text('Start a conversation'), findsOneWidget);
     expect(find.text('Select a model to start'), findsOneWidget);
+    // No model selected → no brand logo on the CTA.
+    expect(find.byType(ModelBrandMark), findsNothing);
 
     await tester.tap(find.text('Select a model to start'));
     expect(tapped, isTrue);
   });
 
-  testWidgets('shows the selected model name on the CTA', (tester) async {
-    await tester.pumpWidget(_host(model: 'qwen'));
+  testWidgets('shows the selected model name and its brand logo on the CTA',
+      (tester) async {
+    await tester.pumpWidget(_host(model: _model('qwen')));
     await tester.pumpAndSettle();
     expect(find.text('qwen'), findsOneWidget);
     expect(find.text('Select a model to start'), findsNothing);
+    expect(find.byType(ModelBrandMark), findsOneWidget);
   });
 
   testWidgets('settles to a static screen (no continuous animation)',

@@ -7,7 +7,7 @@ precision highp float;
 uniform vec4 uIdle;    // rgb, a=1
 uniform vec4 uCanvas;  // rgb, a=o (fade)
 uniform vec4 uB0; uniform vec4 uB1; uniform vec4 uB2;
-uniform vec4 uB3; uniform vec4 uB4; uniform vec4 uB5;  // xy=centre px, z=radius px, w=alpha
+uniform vec4 uB3; uniform vec4 uB4; uniform vec4 uB5;  // xy=centre px, z=1/radius², w=alpha
 uniform vec4 uC0; uniform vec4 uC1; uniform vec4 uC2;
 uniform vec4 uC3; uniform vec4 uC4; uniform vec4 uC5;  // rgb colour (w unused)
 
@@ -18,8 +18,13 @@ out vec4 fragColor;
 // so the six can be summed into coverage + coverage-weighted colour.
 vec4 blobField(vec2 p, vec4 b, vec4 c) {
   float d2 = dot(p - b.xy, p - b.xy);
-  float r = b.z;                               // radius comes fully-sized from Dart
-  float x = clamp(1.0 - d2 / (r * r), 0.0, 1.0);
+  // Dart precomputes 1 / radius² for the six blobs once per animation tick.
+  // This fragment path runs for every pixel, so replacing six per-pixel
+  // divisions with multiplies saves GPU work without changing the falloff.
+  // Keep this branchless: full-screen fragments execute in SIMD groups, and a
+  // per-blob early return can diverge at soft edges. clamp preserves the exact
+  // original field: outside the radius contributes 0, inside remains 1-d²/r².
+  float x = clamp(1.0 - d2 * b.z, 0.0, 1.0);
   float g = x * x * x * b.w;                    // weight; fades with o via b.w
   return vec4(c.rgb * g, g);
 }

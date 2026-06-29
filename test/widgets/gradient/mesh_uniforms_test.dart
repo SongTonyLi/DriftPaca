@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
@@ -29,13 +31,14 @@ void main() {
     expect(u[6], closeTo(mesh.canvas.b, 1e-6));
     expect(u[7], closeTo(0.6, 1e-6));
 
-    // uB0..uB5 — (cx, cy, r·scale, blob.opacity * opacity)
+    // uB0..uB5 — (cx, cy, 1/(r·scale)², blob.opacity * opacity)
     for (var i = 0; i < kBlobs.length; i++) {
       final p = blobPlacement(kBlobs[i], mesh.phase, size);
+      final radius = p.radius * kConvBlobScale;
       final base = 8 + i * 4;
       expect(u[base + 0], closeTo(p.center.dx, 1e-3));
       expect(u[base + 1], closeTo(p.center.dy, 1e-3));
-      expect(u[base + 2], closeTo(p.radius * kConvBlobScale, 1e-3));
+      expect(u[base + 2], closeTo(1 / (radius * radius), 1e-9));
       expect(u[base + 3], closeTo(kBlobs[i].opacity * mesh.opacity, 1e-6));
     }
 
@@ -72,10 +75,21 @@ void main() {
     expect(u[17], closeTo(800, 1e-3));
     expect(u[20], closeTo(400, 1e-3));
     expect(u[21], closeTo(800, 1e-3));
-    // Corner blobs have positive radius/alpha; slots 4 and 5 are unused (alpha 0).
+    // Corner blobs have positive inverse-radius/alpha; slots 4 and 5 are unused (alpha 0).
     expect(u[10], greaterThan(0.0));
+    expect(u[10], lessThan(1.0));
     expect(u[11], closeTo(0.9, 1e-6));
     expect(u[27], 0.0);
     expect(u[31], 0.0);
+  });
+
+  test('mesh shader blob field stays branchless in the per-pixel hot path', () {
+    final shader = File('shaders/mesh.frag').readAsStringSync();
+    final blobFieldBody = RegExp(
+      r'vec4 blobField\(vec2 p, vec4 b, vec4 c\) \{([\s\S]*?)\n\}',
+    ).firstMatch(shader)!.group(1)!;
+
+    expect(blobFieldBody, isNot(contains(RegExp(r'\bif\s*\('))));
+    expect(blobFieldBody, contains('clamp(1.0 - d2 * b.z, 0.0, 1.0)'));
   });
 }

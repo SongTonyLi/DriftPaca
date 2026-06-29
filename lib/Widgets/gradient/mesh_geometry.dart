@@ -19,8 +19,8 @@ class Mesh {
 class Blob {
   final double baseX, baseY, ampX, ampY, freqX, freqY, phaseX, phaseY, radius, opacity;
   final bool useA;
-  const Blob(this.baseX, this.baseY, this.ampX, this.ampY, this.freqX,
-      this.freqY, this.phaseX, this.phaseY, this.radius, this.opacity, this.useA);
+  const Blob(this.baseX, this.baseY, this.ampX, this.ampY, this.freqX, this.freqY, this.phaseX, this.phaseY,
+      this.radius, this.opacity, this.useA);
 }
 
 /// The six interleaved blobs (A: top-left, bottom-right, centre; B: the others)
@@ -56,17 +56,20 @@ class BlobPlacement {
 /// Identical math to the original `_MeshPainter`.
 BlobPlacement blobPlacement(Blob blob, double phase, Size size) {
   final short = size.shortestSide;
-  final cx = (blob.baseX + blob.ampX * math.sin(phase * blob.freqX + blob.phaseX)) *
-      size.width;
-  final cy = (blob.baseY + blob.ampY * math.cos(phase * blob.freqY + blob.phaseY)) *
-      size.height;
+  final cx = (blob.baseX + blob.ampX * math.sin(phase * blob.freqX + blob.phaseX)) * size.width;
+  final cy = (blob.baseY + blob.ampY * math.cos(phase * blob.freqY + blob.phaseY)) * size.height;
   final r = blob.radius * short * (1 + 0.10 * math.sin(phase * 0.6 + blob.phaseX));
   return BlobPlacement(Offset(cx, cy), r);
 }
 
 /// Packs the mesh's per-frame state into the uniform buffer that shaders/mesh.frag
 /// declares, in declaration order. Returns 56 floats:
-///   uIdle(rgb,1) · uCanvas(rgb,o) · 6×(cx,cy,r,alpha) · 6×(colour rgb,0).
+///   uIdle(rgb,1) · uCanvas(rgb,o) · 6×(cx,cy,1/r²,alpha) · 6×(colour rgb,0).
+///
+/// The shader evaluates every visible pixel, so we precompute each blob's
+/// inverse radius squared on the CPU once per animation tick. That turns the
+/// hottest fragment path from `distance² / (radius * radius)` into a multiply
+/// (`distance² * invRadius²`) without changing the field shape.
 /// The active mode decides the blobs: the welcome intro breathes four corner
 /// blobs; otherwise the six drifting mesh blobs (scaled up so they overlap into a
 /// near-full field with only thin dotted seams). Pure — unit-testable.
@@ -76,8 +79,14 @@ Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
   var k = 0;
   void w(double v) => u[k++] = v;
 
-  w(idle.r); w(idle.g); w(idle.b); w(1.0);
-  w(mesh.canvas.r); w(mesh.canvas.g); w(mesh.canvas.b); w(o);
+  w(idle.r);
+  w(idle.g);
+  w(idle.b);
+  w(1.0);
+  w(mesh.canvas.r);
+  w(mesh.canvas.g);
+  w(mesh.canvas.b);
+  w(o);
 
   final blobs = <(Offset, double, Color, double)>[]; // center, radius, colour, alpha
   if (mesh.welcome) {
@@ -89,9 +98,7 @@ Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
       Offset(size.width, size.height),
     ];
     for (var i = 0; i < 4; i++) {
-      final breathe = 1 +
-          kWelcomeBreatheAmt *
-              math.sin(mesh.phase * kWelcomeBreatheSpeed + i * 1.7);
+      final breathe = 1 + kWelcomeBreatheAmt * math.sin(mesh.phase * kWelcomeBreatheSpeed + i * 1.7);
       blobs.add((
         corners[i],
         kWelcomeCornerSize * short * breathe,
@@ -114,17 +121,30 @@ Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
   for (var i = 0; i < 6; i++) {
     if (i < blobs.length) {
       final b = blobs[i];
-      w(b.$1.dx); w(b.$1.dy); w(b.$2); w(b.$4);
+      final radius = math.max(b.$2, 1e-3);
+      w(b.$1.dx);
+      w(b.$1.dy);
+      w(1 / (radius * radius));
+      w(b.$4);
     } else {
-      w(0); w(0); w(1); w(0); // unused slot: radius 1 avoids /0, alpha 0 = no draw
+      w(0);
+      w(0);
+      w(1);
+      w(0); // unused slot: inv radius² 1, alpha 0 = no draw
     }
   }
   for (var i = 0; i < 6; i++) {
     if (i < blobs.length) {
       final c = blobs[i].$3;
-      w(c.r); w(c.g); w(c.b); w(0.0);
+      w(c.r);
+      w(c.g);
+      w(c.b);
+      w(0.0);
     } else {
-      w(0); w(0); w(0); w(0);
+      w(0);
+      w(0);
+      w(0);
+      w(0);
     }
   }
   return u;

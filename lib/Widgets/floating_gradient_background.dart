@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -45,6 +46,16 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   static const double _fadeOutPerSecond = 1 / 3.0;
   // Below this, a non-generating mesh is fully hidden and the ticker stops.
   static const double _hideEpsilon = 0.001;
+
+  // The glass frost is a Gaussian blur computed on a [_blurScale]-downscaled
+  // copy of the backdrop, then scaled back up. For a blur this soft the result
+  // is visually ~identical to a full-resolution sigma-[_blurSigma] blur, but the
+  // blur pass runs on ~_blurScale^2 of the pixels — cutting the dominant
+  // per-frame GPU cost of the full-bleed glass layer. The filter never changes,
+  // so build it once and reuse it.
+  static const double _blurSigma = 38.0;
+  static const double _blurScale = 0.5;
+  final ui.ImageFilter _frost = _downscaledBlur(_blurSigma, _blurScale);
 
   late final Ticker _ticker;
   final Mesh _mesh = Mesh();
@@ -200,13 +211,37 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     super.dispose();
   }
 
+  /// Builds a "downscale → blur → upscale" image filter: the [sigma] blur runs
+  /// on a copy of the backdrop shrunk by [scale] (so it touches ~scale^2 of the
+  /// pixels), then the result is scaled back up. For a soft blur this is
+  /// visually ~indistinguishable from a full-resolution blur at far less cost.
+  static ui.ImageFilter _downscaledBlur(double sigma, double scale) {
+    ui.ImageFilter scaleBy(double s) => ui.ImageFilter.matrix(
+          Float64List.fromList(<double>[
+            s, 0, 0, 0, //
+            0, s, 0, 0, //
+            0, 0, 1, 0, //
+            0, 0, 0, 1, //
+          ]),
+          filterQuality: ui.FilterQuality.low,
+        );
+    // compose applies `inner` first: shrink → blur → grow.
+    return ui.ImageFilter.compose(
+      outer: scaleBy(1 / scale),
+      inner: ui.ImageFilter.compose(
+        outer: ui.ImageFilter.blur(sigmaX: sigma * scale, sigmaY: sigma * scale),
+        inner: scaleBy(scale),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Frosted "glass" over the blobs lifts text legibility; it blurs only the
     // mesh (below it), never the content (which sits above this widget).
     final glass = IgnorePointer(
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 38, sigmaY: 38),
+        filter: _frost,
         child: Container(color: widget.idleColor.withValues(alpha: 0.12)),
       ),
     );

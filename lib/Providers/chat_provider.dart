@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:notification_centre/notification_centre.dart';
 
@@ -400,6 +401,21 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  // Approximates a "50 token" haptic cadence: Ollama only reports a real
+  // token count (eval_count) once the stream finishes, so mid-stream this
+  // counts characters instead, at ~4 chars/token (a common rule of thumb for
+  // English BPE tokenizers) — 50 tokens ~= 200 characters.
+  static const int _charsPerHapticBeat = 200;
+
+  /// A soft two-part "breath" haptic: two light impacts a beat apart, so each
+  /// pulse itself reads as a little inhale/exhale rather than a single tap.
+  void _pulseBreathHaptic() {
+    HapticFeedback.lightImpact();
+    Future.delayed(const Duration(milliseconds: 130), () {
+      HapticFeedback.lightImpact();
+    });
+  }
+
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat, {String? searchContext, String? preThinking, int searchAttemptsRemaining = 0, OllamaMessage? reuseMessage}) async {
     if (_messages.isEmpty) return null;
 
@@ -478,6 +494,7 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
     final notifyThrottle = Stopwatch()..start();
+    var charsSinceLastBeat = 0; // drives the token-synced breathing haptic below
 
     // Mid-stream WEBSEARCH detection: treat WEBSEARCH as a tool call.
     // When detected, content tokens become the search query (shown in the
@@ -586,6 +603,18 @@ class ChatProvider extends ChangeNotifier {
         if (notifyThrottle.elapsedMilliseconds >= 32) {
           notifyThrottle.reset();
           notifyListeners();
+        }
+      }
+
+      // Sync a soft "breathing" haptic to actual generation progress rather
+      // than a fixed clock: pulse every ~50 tokens of real streamed content,
+      // only for the chat currently on screen — background streams stay silent.
+      if (receivedMessage.content.isNotEmpty &&
+          associatedChat.id == currentChat?.id) {
+        charsSinceLastBeat += receivedMessage.content.length;
+        if (charsSinceLastBeat >= _charsPerHapticBeat) {
+          charsSinceLastBeat -= _charsPerHapticBeat;
+          _pulseBreathHaptic();
         }
       }
     }

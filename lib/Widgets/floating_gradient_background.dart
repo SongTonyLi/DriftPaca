@@ -14,9 +14,12 @@ import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
 /// fades back out to [idleColor] and the ticker stops, so an idle screen
 /// produces no frames at all. Place at the bottom of a Stack behind content.
 ///
-/// While generating it also emits a slow, soft haptic "beat" locked to the same
-/// drift clock as the blobs (see [_beatPhaseInterval]), so the device pulses
-/// gently in time with the floating-blob motion — and only while it moves.
+/// While generating it also emits a soft haptic "beat" locked to the same
+/// drift clock as the blobs (see [_beatIntervalMid]), and — like the blobs,
+/// whose six different frequencies keep their drift from ever feeling like a
+/// metronome — the beat's own cadence breathes faster and slower rather than
+/// ticking at one uniform rate, so the device pulses in a rhythm that feels
+/// like the floating-blob motion instead of a fixed click.
 class FloatingGradientBackground extends StatefulWidget {
   final Color meshA;
   final Color meshB;
@@ -52,13 +55,22 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   // Below this, a non-generating mesh is fully hidden and the ticker stops.
   static const double _hideEpsilon = 0.001;
 
-  // A slow haptic "beat" locked to the blobs' own phase clock: one soft pulse
-  // every [_beatPhaseInterval] radians of mesh phase, accrued from the very same
-  // increment that drifts the blobs. So the beat rides the floating motion —
-  // pacing a touch faster as the drift eases up to its generating speed, and
-  // pausing whenever the motion pauses — rather than running on an independent
-  // metronome. At the generating drift rate this lands a gentle pulse ~every 4s.
-  static const double _beatPhaseInterval = 2.4;
+  // A haptic "beat" locked to the blobs' own phase clock: one soft pulse every
+  // [_beatIntervalMid]±[_beatIntervalSwing] radians of mesh phase, accrued from
+  // the very same increment that drifts the blobs. So the beat rides the
+  // floating motion — pacing a touch faster as the drift eases up to its
+  // generating speed, and pausing whenever the motion pauses — rather than
+  // running on an independent metronome.
+  //
+  // The interval itself also breathes: it oscillates between
+  // _beatIntervalMid∓_beatIntervalSwing on a slow secondary wave of mesh phase,
+  // at [_beatWobbleFreq] — the same wobble rate the blobs' own radius-pulse
+  // rides in mesh_geometry.dart — so beats speed up and ease off much like the
+  // blobs' multi-frequency drift, instead of ticking at one uniform rate. At
+  // the generating drift rate this lands a pulse roughly every 1-2.4s.
+  static const double _beatIntervalMid = 1.0;
+  static const double _beatIntervalSwing = 0.4;
+  static const double _beatWobbleFreq = 0.6;
 
   // The glass frost is a Gaussian blur computed on a [_blurScale]-downscaled
   // copy of the backdrop, then scaled back up. For a blur this soft the result
@@ -81,7 +93,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   Duration _last = Duration.zero;
   bool _resetClock = false;
   double _speed = kRestDriftSpeed;
-  double _beatPhase = 0; // accrued mesh phase; a beat fires each _beatPhaseInterval
+  double _beatPhase = 0; // accrued mesh phase; a beat fires each time it reaches the current beatInterval
 
   // Welcome-screen intro: four corner blobs breathe briefly, then fade out.
   static const double _welcomeHoldSeconds = 5.0;
@@ -184,8 +196,10 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
       // Beat off the very same increment so the pulse stays in time with the
       // blobs; subtract (not zero) the interval to keep the cadence phase-locked.
       _beatPhase += dPhase;
-      if (_beatPhase >= _beatPhaseInterval) {
-        _beatPhase -= _beatPhaseInterval;
+      final beatInterval = _beatIntervalMid +
+          _beatIntervalSwing * math.sin(_mesh.phase * _beatWobbleFreq);
+      if (_beatPhase >= beatInterval) {
+        _beatPhase -= beatInterval;
         HapticFeedback.lightImpact();
       }
     } else if (_introActive) {

@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 import 'package:llamaseek/Utils/drift_speed.dart';
 import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
 
@@ -13,13 +12,6 @@ import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
 /// [meshA]/[meshB] over [canvas] slowly fade in; when generation stops the mesh
 /// fades back out to [idleColor] and the ticker stops, so an idle screen
 /// produces no frames at all. Place at the bottom of a Stack behind content.
-///
-/// While generating it also emits a soft haptic "beat" locked to the same
-/// drift clock as the blobs (see [_beatIntervalMid]), and — like the blobs,
-/// whose six different frequencies keep their drift from ever feeling like a
-/// metronome — the beat's own cadence breathes faster and slower rather than
-/// ticking at one uniform rate, so the device pulses in a rhythm that feels
-/// like the floating-blob motion instead of a fixed click.
 class FloatingGradientBackground extends StatefulWidget {
   final Color meshA;
   final Color meshB;
@@ -55,23 +47,6 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   // Below this, a non-generating mesh is fully hidden and the ticker stops.
   static const double _hideEpsilon = 0.001;
 
-  // A haptic "beat" locked to the blobs' own phase clock: one soft pulse every
-  // [_beatIntervalMid]±[_beatIntervalSwing] radians of mesh phase, accrued from
-  // the very same increment that drifts the blobs. So the beat rides the
-  // floating motion — pacing a touch faster as the drift eases up to its
-  // generating speed, and pausing whenever the motion pauses — rather than
-  // running on an independent metronome.
-  //
-  // The interval itself also breathes: it oscillates between
-  // _beatIntervalMid∓_beatIntervalSwing on a slow secondary wave of mesh phase,
-  // at [_beatWobbleFreq] — the same wobble rate the blobs' own radius-pulse
-  // rides in mesh_geometry.dart — so beats speed up and ease off much like the
-  // blobs' multi-frequency drift, instead of ticking at one uniform rate. At
-  // the generating drift rate this lands a pulse roughly every 1-2.4s.
-  static const double _beatIntervalMid = 1.0;
-  static const double _beatIntervalSwing = 0.4;
-  static const double _beatWobbleFreq = 0.6;
-
   // The glass frost is a Gaussian blur computed on a [_blurScale]-downscaled
   // copy of the backdrop, then scaled back up. For a blur this soft the result
   // is visually ~identical to a full-resolution sigma-[_blurSigma] blur, but the
@@ -93,7 +68,6 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   Duration _last = Duration.zero;
   bool _resetClock = false;
   double _speed = kRestDriftSpeed;
-  double _beatPhase = 0; // accrued mesh phase; a beat fires each time it reaches the current beatInterval
 
   // Welcome-screen intro: four corner blobs breathe briefly, then fade out.
   static const double _welcomeHoldSeconds = 5.0;
@@ -161,7 +135,6 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     if (widget.isGenerating && !old.isGenerating) {
       // Generation starts: wake the (conversation) mesh; cancel any welcome intro.
       _introActive = false;
-      _beatPhase = 0; // start this generation's beat fresh (first pulse ~one interval in)
       if (!_ticker.isActive) {
         _resetClock = true;
         _ticker.start();
@@ -191,17 +164,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
       _mesh.opacity = math.min(1.0, _mesh.opacity + dt * _fadeInPerSecond);
       _speed =
           easeDriftSpeed(_speed, targetDriftSpeed(isGenerating: true), dt);
-      final dPhase = dt * _baseRate * _speed;
-      _mesh.phase += dPhase;
-      // Beat off the very same increment so the pulse stays in time with the
-      // blobs; subtract (not zero) the interval to keep the cadence phase-locked.
-      _beatPhase += dPhase;
-      final beatInterval = _beatIntervalMid +
-          _beatIntervalSwing * math.sin(_mesh.phase * _beatWobbleFreq);
-      if (_beatPhase >= beatInterval) {
-        _beatPhase -= beatInterval;
-        HapticFeedback.lightImpact();
-      }
+      _mesh.phase += dt * _baseRate * _speed;
     } else if (_introActive) {
       // Welcome intro: appear, breathe the corners for the hold, then fade out.
       _mesh.welcome = true;

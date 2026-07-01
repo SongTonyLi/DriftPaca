@@ -97,7 +97,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('generating emits slow, soft haptic beats in time with the drift',
+  testWidgets(
+      'generating emits a breathing haptic beat in time with the drift',
       (tester) async {
     final haptics = _recordHaptics(tester);
     await tester.pumpWidget(_host(generating: true));
@@ -108,10 +109,12 @@ void main() {
         reason: 'a generating mesh should beat in time with the blobs');
     expect(haptics.every((h) => h == 'HapticFeedbackType.lightImpact'), isTrue,
         reason: 'the beat is a soft light impact');
-    // ~4s/beat → only a handful over 15s. The upper bound guards the "slow"
-    // intent: a fast metronome — or a per-frame bug — would fire far more.
-    expect(haptics.length, lessThan(8),
-        reason: 'the beat must stay a slow rhythm, not a buzz');
+    // The interval breathes roughly 1-2.4s/beat → ~6-15 beats over 15s. The
+    // bounds guard both directions: too few would mean the old slow-and-uniform
+    // cadence crept back in; a lot more would mean a fast metronome — or a
+    // per-frame bug — firing far more often than a breathing rhythm should.
+    expect(haptics.length, inInclusiveRange(5, 15),
+        reason: 'the beat must breathe, not run slow-and-uniform or buzz');
     expect(tester.takeException(), isNull);
   });
 

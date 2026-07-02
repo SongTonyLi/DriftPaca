@@ -49,7 +49,11 @@ class MemoryTopic {
 
   int get estimatedTokens => ((topicKey.length + content.length) / 4).ceil();
 
-  String toPromptEntry() => '- **[$topicKey]**: $content';
+  /// Injected into the model's context. Includes the last-updated date so the
+  /// model can discount stale, never-expiring topics against the current time
+  /// it also receives. See debug-context-pollution.md F3.
+  String toPromptEntry() =>
+      '- **[$topicKey]** (as of ${updatedAt.toIso8601String().substring(0, 10)}): $content';
 
   MemoryTopic copyWith({
     int? id,

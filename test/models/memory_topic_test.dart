@@ -46,9 +46,16 @@ void main() {
       expect(topic.estimatedTokens, 51);
     });
 
-    test('toPromptEntry formats as labeled block', () {
-      final topic = MemoryTopic(topicKey: 'physics', content: 'quantum stuff');
-      expect(topic.toPromptEntry(), '- **[physics]**: quantum stuff');
+    test('toPromptEntry stamps the last-updated date so stale topics are discountable', () {
+      final topic = MemoryTopic(
+        topicKey: 'physics',
+        content: 'quantum stuff',
+        updatedAt: DateTime(2026, 1, 15),
+      );
+      // A never-expiring topic must carry provenance; the agent-memory block
+      // injects "current time" so the model can judge staleness. See F3.
+      expect(topic.toPromptEntry(),
+          '- **[physics]** (as of 2026-01-15): quantum stuff');
     });
   });
 }

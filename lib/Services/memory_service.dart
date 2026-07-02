@@ -210,10 +210,11 @@ class MemoryService extends ChangeNotifier {
     if (_isUpdating) return;
 
     // Fire and forget
-    _performUpdate(chatId: chatId, messages: messages, skipAgentMemory: skipAgentMemory);
+    performUpdate(chatId: chatId, messages: messages, skipAgentMemory: skipAgentMemory);
   }
 
-  Future<void> _performUpdate({
+  @visibleForTesting
+  Future<void> performUpdate({
     required String chatId,
     required List<OllamaMessage> messages,
     bool skipAgentMemory = false,
@@ -225,17 +226,20 @@ class MemoryService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Only send recent messages to the summarizer
-      final recentMessages = messages.length > MemoryConstants.recentMessagesToKeep
-          ? messages.sublist(messages.length - MemoryConstants.recentMessagesToKeep)
-          : messages;
-      final messagesText = _formatMessagesForPrompt(recentMessages);
-
-      // Get existing memories
+      // Fetch existing memories first — the coverage marker tells us where the
+      // summary currently ends, so we ingest exactly the un-summarized tail and
+      // never leave a gap. See debug-context-pollution.md F2.
       final existingConvMemory = await getConversationMemory(chatId);
       final existingProfile = await getAgentMemory();
       final existingTopics = await getTopics();
       final existingEphemeral = await getEphemeralContexts();
+
+      final startIndex = existingConvMemory?.summarizedMessageCount ?? 0;
+      final messagesToSummarize =
+          (startIndex > 0 && startIndex < messages.length)
+              ? messages.sublist(startIndex)
+              : messages;
+      final messagesText = _formatMessagesForPrompt(messagesToSummarize);
 
       // Cleanup expired ephemeral entries
       await _db.cleanupExpiredEphemeral();
@@ -262,8 +266,13 @@ class MemoryService extends ChangeNotifier {
       }
       _lastError = null;
 
-      // Parse and save
-      await _parseAndSave(chatId, responseBody, skipAgentMemory: skipAgentMemory);
+      // Declare the summary authoritative for everything except the recent
+      // window, which stays in the raw send window. See debug-context-pollution.md F2.
+      final newCoverage = messages.length > MemoryConstants.recentMessagesToKeep
+          ? messages.length - MemoryConstants.recentMessagesToKeep
+          : 0;
+      await parseAndSave(chatId, responseBody,
+          skipAgentMemory: skipAgentMemory, summarizedThrough: newCoverage);
     } catch (e) {
       debugPrint('MemoryService update failed: $e');
     } finally {
@@ -310,21 +319,29 @@ class MemoryService extends ChangeNotifier {
     }
   }
 
-  Future<void> _parseAndSave(String chatId, String responseBody, {bool skipAgentMemory = false}) async {
+  @visibleForTesting
+  Future<void> parseAndSave(String chatId, String responseBody,
+      {bool skipAgentMemory = false, int? summarizedThrough}) async {
     try {
       final parsed = _extractJson(responseBody);
       if (parsed == null) {
-        // JSON parsing failed — store raw text as conversation memory summary
-        final convMemory = ConversationMemory(summary: responseBody);
-        _conversationMemoryCache[chatId] = convMemory;
-        _db.updateConversationMemory(chatId, convMemory);
+        // Non-JSON response: keep the last good memory instead of storing raw
+        // model output verbatim. Prose, meta-commentary, or half-JSON would be
+        // injected as authoritative "Conversation Context" and hallucinated as
+        // fact. See debug-context-pollution.md F1.
+        debugPrint(
+            'MemoryService: non-JSON memory response ignored (kept prior memory)');
         return;
       }
 
       // Parse conversation memory
       final convMap = parsed['conversation_memory'] as Map<String, dynamic>?;
       if (convMap != null) {
-        final convMemory = ConversationMemory.fromMap(convMap);
+        var convMemory = ConversationMemory.fromMap(convMap);
+        if (summarizedThrough != null) {
+          convMemory =
+              convMemory.copyWith(summarizedMessageCount: summarizedThrough);
+        }
         _conversationMemoryCache[chatId] = convMemory;
         _db.updateConversationMemory(chatId, convMemory);
       }
@@ -383,11 +400,9 @@ class MemoryService extends ChangeNotifier {
         _ephemeralCache = null; // Invalidate cache
       }
     } catch (e) {
-      debugPrint('MemoryService _parseAndSave failed: $e');
-      // Fallback: store raw text as conversation memory summary
-      final convMemory = ConversationMemory(summary: responseBody);
-      _conversationMemoryCache[chatId] = convMemory;
-      _db.updateConversationMemory(chatId, convMemory);
+      // Do NOT fall back to storing raw text — that pollutes the conversation
+      // summary with unstructured model output. Keep the last good memory.
+      debugPrint('MemoryService parseAndSave failed (kept prior memory): $e');
     }
   }
 

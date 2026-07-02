@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:llamaseek/Constants/memory_constants.dart';
@@ -188,7 +189,7 @@ class OllamaService {
       headers: headers,
       body: json.encode({
         "model": chat.model,
-        "messages": await _prepareMessagesWithSystemPrompt(
+        "messages": await prepareMessagesWithSystemPrompt(
           messages, chat.systemPrompt,
           conversationMemory: conversationMemory,
           profile: profile,
@@ -231,7 +232,7 @@ class OllamaService {
       supportsVision = _capabilitiesCache[chat.model]?.vision ?? true;
     }
 
-    final preparedMessages = await _prepareMessagesWithSystemPrompt(
+    final preparedMessages = await prepareMessagesWithSystemPrompt(
       messages, chat.systemPrompt,
       conversationMemory: conversationMemory,
       profile: profile,
@@ -260,7 +261,7 @@ class OllamaService {
       if (body.contains('image')) {
         _capabilitiesCache[chat.model] = const ModelCapabilities();
 
-        final retryMessages = await _prepareMessagesWithSystemPrompt(
+        final retryMessages = await prepareMessagesWithSystemPrompt(
           messages, chat.systemPrompt,
           conversationMemory: conversationMemory,
           profile: profile,
@@ -326,7 +327,8 @@ class OllamaService {
   // so the receiving model understands multi-model conversation context.
   // When memory is available and the conversation is long, only the most
   // recent messages are kept (the memory summary covers older context).
-  Future<List<Map<String, dynamic>>> _prepareMessagesWithSystemPrompt(
+  @visibleForTesting
+  Future<List<Map<String, dynamic>>> prepareMessagesWithSystemPrompt(
     List<OllamaMessage> messages,
     String? systemPrompt, {
     ConversationMemory? conversationMemory,
@@ -335,11 +337,17 @@ class OllamaService {
     String? currentModel,
     bool supportsVision = true,
   }) async {
-    // Determine which messages to send
-    final hasMemory = conversationMemory != null && !conversationMemory.isEmpty;
-    final messagesToProcess = hasMemory && messages.length > MemoryConstants.recentMessagesToKeep
-        ? messages.sublist(messages.length - MemoryConstants.recentMessagesToKeep)
-        : messages;
+    // Coverage-based window: send raw everything the conversation summary does
+    // NOT cover, so a lagging summary yields a larger — never lossy — context
+    // instead of silently dropping the messages between the summary and the
+    // recent window. See debug-context-pollution.md F2.
+    int coveredCount = 0;
+    if (conversationMemory != null && !conversationMemory.isEmpty) {
+      final c = conversationMemory.summarizedMessageCount;
+      if (c > 0 && c < messages.length) coveredCount = c;
+    }
+    final messagesToProcess =
+        coveredCount > 0 ? messages.sublist(coveredCount) : messages;
 
     // Detect if multiple models are used in the conversation
     final modelNames = messagesToProcess
@@ -362,11 +370,16 @@ class OllamaService {
         msgJson = {
           "role": m.role.name,
           "content": '$tag\n${m.content}',
-          if (m.thinking != null) "thinking": m.thinking,
         };
       } else {
         msgJson = await m.toChatJson();
       }
+
+      // Never re-send prior reasoning or the persisted <!--SEARCH_DATA:…--> blob
+      // to the model — history should carry only the visible answer. The stored
+      // copy (decoded by the UI think-block / search card) keeps `thinking`.
+      // See debug-context-pollution.md F4.
+      msgJson.remove('thinking');
 
       // Only annotate assistant messages from a DIFFERENT model in multi-model chats
       // Use system-style annotation that models are less likely to copy
@@ -389,9 +402,13 @@ class OllamaService {
       systemParts.add(systemPrompt);
     }
 
-    // Inject memories if available
+    // Inject memories if available. The conversation summary is only useful
+    // when it covers messages that are NOT in the raw window above; when the
+    // whole conversation is sent raw (coveredCount == 0) the summary would just
+    // duplicate it, so skip it. See debug-context-pollution.md F2.
     final profileBlock = profile?.toPromptBlock() ?? '';
-    final convBlock = conversationMemory?.toPromptBlock() ?? '';
+    final convBlock =
+        coveredCount > 0 ? (conversationMemory?.toPromptBlock() ?? '') : '';
     if (profileBlock.isNotEmpty || relevantContext.isNotEmpty || convBlock.isNotEmpty) {
       systemParts.add(MemoryConstants.buildMemoryInjection(
         profileBlock: profileBlock,

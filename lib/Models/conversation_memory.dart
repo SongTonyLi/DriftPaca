@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:llamaseek/Constants/memory_constants.dart';
+
 class ConversationMemory {
   final String summary;
   final String keyContext;
@@ -9,6 +11,12 @@ class ConversationMemory {
   final String unresolvedItems;
   final String errorsAndSolutions;
   final String userRequests;
+
+  /// Number of leading conversation messages represented by this summary.
+  /// The send path sends messages from this index onward raw, so no
+  /// unsummarized message is ever dropped. See debug-context-pollution.md F2.
+  final int summarizedMessageCount;
+
   final DateTime updatedAt;
 
   ConversationMemory({
@@ -20,6 +28,7 @@ class ConversationMemory {
     this.unresolvedItems = '',
     this.errorsAndSolutions = '',
     this.userRequests = '',
+    this.summarizedMessageCount = 0,
     DateTime? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now();
 
@@ -60,6 +69,7 @@ class ConversationMemory {
       unresolvedItems: _asString(map['unresolved_items']),
       errorsAndSolutions: _asString(map['errors_and_solutions']),
       userRequests: _asString(map['user_requests']),
+      summarizedMessageCount: map['summarized_message_count'] as int? ?? 0,
       updatedAt: map['updated_at'] != null
           ? DateTime.fromMillisecondsSinceEpoch(map['updated_at'])
           : null,
@@ -76,6 +86,7 @@ class ConversationMemory {
       'unresolved_items': unresolvedItems,
       'errors_and_solutions': errorsAndSolutions,
       'user_requests': userRequests,
+      'summarized_message_count': summarizedMessageCount,
       'updated_at': updatedAt.millisecondsSinceEpoch,
     });
   }
@@ -89,6 +100,7 @@ class ConversationMemory {
     String? unresolvedItems,
     String? errorsAndSolutions,
     String? userRequests,
+    int? summarizedMessageCount,
   }) {
     return ConversationMemory(
       summary: summary ?? this.summary,
@@ -99,6 +111,8 @@ class ConversationMemory {
       unresolvedItems: unresolvedItems ?? this.unresolvedItems,
       errorsAndSolutions: errorsAndSolutions ?? this.errorsAndSolutions,
       userRequests: userRequests ?? this.userRequests,
+      summarizedMessageCount:
+          summarizedMessageCount ?? this.summarizedMessageCount,
     );
   }
 
@@ -124,6 +138,17 @@ class ConversationMemory {
     if (errorsAndSolutions.isNotEmpty) sections.add('- **Errors & Solutions**: $errorsAndSolutions');
     if (modelHistory.isNotEmpty) sections.add('- **Model History**: $modelHistory');
     if (unresolvedItems.isNotEmpty) sections.add('- **Unresolved Items**: $unresolvedItems');
-    return sections.join('\n');
+    return _capToBudget(sections.join('\n'));
+  }
+
+  /// Bounds the injected block so a runaway cumulative summary can't dominate
+  /// the model's context window and crowd out real messages.
+  /// See debug-context-pollution.md F1.
+  static String _capToBudget(String text) {
+    const marker = '\n…[memory truncated]';
+    final maxChars = MemoryConstants.maxConversationMemoryTokens * 4;
+    if (text.length <= maxChars) return text;
+    final keep = (maxChars - marker.length).clamp(0, text.length);
+    return '${text.substring(0, keep)}$marker';
   }
 }

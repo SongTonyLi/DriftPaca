@@ -401,11 +401,11 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  // Approximates a "50 token" haptic cadence: Ollama only reports a real
+  // Approximates a "20 token" haptic cadence: Ollama only reports a real
   // token count (eval_count) once the stream finishes, so mid-stream this
   // counts characters instead, at ~4 chars/token (a common rule of thumb for
-  // English BPE tokenizers) — 50 tokens ~= 200 characters.
-  static const int _charsPerHapticBeat = 200;
+  // English BPE tokenizers) — 20 tokens ~= 80 characters.
+  static const int _charsPerHapticBeat = 80;
 
   /// A soft two-part "breath" haptic: two light impacts a beat apart, so each
   /// pulse itself reads as a little inhale/exhale rather than a single tap.

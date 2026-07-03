@@ -188,11 +188,39 @@ class _ChatBubbleBody extends StatelessWidget {
     return buffer.toString();
   }
 
+  /// Matches `\tag{...}` / `\tag*{...}` — LaTeX equation numbering that
+  /// flutter_math_fork does not support (it expands to an undefined `\gdef`
+  /// and throws, dropping the whole equation to the raw-source fallback).
+  static final _latexTagPattern = RegExp(r'\\tag(\*)?\s*\{([^{}]*)\}');
+
   static String _replaceLatexDelimiters(String text) {
+    // Rewrite unsupported `\tag{...}` to a rendered, spaced equation number
+    // so the equation renders instead of erroring:
+    //   \tag{1}  → \quad(1)      \tag*{✦} → \quad{✦}
+    // The starred form shows the label verbatim (no added parentheses),
+    // mirroring amsmath semantics.
+    text = text.replaceAllMapped(_latexTagPattern, (m) {
+      final body = m[2] ?? '';
+      return m[1] != null ? '\\quad{$body}' : '\\quad($body)';
+    });
     // Convert \[...\] to $$...$$ (only when both delimiters present)
     text = text.replaceAllMapped(
       RegExp(r'\\\[([\s\S]*?)\\\]'),
-      (m) => '\$\$${m[1]}\$\$',
+      (m) {
+        final inner = m[1]!;
+        // A multi-line \[...\] is a display block. LatexBlockSyntax only
+        // recognizes a *bare* `$$` line (its pattern is `^\$\$(?:\n|$)`), so
+        // the delimiters must sit on their own lines with no trailing
+        // whitespace. Source ending in `\]  ` (a trailing hard-break) would
+        // otherwise become `$$  ` — which the block parser fails to match as
+        // the close, so it swallows every following paragraph into one broken
+        // equation. Emitting bare delimiter lines padded by blank lines keeps
+        // the block self-contained.
+        if (inner.contains('\n')) {
+          return '\n\n\$\$\n${inner.trim()}\n\$\$\n\n';
+        }
+        return '\$\$$inner\$\$';
+      },
     );
     // Convert \(...\) to $...$
     text = text.replaceAllMapped(

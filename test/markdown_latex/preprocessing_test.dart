@@ -442,4 +442,73 @@ void main() {
       expect(find.byType(Math), findsNWidgets(3));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Regression: multi-line \[...\] display blocks with \tag{} and trailing
+  // hard-breaks (DeepSeek "薛定谔方程与质能方程" pattern). The block close
+  // `\]  ` became `$$  ` (trailing whitespace) which LatexBlockSyntax refused
+  // to match, so the block swallowed every following paragraph; and each
+  // \tag{} threw (unsupported), dropping equations to the raw-source fallback.
+  // ---------------------------------------------------------------------------
+  group('display block over-consumption + \\tag', () {
+    testWidgets(r'\tag{1} in multi-line \[...\] block renders, no raw fallback', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '**薛定谔方程**\n'
+        '\\[\n'
+        r'i\hbar\frac{\partial}{\partial t}\Psi = \left[ -\frac{\hbar^2}{2m}\nabla^2 + V \right] \Psi'
+        '\n'
+        r'\tag{1}'
+        '\n'
+        '\\]  \n'
+        '它基于经典的能量-动量关系。',
+      );
+      expect(nonOverflowErrors(errors), isEmpty);
+      // Equation renders as math (not the raw-source fallback).
+      expect(find.byType(Math), findsOneWidget);
+      // No raw `$$` delimiters leak into the visible text — that would mean
+      // the fallback renderer showed the source.
+      expect(find.textContaining(r'$$'), findsNothing);
+      // The paragraph following the block survives as prose (was swallowed
+      // into the over-consumed block before the fix).
+      expect(find.textContaining('它基于经典的能量-动量关系'), findsOneWidget);
+    });
+
+    testWidgets(r'two consecutive \[...\] blocks with \tag do not merge', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '\\[\n'
+        r'E = \frac{p^2}{2m} + V'
+        '\n'
+        r'\tag{2}'
+        '\n'
+        '\\]  \n'
+        '中间的说明文字。  \n'
+        '\\[\n'
+        r'E^2 = p^2c^2 + m^2c^4'
+        '\n'
+        r'\tag{4}'
+        '\n'
+        '\\]  \n'
+        '结尾说明。',
+      );
+      expect(nonOverflowErrors(errors), isEmpty);
+      // Both display equations render independently.
+      expect(find.byType(Math), findsNWidgets(2));
+      expect(find.textContaining(r'$$'), findsNothing);
+      // Prose between and after the blocks is preserved, not consumed.
+      expect(find.textContaining('中间的说明文字'), findsOneWidget);
+      expect(find.textContaining('结尾说明'), findsOneWidget);
+    });
+
+    testWidgets(r'\tag*{★} starred form renders the label verbatim', (tester) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        r'$$E = mc^2 \tag*{\star}$$',
+      );
+      expect(nonOverflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsOneWidget);
+      expect(find.textContaining(r'$$'), findsNothing);
+    });
+  });
 }

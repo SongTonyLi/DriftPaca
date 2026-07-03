@@ -48,6 +48,13 @@ class _ChatListViewState extends State<ChatListView> {
   final Map<String, Widget> _bubbleCache = {};
   final Set<String> _animatedMessageIds = {};
 
+  /// Test seam: the message IDs currently held in [_bubbleCache]. Used to
+  /// assert that stale cache entries are pruned after an in-place message
+  /// list mutation (regenerate/delete), which has no observable effect on
+  /// the rendered widget tree and so cannot be verified any other way.
+  @visibleForTesting
+  Set<String> get debugCachedBubbleIds => _bubbleCache.keys.toSet();
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +80,12 @@ class _ChatListViewState extends State<ChatListView> {
     if (!identical(widget.messages, oldWidget.messages)) {
       _bubbleCache.clear();
       _animatedMessageIds.clear();
+    } else {
+      // Same list object, mutated in place (e.g. regenerate/delete remove a
+      // range of messages to preserve list identity). putIfAbsent only ever
+      // adds, so entries for removed messages would leak until the next chat
+      // switch — prune them down to the messages still present.
+      _pruneStaleCacheEntries();
     }
 
     // Add to the post frame callback to ensure that the scroll offset is
@@ -82,6 +95,16 @@ class _ChatListViewState extends State<ChatListView> {
       // regenerates a message or delete a message.
       _updateScrollToBottomButtonVisibility();
     });
+  }
+
+  /// Drops cached bubble widgets (and animation bookkeeping) for messages that
+  /// are no longer present in [widget.messages]. Called when the list object is
+  /// mutated in place, where the identity check in [didUpdateWidget] cannot tell
+  /// that entries have been removed.
+  void _pruneStaleCacheEntries() {
+    final currentIds = widget.messages.map((m) => m.id).toSet();
+    _bubbleCache.removeWhere((id, _) => !currentIds.contains(id));
+    _animatedMessageIds.removeWhere((id) => !currentIds.contains(id));
   }
 
   @override

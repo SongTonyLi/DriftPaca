@@ -659,13 +659,16 @@ void main() {
       expect(find.byType(Math), findsOneWidget);
     });
 
-    testWidgets('model uses \\tag for equation numbering — known limitation', (tester) async {
-      // KNOWN ISSUE: \tag is not supported by flutter_math_fork.
-      // It produces a parse error that gets caught by the fallback renderer.
+    testWidgets('model uses \\tag for equation numbering renders', (tester) async {
+      // \tag is unsupported by flutter_math_fork (it expands to an undefined
+      // \gdef and throws), so the preprocessor rewrites \tag{1} → \quad(1)
+      // and the equation renders instead of falling back to raw source.
       final errors = await pumpBubbleAndCollectErrors(
         tester,
         r'$$E = mc^2 \tag{1}$$' '\n\n' r'From equation $\text{(1)}$ we see...',
       );
+      expect(nonOverflowErrors(errors), isEmpty);
+      expect(find.byType(Math), findsNWidgets(2));
     });
 
     testWidgets('model mixes asterisk bold with LaTeX', (tester) async {

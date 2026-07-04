@@ -17,13 +17,13 @@ GradientPair readGradientPair(Box box) {
   }
   final legacy = box.get(kLegacyAccentKey);
   if (legacy is Color) {
-    return GradientPair(Color(legacy.value), kGradientPresets.first.c2);
+    return GradientPair(Color(legacy.toARGB32()), kGradientPresets.first.c2);
   }
   return kGradientPresets.first;
 }
 
 /// Persist [pair] as ARGB ints under the bgColor keys.
 void writeGradientPair(Box box, GradientPair pair) {
-  box.put(kBgColor1Key, pair.c1.value);
-  box.put(kBgColor2Key, pair.c2.value);
+  box.put(kBgColor1Key, pair.c1.toARGB32());
+  box.put(kBgColor2Key, pair.c2.toARGB32());
 }

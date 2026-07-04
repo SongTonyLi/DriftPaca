@@ -173,13 +173,16 @@ class _ChatBubbleBody extends StatelessWidget {
     );
   }
 
+  /// Matches a fenced or inline code span — used to skip preprocessing inside
+  /// code, where `$`, `**`, and `\(...\)` are literal source.
+  static final _codeSpanPattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
+
   /// Converts \(...\) to $...$ and \[...\] to $$...$$ for LaTeX parsing,
   /// skipping content inside code fences and inline code.
   static String _preprocessLatex(String content) {
     final buffer = StringBuffer();
     int pos = 0;
-    final codePattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
-    for (final match in codePattern.allMatches(content)) {
+    for (final match in _codeSpanPattern.allMatches(content)) {
       buffer.write(_replaceLatexDelimiters(content.substring(pos, match.start)));
       buffer.write(match.group(0));
       pos = match.end;
@@ -347,8 +350,7 @@ class _ChatBubbleBody extends StatelessWidget {
   static String _escapeCurrencyDollars(String content) {
     final buffer = StringBuffer();
     int pos = 0;
-    final codePattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
-    for (final match in codePattern.allMatches(content)) {
+    for (final match in _codeSpanPattern.allMatches(content)) {
       buffer.write(_escapeCurrencyInText(content.substring(pos, match.start)));
       buffer.write(match.group(0));
       pos = match.end;
@@ -449,8 +451,7 @@ class _ChatBubbleBody extends StatelessWidget {
   static String _fixEmphasisFlanking(String content) {
     final buffer = StringBuffer();
     int pos = 0;
-    final codePattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
-    for (final match in codePattern.allMatches(content)) {
+    for (final match in _codeSpanPattern.allMatches(content)) {
       buffer.write(_insertFlankingZwsp(content.substring(pos, match.start)));
       buffer.write(match.group(0));
       pos = match.end;
@@ -668,6 +669,23 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   }
 
   @override
+  void initState() {
+    super.initState();
+    _targetContent = widget.message.content;
+    _targetThinking = _displayThinking(widget.message.thinking);
+    // Show whatever content is already present on creation as an immediate
+    // head start, so the bubble isn't blank until didUpdateWidget fires on the
+    // next token. The ticker then reveals only tokens that arrive afterwards.
+    _revealedLength = _targetContent.length;
+    _revealedThinkingLength = _targetThinking.length;
+    _revealProgress = _revealedLength.toDouble();
+    _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+    if (widget.isStreaming) {
+      _ensureRevealTicker();
+    }
+  }
+
+  @override
   void didUpdateWidget(_AssistantBubble old) {
     super.didUpdateWidget(old);
     final nextThinking = _displayThinking(widget.message.thinking);
@@ -844,10 +862,25 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     return widgets;
   }
 
+  /// Rewinds a reveal cursor by one code unit when it lands between the two
+  /// halves of a UTF-16 surrogate pair, so [String.substring] never emits an
+  /// orphaned high surrogate (which renders as a tofu box for one frame).
+  int _surrogateSafeLength(String text, int length) {
+    if (length <= 0) return length;
+    final safe = length > text.length ? text.length : length;
+    final unit = text.codeUnitAt(safe - 1);
+    // A high surrogate (0xD800–0xDBFF) as the last included unit leaves its low
+    // half outside the cut — whether the low half exists further along (a
+    // mid-reveal boundary) or the target itself ends mid-pair (a stream chunk
+    // split across a code point). Cut before the high surrogate in both cases.
+    return (unit >= 0xD800 && unit <= 0xDBFF) ? safe - 1 : safe;
+  }
+
   Widget _buildMessageContent(BuildContext context) {
     final content = _isRevealing
         ? _ChatBubbleBody._hideIncompleteLinks(
-            _targetContent.substring(0, _revealedLength))
+            _targetContent.substring(
+                0, _surrogateSafeLength(_targetContent, _revealedLength)))
         : widget.message.content;
 
     final segments = _getSearchSegments();
@@ -856,7 +889,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     final displayThinking = _displayThinking(widget.message.thinking);
     if (displayThinking.isNotEmpty) {
       final thinkingContent = _isRevealing
-          ? _targetThinking.substring(0, _revealedThinkingLength)
+          ? _targetThinking.substring(
+              0, _surrogateSafeLength(_targetThinking, _revealedThinkingLength))
           : displayThinking;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1223,7 +1257,7 @@ class _EditPopupContentState extends State<_EditPopupContent> {
 /// WidgetSpan elements don't follow \n line breaks correctly — they
 /// float to the previous line instead of staying with their text.
 class _InlineHtmlBrSyntax extends md.InlineSyntax {
-  _InlineHtmlBrSyntax() : super(r'<br\s*/?>');
+  _InlineHtmlBrSyntax() : super(r'<br\s*/?>', startCharacter: 0x3C);
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {

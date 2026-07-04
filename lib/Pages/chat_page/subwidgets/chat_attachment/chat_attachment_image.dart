@@ -21,6 +21,7 @@ class ChatAttachmentImage extends StatelessWidget {
       children: [
         ChatImage(
           image: FileImage(imageFile),
+          aspectRatio: 1.5,
           height: MediaQuery.of(context).size.height * previewHeightFactor,
         ),
         Positioned(
@@ -28,10 +29,17 @@ class ChatAttachmentImage extends StatelessWidget {
           right: 2,
           child: InkWell(
             onTap: () => onRemove(imageFile),
-            child: Icon(
-              Icons.close,
-              color: Colors.white,
-              shadows: [BoxShadow(blurRadius: 10)],
+            customBorder: const CircleBorder(),
+            child: const SizedBox(
+              width: 48,
+              height: 48,
+              child: Center(
+                child: Icon(
+                  Icons.close,
+                  color: Colors.white,
+                  shadows: [BoxShadow(blurRadius: 10)],
+                ),
+              ),
             ),
           ),
         ),

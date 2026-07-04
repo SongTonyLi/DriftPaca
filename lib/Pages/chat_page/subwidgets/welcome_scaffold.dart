@@ -94,9 +94,8 @@ class _WelcomeScaffoldState extends State<WelcomeScaffold>
 
   /// Fade + rise [child] over the [start, end] slice of the entrance.
   Widget _stagger(double start, double end, Widget child) {
-    final anim = CurvedAnimation(
-      parent: _entrance,
-      curve: Interval(start, end, curve: Curves.easeOutCubic),
+    final anim = _entrance.drive(
+      CurveTween(curve: Interval(start, end, curve: Curves.easeOutCubic)),
     );
     return AnimatedBuilder(
       animation: anim,

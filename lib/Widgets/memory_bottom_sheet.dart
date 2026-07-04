@@ -29,7 +29,7 @@ Future<void> showMemoryBottomSheet(
   // Tabbed mode (agent memory)
   List<MemorySection>? profileSections,
   void Function(List<MemorySection> updatedSections)? onSaveProfile,
-  Future<void> Function(MemoryTopic topic)? onSaveTopic,
+  Future<MemoryTopic> Function(MemoryTopic topic)? onSaveTopic,
   Future<void> Function(int id)? onDeleteTopic,
   Future<void> Function(EphemeralContext ctx)? onSaveEphemeral,
   Future<void> Function(int id)? onDeleteEphemeral,
@@ -155,6 +155,9 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final warningColor = colorScheme.brightness == Brightness.dark
+        ? const Color(0xFFFFB74D)
+        : const Color(0xFFB45309);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -281,12 +284,12 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
                       child: Row(
                         children: [
-                          Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                          Icon(Icons.warning_amber, size: 16, color: warningColor),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'Memory exceeds token limit. Reduce content or it will be auto-resummarized.',
-                              style: TextStyle(fontSize: 12, color: Colors.orange),
+                              style: TextStyle(fontSize: 12, color: warningColor),
                             ),
                           ),
                         ],
@@ -313,6 +316,7 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                           ? _buildEmptyState(colorScheme)
                           : ListView.separated(
                                   key: const ValueKey('all'),
+                                  controller: scrollController,
                                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
                                   itemCount: _sections.length,
                                   separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -619,6 +623,7 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
               section.value,
               MemoryConstants.maxPerSectionTokens,
             );
+            if (!mounted) return;
             if (condensed != null) {
               setState(() {
                 section.value = condensed;
@@ -670,7 +675,7 @@ class _TabbedMemorySheet extends StatefulWidget {
   final List<MemorySection> profileSections;
   final int maxTotalTokens;
   final void Function(List<MemorySection> updatedSections) onSaveProfile;
-  final Future<void> Function(MemoryTopic topic) onSaveTopic;
+  final Future<MemoryTopic> Function(MemoryTopic topic) onSaveTopic;
   final Future<void> Function(int id) onDeleteTopic;
   final Future<void> Function(EphemeralContext ctx) onSaveEphemeral;
   final Future<void> Function(int id) onDeleteEphemeral;
@@ -720,6 +725,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(_onTabChanged);
     _profileSections = widget.profileSections
         .map((s) => MemorySection(label: s.label, key: s.key, value: s.value, readOnly: s.readOnly))
         .toList();
@@ -732,8 +738,13 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (mounted) setState(() {});
   }
 
   bool get _profileHasContent =>
@@ -756,6 +767,9 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final warningColor = colorScheme.brightness == Brightness.dark
+        ? const Color(0xFFFFB74D)
+        : const Color(0xFFB45309);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -885,12 +899,12 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
                   child: Row(
                     children: [
-                      Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                      Icon(Icons.warning_amber, size: 16, color: warningColor),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Profile exceeds token limit. Reduce content or it will be auto-resummarized.',
-                          style: TextStyle(fontSize: 12, color: Colors.orange),
+                          style: TextStyle(fontSize: 12, color: warningColor),
                         ),
                       ),
                     ],
@@ -899,7 +913,6 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               // Tab bar
               TabBar(
                 controller: _tabController,
-                onTap: (_) => setState(() {}),
                 labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                 unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400),
                 indicatorSize: TabBarIndicatorSize.label,
@@ -915,9 +928,18 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                 child: TabBarView(
                   controller: _tabController,
                   children: [
-                    _buildProfileTab(colorScheme),
-                    _buildTopicsTab(colorScheme),
-                    _buildEphemeralTab(colorScheme),
+                    _buildProfileTab(
+                      colorScheme,
+                      _tabController.index == 0 ? scrollController : null,
+                    ),
+                    _buildTopicsTab(
+                      colorScheme,
+                      _tabController.index == 1 ? scrollController : null,
+                    ),
+                    _buildEphemeralTab(
+                      colorScheme,
+                      _tabController.index == 2 ? scrollController : null,
+                    ),
                   ],
                 ),
               ),
@@ -966,13 +988,14 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
 
   // ---- Profile tab ----
 
-  Widget _buildProfileTab(ColorScheme colorScheme) {
+  Widget _buildProfileTab(ColorScheme colorScheme, ScrollController? scrollController) {
     if (_profileViewMode == null) {
       return _buildProfileEmptyState(colorScheme);
     }
     // -1 = show all
     return ListView.separated(
       key: const ValueKey('profile_all'),
+      controller: scrollController,
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       itemCount: _profileSections.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -1211,7 +1234,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
 
   // ---- Topics tab ----
 
-  Widget _buildTopicsTab(ColorScheme colorScheme) {
+  Widget _buildTopicsTab(ColorScheme colorScheme, ScrollController? scrollController) {
     if (_topics.isEmpty) {
       return Center(
         child: Padding(
@@ -1257,6 +1280,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
     return Stack(
       children: [
         ListView.separated(
+          controller: scrollController,
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 80),
           itemCount: _topics.length,
           separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -1354,7 +1378,10 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               Navigator.pop(ctx);
               if (topic.id != null) {
                 await widget.onDeleteTopic(topic.id!);
+                if (!mounted) return;
                 setState(() => _topics.removeWhere((t) => t.id == topic.id));
+              } else {
+                setState(() => _topics.remove(topic));
               }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -1381,6 +1408,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               Navigator.pop(dialogCtx);
               if (ctx.id != null) {
                 await widget.onDeleteEphemeral(ctx.id!);
+                if (!mounted) return;
                 setState(() => _ephemeral.removeWhere((e) => e.id == ctx.id));
               }
             },
@@ -1511,15 +1539,16 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       final topic = existing != null
           ? existing.copyWith(topicKey: key, content: content)
           : MemoryTopic(topicKey: key, content: content);
-      await widget.onSaveTopic(topic);
+      final saved = await widget.onSaveTopic(topic);
+      if (!mounted) return;
 
       if (existing != null) {
         setState(() {
           final idx = _topics.indexWhere((t) => t.id == existing.id);
-          if (idx >= 0) _topics[idx] = topic;
+          if (idx >= 0) _topics[idx] = saved;
         });
       } else {
-        setState(() => _topics.add(topic));
+        setState(() => _topics.add(saved));
       }
     }
 
@@ -1529,7 +1558,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
 
   // ---- Ephemeral / Recent Context tab ----
 
-  Widget _buildEphemeralTab(ColorScheme colorScheme) {
+  Widget _buildEphemeralTab(ColorScheme colorScheme, ScrollController? scrollController) {
     if (_ephemeral.isEmpty) {
       return Center(
         child: Padding(
@@ -1567,6 +1596,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
     }
 
     return ListView.separated(
+      controller: scrollController,
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       itemCount: _ephemeral.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -1790,6 +1820,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
       final newExpiry = DateTime.now().add(Duration(days: ttlDays.round()));
       final updated = existing.copyWith(content: content, expiresAt: newExpiry);
       await widget.onSaveEphemeral(updated);
+      if (!mounted) return;
 
       setState(() {
         final idx = _ephemeral.indexWhere((e) => e.id == existing.id);
@@ -1831,6 +1862,7 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
               section.value,
               MemoryConstants.maxPerSectionTokens,
             );
+            if (!mounted) return;
             if (condensed != null) {
               setState(() => section.value = condensed);
             }

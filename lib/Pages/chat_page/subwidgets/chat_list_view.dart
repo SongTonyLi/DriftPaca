@@ -48,6 +48,15 @@ class _ChatListViewState extends State<ChatListView> {
   final Map<String, Widget> _bubbleCache = {};
   final Set<String> _animatedMessageIds = {};
 
+  /// Stable [GlobalKey] per message ID. A GlobalKey lets Flutter move the
+  /// bubble's Element (and its State) between sliver slots instead of
+  /// rebuilding it, so a bubble that shifts from index 0 to index 1 as a new
+  /// message arrives keeps any in-progress typewriter reveal.
+  final Map<String, GlobalKey> _bubbleKeys = {};
+
+  GlobalKey _bubbleKeyFor(String id) =>
+      _bubbleKeys.putIfAbsent(id, () => GlobalKey());
+
   /// Test seam: the message IDs currently held in [_bubbleCache]. Used to
   /// assert that stale cache entries are pruned after an in-place message
   /// list mutation (regenerate/delete), which has no observable effect on
@@ -79,6 +88,7 @@ class _ChatListViewState extends State<ChatListView> {
     // Clear bubble cache when switching chats (message list replaced entirely)
     if (!identical(widget.messages, oldWidget.messages)) {
       _bubbleCache.clear();
+      _bubbleKeys.clear();
       _animatedMessageIds.clear();
     } else {
       // Same list object, mutated in place (e.g. regenerate/delete remove a
@@ -104,6 +114,7 @@ class _ChatListViewState extends State<ChatListView> {
   void _pruneStaleCacheEntries() {
     final currentIds = widget.messages.map((m) => m.id).toSet();
     _bubbleCache.removeWhere((id, _) => !currentIds.contains(id));
+    _bubbleKeys.removeWhere((id, _) => !currentIds.contains(id));
     _animatedMessageIds.removeWhere((id) => !currentIds.contains(id));
   }
 
@@ -181,7 +192,7 @@ class _ChatListViewState extends State<ChatListView> {
                   final shouldAnimate = firstAppearance && !isStreamingMessage;
 
                   return ObserveSize(
-                    key: Key(message.id),
+                    key: _bubbleKeyFor(message.id),
                     onSizeChanged: _onMessageSizeChanged,
                     child: RepaintBoundary(
                       child: ChatBubble(
@@ -197,10 +208,21 @@ class _ChatListViewState extends State<ChatListView> {
                 // Cached widget reference — Flutter skips the entire subtree
                 // rebuild when the same Widget instance is returned, avoiding
                 // expensive markdown re-parsing during streaming updates.
-                return _bubbleCache.putIfAbsent(
-                  message.id,
-                  () => RepaintBoundary(
-                    child: ChatBubble(message: message),
+                //
+                // Wrap in the same ObserveSize structure the index-0 branch
+                // uses, with the same per-message GlobalKey. The GlobalKey lets
+                // Flutter carry the bubble's Element (and any in-progress
+                // typewriter reveal state) across the index 0 -> 1 slot move
+                // when a new message arrives, instead of rebuilding it and
+                // snapping the reveal to the full text.
+                return ObserveSize(
+                  key: _bubbleKeyFor(message.id),
+                  onSizeChanged: _onMessageSizeChanged,
+                  child: _bubbleCache.putIfAbsent(
+                    message.id,
+                    () => RepaintBoundary(
+                      child: ChatBubble(message: message),
+                    ),
                   ),
                 );
               },

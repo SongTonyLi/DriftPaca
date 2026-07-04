@@ -16,11 +16,13 @@ import 'package:llamaseek/Services/ollama_service.dart';
 class ModelSelectionBottomSheet extends StatefulWidget {
   final String title;
   final String? currentModelName;
+  final ScrollController? scrollController;
 
   const ModelSelectionBottomSheet({
     super.key,
     required this.title,
     this.currentModelName,
+    this.scrollController,
   });
 
   @override
@@ -297,6 +299,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
           _fetchOperation = CancelableOperation.fromFuture(_fetchModels());
         },
         child: ListView.builder(
+          controller: widget.scrollController,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           itemCount: filtered.length,
           itemBuilder: (context, index) {
@@ -397,29 +400,15 @@ class _ModelTileState extends State<_ModelTile>
       transitionDuration: const Duration(milliseconds: 380),
       pageBuilder: (_, __, ___) => const SizedBox.shrink(),
       transitionBuilder: (dialogContext, animation, _, __) {
-        final curve = CurvedAnimation(
-          parent: animation,
-          curve: const Cubic(0.16, 1.0, 0.3, 1.0),
-          reverseCurve: const Cubic(0.4, 0.0, 0.7, 0.2),
-        );
-        final fade = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOut,
-          reverseCurve: const Interval(0.0, 0.7, curve: Curves.easeOut),
-        );
-
-        return FadeTransition(
-          opacity: fade,
-          child: ScaleTransition(
-            scale: Tween(begin: 0.94, end: 1.0).animate(curve),
-            child: _ModelInfoCard(
-              model: widget.model,
-              ollamaService: service,
-              onSelect: () {
-                Navigator.pop(dialogContext);
-                widget.onTap();
-              },
-            ),
+        return _ModelInfoTransition(
+          animation: animation,
+          child: _ModelInfoCard(
+            model: widget.model,
+            ollamaService: service,
+            onSelect: () {
+              Navigator.pop(dialogContext);
+              widget.onTap();
+            },
           ),
         );
       },
@@ -570,6 +559,71 @@ class _ModelTileState extends State<_ModelTile>
           color: Color(0xFFCF8523)));
     }
     return badges;
+  }
+}
+
+class _ModelInfoTransition extends StatefulWidget {
+  final Animation<double> animation;
+  final Widget child;
+
+  const _ModelInfoTransition({
+    required this.animation,
+    required this.child,
+  });
+
+  @override
+  State<_ModelInfoTransition> createState() => _ModelInfoTransitionState();
+}
+
+class _ModelInfoTransitionState extends State<_ModelInfoTransition> {
+  late CurvedAnimation _scale;
+  late CurvedAnimation _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _buildCurves();
+  }
+
+  @override
+  void didUpdateWidget(_ModelInfoTransition oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animation != widget.animation) {
+      _scale.dispose();
+      _fade.dispose();
+      _buildCurves();
+    }
+  }
+
+  void _buildCurves() {
+    _scale = CurvedAnimation(
+      parent: widget.animation,
+      curve: const Cubic(0.16, 1.0, 0.3, 1.0),
+      reverseCurve: const Cubic(0.4, 0.0, 0.7, 0.2),
+    );
+    _fade = CurvedAnimation(
+      parent: widget.animation,
+      curve: Curves.easeOut,
+      reverseCurve: const Interval(0.0, 0.7, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scale.dispose();
+    _fade.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: ScaleTransition(
+        scale: Tween(begin: 0.94, end: 1.0).animate(_scale),
+        child: widget.child,
+      ),
+    );
   }
 }
 
@@ -1121,6 +1175,7 @@ Future<OllamaModel?> showModelSelectionBottomSheet({
                 child: ModelSelectionBottomSheet(
                   title: title,
                   currentModelName: currentModelName,
+                  scrollController: scrollController,
                 ),
               ),
             ),

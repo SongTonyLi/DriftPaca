@@ -148,7 +148,8 @@ class _SearchCardState extends State<SearchCard>
                     if (segment.isComplete && segment.resultCount != null) ...[
                       const SizedBox(width: 8),
                       Text(
-                        '${segment.resultCount} sources',
+                        '${segment.resultCount} '
+                            '${segment.resultCount == 1 ? 'source' : 'sources'}',
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),

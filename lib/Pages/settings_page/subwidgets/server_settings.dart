@@ -403,7 +403,7 @@ class _ServerSettingsState extends State<ServerSettings> {
       _cloudErrorText = 'Could not connect to Ollama Cloud.';
       _cloudRequestState = OllamaRequestState.error;
     } finally {
-      setState(() {});
+      if (mounted) setState(() {});
     }
   }
 
@@ -433,7 +433,7 @@ class _ServerSettingsState extends State<ServerSettings> {
           'Invalid URL format. Use: http(s)://<host>:<port>';
       _requestState = OllamaRequestState.error;
     } finally {
-      setState(() {});
+      if (mounted) setState(() {});
     }
   }
 
@@ -552,6 +552,8 @@ class _ServerSettingsState extends State<ServerSettings> {
       currentModelName: currentModel,
     );
 
+    if (!mounted) return;
+
     if (selected != null) {
       _settingsBox.put('memoryModel', selected.name);
       setState(() {});
@@ -591,7 +593,7 @@ class _ServerSettingsState extends State<ServerSettings> {
       _serverAddressErrorText = 'Something went wrong while searching.';
       _requestState = OllamaRequestState.error;
     } finally {
-      setState(() {});
+      if (mounted) setState(() {});
     }
   }
 

@@ -89,9 +89,9 @@ class _ChatConfigureServerAddressButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return OutlinedButton.icon(
-      icon: const Icon(
+      icon: Icon(
         Icons.warning_amber_rounded,
-        color: Colors.amber,
+        color: Theme.of(context).colorScheme.error,
       ),
       label: Text('Tap to configure a server address'),
       iconAlignment: IconAlignment.start,

@@ -574,14 +574,17 @@ class MemoryService extends ChangeNotifier {
 
   // --- Topic management ---
 
-  Future<void> saveTopic(MemoryTopic topic) async {
+  Future<MemoryTopic> saveTopic(MemoryTopic topic) async {
+    var saved = topic;
     if (topic.id != null) {
       await _db.updateTopic(topic);
     } else {
-      await _db.insertTopic(topic);
+      final id = await _db.insertTopic(topic);
+      saved = topic.copyWith(id: id);
     }
     _topicsCache = null;
     notifyListeners();
+    return saved;
   }
 
   Future<void> deleteTopicById(int id) async {

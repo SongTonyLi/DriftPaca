@@ -12,13 +12,17 @@ class SearchDetailDialog extends StatelessWidget {
 
   const SearchDetailDialog({super.key, required this.segment});
 
+  static bool _isOpen = false;
+
   static void show(BuildContext context, SearchCardSegment segment) {
+    if (_isOpen) return;
+    _isOpen = true;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => SearchDetailDialog(segment: segment),
-    );
+    ).whenComplete(() => _isOpen = false);
   }
 
   @override
@@ -290,8 +294,9 @@ class _SourceContentCardState extends State<_SourceContentCard>
     final colorScheme = theme.colorScheme;
     final progress = (_dragOffset / -_maxSlide).clamp(0.0, 1.0);
 
-    final preview = widget.content.length > _previewLength
-        ? '${widget.content.substring(0, _previewLength)}…'
+    final runes = widget.content.runes;
+    final preview = runes.length > _previewLength
+        ? '${String.fromCharCodes(runes.take(_previewLength))}…'
         : widget.content;
 
     return Padding(

@@ -32,22 +32,29 @@ class _MemoryStatusIndicatorState extends State<MemoryStatusIndicator>
     super.dispose();
   }
 
+  void _syncAnimation(bool isUpdating) {
+    if (isUpdating) {
+      if (!_controller.isAnimating) {
+        _controller.repeat(reverse: true);
+      }
+    } else {
+      if (_controller.isAnimating) {
+        _controller.stop();
+        _controller.value = 0.0;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<MemoryService>(
       builder: (context, memoryService, _) {
         if (!memoryService.isEnabled) return const SizedBox.shrink();
 
-        if (memoryService.isUpdating) {
-          if (!_controller.isAnimating) {
-            _controller.repeat(reverse: true);
-          }
-        } else {
-          if (_controller.isAnimating) {
-            _controller.stop();
-            _controller.value = 0.0;
-          }
-        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _syncAnimation(memoryService.isUpdating);
+        });
 
         return AnimatedBuilder(
           animation: _animation,

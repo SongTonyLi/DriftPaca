@@ -135,11 +135,23 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
         ? const Color(0xFFF3F5F9)
         : const Color(0xFF14171C);
 
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final drawerWidth = screenWidth - 360 < 400 ? screenWidth - 360 : 400.0;
+
+    ThemeData withContrastText(ThemeData t) => t.copyWith(
+          iconTheme: t.iconTheme.copyWith(color: onBg),
+          textTheme: t.textTheme.apply(bodyColor: onBg, displayColor: onBg),
+        );
+
+    final incognitoTheme = withContrastText(baseTheme.copyWith(
+      brightness: baseTheme.brightness,
+      colorScheme: palette.scheme,
+      scaffoldBackgroundColor: Colors.transparent,
+    ));
+    final normalTheme = withContrastText(baseTheme);
+
     return Theme(
-      data: baseTheme.copyWith(
-        iconTheme: baseTheme.iconTheme.copyWith(color: onBg),
-        textTheme: baseTheme.textTheme.apply(bodyColor: onBg, displayColor: onBg),
-      ),
+      data: isIncognito ? incognitoTheme : normalTheme,
       child: Stack(
         children: [
           Positioned.fill(
@@ -152,13 +164,13 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
               isWelcome: isWelcome,
             ),
           ),
-          const Scaffold(
+          Scaffold(
             backgroundColor: Colors.transparent,
             body: SafeArea(
               child: Row(
                 children: [
-                  ChatDrawer(),
-                  Expanded(child: ChatPage()),
+                  SizedBox(width: drawerWidth, child: const ChatDrawer()),
+                  const Expanded(child: ChatPage()),
                 ],
               ),
             ),

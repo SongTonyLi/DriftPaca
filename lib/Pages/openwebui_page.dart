@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class OpenWebuiPage extends StatefulWidget {
   const OpenWebuiPage({super.key});
@@ -94,6 +95,12 @@ class _OpenWebuiPageState extends State<OpenWebuiPage> {
                   }
 
                   // External links open in system browser
+                  if (await canLaunchUrl(url)) {
+                    await launchUrl(
+                      url,
+                      mode: LaunchMode.externalApplication,
+                    );
+                  }
                   return NavigationActionPolicy.CANCEL;
                 },
               ),

@@ -237,36 +237,36 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Retries the last prompt
   Future<void> retryLastPrompt() async {
     _searchSegments.clear();
-    if (_webSearchEnabled) _beginWebSearch();
+    final searchToken = _webSearchEnabled ? _beginWebSearch() : null;
     try {
       await _chatProvider.retryLastPrompt(
           searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
     } finally {
-      if (_webSearchEnabled) _endWebSearch();
+      if (searchToken != null) _endWebSearch(searchToken);
     }
   }
 
   /// Regenerates the response for [message]
   Future<void> regenerateMessage(OllamaMessage message) async {
     _searchSegments.clear();
-    if (_webSearchEnabled) _beginWebSearch();
+    final searchToken = _webSearchEnabled ? _beginWebSearch() : null;
     try {
       await _chatProvider.regenerateMessage(message,
           searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
     } finally {
-      if (_webSearchEnabled) _endWebSearch();
+      if (searchToken != null) _endWebSearch(searchToken);
     }
   }
 
   /// Edits [message] and resends it as a new message
   Future<void> editAndResend(OllamaMessage message, String newContent) async {
     _searchSegments.clear();
-    if (_webSearchEnabled) _beginWebSearch();
+    final searchToken = _webSearchEnabled ? _beginWebSearch() : null;
     try {
       await _chatProvider.editAndResend(message, newContent,
           searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
     } finally {
-      if (_webSearchEnabled) _endWebSearch();
+      if (searchToken != null) _endWebSearch(searchToken);
     }
   }
 
@@ -316,6 +316,7 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Handles image picking and compression
   Future<void> pickImages({
     VoidCallback? onPermissionDenied,
+    VoidCallback? onCompressionFailed,
     int quality = 10,
   }) async {
     // Check permissions
@@ -339,12 +340,13 @@ class ChatPageViewModel extends ChangeNotifier {
       quality: quality,
     );
 
-    // Add an empty path if the image could not be compressed to show error
-    if (compressedFile != null) {
-      _imageFiles.add(compressedFile);
-    } else {
-      _imageFiles.add(File(''));
+    // Report the failure to the caller instead of attaching the image
+    if (compressedFile == null) {
+      onCompressionFailed?.call();
+      return;
     }
+
+    _imageFiles.add(compressedFile);
 
     notifyListeners();
   }
@@ -414,9 +416,7 @@ class ChatPageViewModel extends ChangeNotifier {
     notifyListeners();
 
     // Set up web search machinery (UI callbacks + segment persistence)
-    if (_webSearchEnabled) {
-      _beginWebSearch();
-    }
+    final searchToken = _webSearchEnabled ? _beginWebSearch() : null;
 
     // Persist message and start the AI response stream
     try {
@@ -424,8 +424,8 @@ class ChatPageViewModel extends ChangeNotifier {
           searchAttemptsRemaining: _webSearchEnabled ? 3 : 0);
     } finally {
       // Always clean up search state, even on error
-      if (_webSearchEnabled) {
-        _endWebSearch();
+      if (searchToken != null) {
+        _endWebSearch(searchToken);
       }
 
       // Generate title for new chats — in finally so it runs even if
@@ -442,12 +442,16 @@ class ChatPageViewModel extends ChangeNotifier {
   /// ChatProvider, then flags the searching state. Every path that can
   /// trigger a search-augmented response funnels through this:
   /// [sendMessage], [regenerateMessage], [editAndResend], [retryLastPrompt].
-  /// Pair with [_endWebSearch] in a finally block.
-  void _beginWebSearch() {
+  /// Returns a token identifying this request; pass it to [_endWebSearch]
+  /// in a finally block so a stale request never tears down the callbacks
+  /// installed by a newer one.
+  Object _beginWebSearch() {
     _isSearching = true;
     _searchSegments.clear();
     notifyListeners();
 
+    final token = Object();
+    _webSearchToken = token;
     _chatProvider.setWebSearchCallbacks(
       onSearchThinking: (thinking) {
         _searchSegments.add(ThinkingSegment(thinking));
@@ -543,11 +547,22 @@ class ChatPageViewModel extends ChangeNotifier {
         }
       },
     );
+
+    return token;
   }
 
-  /// Tears down web-search callbacks and clears the searching flag.
+  /// Identifies the request that currently owns the web-search machinery.
+  Object? _webSearchToken;
+
+  /// Tears down web-search callbacks and clears the searching flag, but only
+  /// when [token] still owns the machinery. A request that was cancelled and
+  /// superseded by a newer one must not tear the newer one's callbacks down.
   /// Pair with [_beginWebSearch].
-  void _endWebSearch() {
+  void _endWebSearch(Object token) {
+    if (!identical(token, _webSearchToken)) {
+      return;
+    }
+    _webSearchToken = null;
     _chatProvider.clearWebSearchCallbacks();
     _isSearching = false;
     notifyListeners();

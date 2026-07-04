@@ -55,12 +55,35 @@ class HttpErrorFormatter {
       _ => 'Server returned an error.',
     };
 
-    final trimmedBody = body?.trim();
+    final trimmedBody = _sanitizeBody(body);
 
     if (trimmedBody == null || trimmedBody.isEmpty) {
       return '$reason\n(HTTP $statusCode)';
     }
 
     return '$reason\n(HTTP $statusCode)\n\n$trimmedBody';
+  }
+
+  static const int _maxBodyLength = 500;
+
+  /// Trims the response [body], drops obvious HTML error pages, and caps the
+  /// remaining text so a proxy error page can't flood the chat.
+  static String? _sanitizeBody(String? body) {
+    final trimmed = body?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return trimmed;
+    }
+
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('<!doctype html') ||
+        lower.startsWith('<html') ||
+        lower.contains('<body')) {
+      return null;
+    }
+
+    if (trimmed.length <= _maxBodyLength) {
+      return trimmed;
+    }
+    return '${trimmed.substring(0, _maxBodyLength)}…';
   }
 }

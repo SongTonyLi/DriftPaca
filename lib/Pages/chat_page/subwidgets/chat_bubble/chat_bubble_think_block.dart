@@ -19,7 +19,7 @@ class ThinkBlockParser {
     final openTag = '<think>';
     final closeTag = '</think>';
     final openIndex = content.indexOf(openTag);
-    final closeIndex = content.indexOf(closeTag);
+    final closeIndex = content.lastIndexOf(closeTag);
 
     if (closeIndex == -1) {
       final thinkContent = content.substring(openIndex + openTag.length).trim();

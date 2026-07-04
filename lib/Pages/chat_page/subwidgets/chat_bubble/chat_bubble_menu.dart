@@ -24,7 +24,9 @@ class _ChatBubbleMenuState extends State<ChatBubbleMenu> {
         return GestureDetector(
           onTap: () => controller.close(),
           onLongPressStart: (details) {
-            controller.open(position: details.localPosition);
+            if (!controller.isOpen) {
+              controller.open(position: details.localPosition);
+            }
           },
           onDoubleTapDown: (details) {
             if (controller.isOpen) {

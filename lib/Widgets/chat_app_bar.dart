@@ -65,12 +65,16 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                                 color: Theme.of(context).colorScheme.onSecondaryContainer,
                               ),
                               const SizedBox(width: 4),
-                              Text(
-                                currentChat.model,
-                                style: GoogleFonts.kodeMono(
-                                  textStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                        color: Theme.of(context).colorScheme.onSecondaryContainer,
-                                      ),
+                              Flexible(
+                                child: Text(
+                                  currentChat.model,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.kodeMono(
+                                    textStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                          color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                        ),
+                                  ),
                                 ),
                               ),
                             ],

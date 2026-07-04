@@ -139,7 +139,7 @@ class ChatNavigationDrawer extends StatelessWidget {
               icon: Icons.visibility_off_outlined,
               selectedIcon: Icons.visibility_off,
               title: 'New Incognito Chat',
-              isSelected: false,
+              isSelected: chatProvider.currentChat == null && Provider.of<ChatPageViewModel>(context).incognitoRequested,
               isIncognito: true,
               onTap: () {
                 final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);

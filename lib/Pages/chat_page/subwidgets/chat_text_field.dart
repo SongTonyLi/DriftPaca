@@ -51,7 +51,7 @@ class _ChatTextFieldState extends State<ChatTextField> {
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         SingleActivator(LogicalKeyboardKey.enter, shift: true): () {
-          widget.controller?.text += '\n';
+          _insertNewlineAtCursor();
         },
       },
       child: TextField(
@@ -75,6 +75,29 @@ class _ChatTextFieldState extends State<ChatTextField> {
           FocusManager.instance.primaryFocus?.unfocus();
         },
       ),
+    );
+  }
+
+  void _insertNewlineAtCursor() {
+    final controller = widget.controller;
+    if (controller == null) return;
+
+    final value = controller.value;
+    final selection = value.selection;
+
+    if (!selection.isValid) {
+      controller.text = '${value.text}\n';
+      return;
+    }
+
+    final newText =
+        '${selection.textBefore(value.text)}\n${selection.textAfter(value.text)}';
+    final offset = selection.start + 1;
+
+    controller.value = value.copyWith(
+      text: newText,
+      selection: TextSelection.collapsed(offset: offset),
+      composing: TextRange.empty,
     );
   }
 

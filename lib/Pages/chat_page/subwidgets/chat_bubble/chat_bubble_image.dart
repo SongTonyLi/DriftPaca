@@ -43,7 +43,7 @@ class ChatBubbleImage extends StatelessWidget {
         child: ChatImage(
           image: FileImage(imageFile),
           aspectRatio: 1.5,
-          width: max(
+          width: min(
             MediaQuery.of(context).size.width * 0.35,
             MediaQuery.of(context).size.height * 0.25,
           ),
@@ -188,6 +188,7 @@ class _ImageGalleryFullScreenState extends State<_ImageGalleryFullScreen>
                 pageController: _pageController,
                 itemCount: widget.images.length,
                 onPageChanged: (index) {
+                  _scaleStateController.reset();
                   setState(() {
                     _currentIndex = index;
                     _isZoomed = false;

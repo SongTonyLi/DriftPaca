@@ -29,7 +29,7 @@ void main() {
   setUpAll(() async {
     PathProviderPlatform.instance = FakePathProviderPlatform();
 
-    final testDir = path.join(Directory.current.path, 'test', 'assets');
+    final testDir = Directory.systemTemp.createTempSync('g03_chat_state_test').path;
     Hive.init(testDir);
     if (!Hive.isBoxOpen('settings')) {
       await Hive.openBox('settings');
@@ -327,7 +327,7 @@ class FakeImageService implements ImageService {
 class FakePathProviderPlatform extends Fake with MockPlatformInterfaceMixin implements PathProviderPlatform {
   @override
   Future<String?> getApplicationDocumentsPath() async {
-    return path.join(Directory.current.path, 'test', 'assets');
+    return Directory.systemTemp.createTempSync('g03_chat_state_docs').path;
   }
 }
 

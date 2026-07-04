@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -29,7 +28,7 @@ void main() {
     PathProviderPlatform.instance = FakePathProviderPlatform();
 
     // Initialize Hive for testing
-    final testDir = path.join(Directory.current.path, 'test', 'assets');
+    final testDir = Directory.systemTemp.createTempSync('chat_page_vm_test').path;
     Hive.init(testDir);
     await Hive.openBox('settings');
   });
@@ -625,6 +624,6 @@ class FakeImageService implements ImageService {
 class FakePathProviderPlatform extends Fake with MockPlatformInterfaceMixin implements PathProviderPlatform {
   @override
   Future<String?> getApplicationDocumentsPath() async {
-    return path.join(Directory.current.path, 'test', 'assets');
+    return Directory.systemTemp.createTempSync('chat_page_vm_docs').path;
   }
 }

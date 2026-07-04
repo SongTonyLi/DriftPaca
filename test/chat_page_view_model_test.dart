@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -24,13 +23,13 @@ void main() {
   late FakeImageService fakeImageService;
   late ChatPageViewModel viewModel;
 
-  setUpAll(() async {
-    // Setup fake path provider for Hive
-    PathProviderPlatform.instance = FakePathProviderPlatform();
+  late Directory tempDir;
 
-    // Initialize Hive for testing
-    final testDir = path.join(Directory.current.path, 'test', 'assets');
-    Hive.init(testDir);
+  setUpAll(() async {
+    // Use a temp directory for Hive to avoid contaminating test/assets
+    tempDir = await Directory.systemTemp.createTemp('chat_page_view_model_test_');
+    PathProviderPlatform.instance = FakePathProviderPlatform(tempDir.path);
+    Hive.init(tempDir.path);
     await Hive.openBox('settings');
   });
 
@@ -55,6 +54,9 @@ void main() {
 
   tearDownAll(() async {
     await Hive.close();
+    try {
+      await tempDir.delete(recursive: true);
+    } catch (_) {}
   });
 
   group('Initial State', () {
@@ -623,8 +625,9 @@ class FakeImageService implements ImageService {
 }
 
 class FakePathProviderPlatform extends Fake with MockPlatformInterfaceMixin implements PathProviderPlatform {
+  final String _dir;
+  FakePathProviderPlatform(this._dir);
+
   @override
-  Future<String?> getApplicationDocumentsPath() async {
-    return path.join(Directory.current.path, 'test', 'assets');
-  }
+  Future<String?> getApplicationDocumentsPath() async => _dir;
 }

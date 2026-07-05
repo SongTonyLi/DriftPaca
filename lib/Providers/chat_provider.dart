@@ -150,6 +150,9 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.open("ollama_chat.db");
     _chats = await _databaseService.getAllChats();
     notifyListeners();
+
+    // Drain any forget jobs left queued by an offline/previous-session delete.
+    _memoryService.processForgetQueue();
   }
 
   void destinationChatSelected(int destination) {
@@ -822,6 +825,48 @@ class ChatProvider extends ChangeNotifier {
       end++;
     }
     return (start: start, end: end);
+  }
+
+  /// Deletes the whole exchange (turn-pair) that [anchor] belongs to: from the
+  /// UI, the DB, and derived memory. Conversation summary is reset only if the
+  /// pair had been summarized; global memory is scrubbed via a queued cloud
+  /// pass (skipped for incognito chats, which never wrote global memory).
+  Future<void> deleteExchange(OllamaMessage anchor) async {
+    final chat = currentChat;
+    if (chat == null) return;
+
+    final span = computeExchangeSpan(_messages, anchor);
+    if (span.end <= span.start) return;
+
+    final removed = _messages.sublist(span.start, span.end);
+
+    // Mutate in place to preserve list identity for ChatListView's bubble cache.
+    _messages.removeRange(span.start, span.end);
+    notifyListeners();
+
+    await _databaseService.deleteMessages(removed);
+
+    final convMemory = await _memoryService.getConversationMemory(chat.id);
+    final coverage = convMemory?.summarizedMessageCount ?? 0;
+    if (span.start < coverage) {
+      await _memoryService.resetConversationMemory(chat.id);
+    }
+
+    if (!chat.isIncognito) {
+      await _memoryService.enqueueForget(
+        chatId: chat.id,
+        removedText: _formatRemovedForForget(removed),
+      );
+      _memoryService.processForgetQueue(); // fire-and-forget
+    }
+  }
+
+  String _formatRemovedForForget(List<OllamaMessage> messages) {
+    final buffer = StringBuffer();
+    for (final m in messages) {
+      buffer.writeln('${m.role.name.toUpperCase()}: ${m.content}');
+    }
+    return buffer.toString();
   }
 
   Future<void> deleteMessage(OllamaMessage message) async {

@@ -22,6 +22,9 @@ class MemoryService extends ChangeNotifier {
   bool _isAgentMemoryUpdating = false;
   bool get isAgentMemoryUpdating => _isAgentMemoryUpdating;
 
+  bool _isForgetting = false;
+  bool get isForgetting => _isForgetting;
+
   String? _updatingChatId;
   String? get updatingChatId => _updatingChatId;
 
@@ -682,6 +685,108 @@ class MemoryService extends ChangeNotifier {
     await _db.clearAllTopics();
     await _db.clearAllEphemeral();
     notifyListeners();
+  }
+
+  /// Clears a chat's conversation summary so no stale (deleted) content is
+  /// injected. Coverage resets to 0; the summary rebuilds lazily on the next
+  /// memory update over the corrected message list.
+  Future<void> resetConversationMemory(String chatId) async {
+    _conversationMemoryCache.remove(chatId);
+    await _db.updateConversationMemory(chatId, ConversationMemory());
+  }
+
+  /// Queues a durable job to scrub global memory of anything the deleted
+  /// [removedText] taught. Survives restarts / offline.
+  Future<void> enqueueForget({
+    required String chatId,
+    required String removedText,
+  }) async {
+    await _db.insertForgetJob(chatId, removedText);
+  }
+
+  /// Applies a parsed forget result to the DB and invalidates caches.
+  @visibleForTesting
+  Future<void> applyForgetResult(
+    ForgetResult result, {
+    required List<EphemeralContext> activeEphemeral,
+    required List<MemoryTopic> existingTopics,
+  }) async {
+    if (result.profile != null) {
+      _profileCache = result.profile;
+      await _db.updateAgentMemory(result.profile!);
+    }
+
+    final existingKeys = existingTopics.map((t) => t.topicKey).toSet();
+    for (final t in result.topicUpserts) {
+      if (existingKeys.contains(t.topicKey)) {
+        await _db.updateTopic(t);
+      } else {
+        await _db.insertTopic(t);
+      }
+    }
+    for (final key in result.topicDeletions) {
+      await _db.deleteTopic(key);
+    }
+    if (result.topicUpserts.isNotEmpty || result.topicDeletions.isNotEmpty) {
+      _topicsCache = null;
+    }
+
+    final byKey = {for (final e in activeEphemeral) e.contextKey: e};
+    var ephemeralChanged = false;
+    for (final key in result.ephemeralDeletions) {
+      final e = byKey[key];
+      if (e?.id != null) {
+        await _db.deleteEphemeralContextById(e!.id!);
+        ephemeralChanged = true;
+      }
+    }
+    if (ephemeralChanged) _ephemeralCache = null;
+  }
+
+  /// Drains the forget queue in a single cloud call. Best-effort: on any
+  /// failure the jobs stay queued for a later retry. Fire-and-forget.
+  Future<void> processForgetQueue() async {
+    if (!isEnabled) return;
+    if (_isForgetting || _isUpdating) return;
+
+    final jobs = await _db.getForgetJobs();
+    if (jobs.isEmpty) return;
+
+    _isForgetting = true;
+    notifyListeners();
+    try {
+      final removedText = jobs.map((j) => j.removedText).join('\n\n---\n\n');
+      final profile = await getAgentMemory();
+      final topics = await getTopics();
+      final ephemeral =
+          (await getEphemeralContexts()).where((e) => !e.isExpired).toList();
+
+      final prompt = MemoryConstants.buildForgetPrompt(
+        removedText: removedText,
+        existingProfile:
+            profile != null ? jsonEncode(profile.toMap()) : null,
+        existingTopics:
+            topics.isNotEmpty ? topics.map((t) => t.toMap()).toList() : null,
+        existingEphemeral: ephemeral.isNotEmpty
+            ? ephemeral.map((e) => e.toMap()).toList()
+            : null,
+      );
+
+      final responseBody =
+          await _callCloudModel(prompt, model: _generationModel);
+      if (responseBody == null) return; // keep jobs
+      final result = parseForgetResponse(responseBody);
+      if (result == null) return; // keep jobs
+
+      await applyForgetResult(result,
+          activeEphemeral: ephemeral, existingTopics: topics);
+      await _db.deleteForgetJobs(jobs.map((j) => j.id).toList());
+    } catch (e) {
+      debugPrint('MemoryService processForgetQueue failed: $e');
+    } finally {
+      _isForgetting = false;
+      notifyListeners();
+    }
   }
 
   // ============================================================

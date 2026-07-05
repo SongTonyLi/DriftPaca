@@ -406,7 +406,7 @@ class MemoryService extends ChangeNotifier {
     }
   }
 
-  Map<String, dynamic>? _extractJson(String responseBody) {
+  static Map<String, dynamic>? _extractJson(String responseBody) {
     try {
       var jsonStr = responseBody.trim();
       final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(jsonStr);
@@ -504,6 +504,55 @@ class MemoryService extends ChangeNotifier {
     }
 
     return actions;
+  }
+
+  /// Parses a forget-scrub response into structured mutations. Returns null if
+  /// no JSON object can be extracted (caller keeps prior memory).
+  static ForgetResult? parseForgetResponse(String responseBody) {
+    final parsed = _extractJson(responseBody);
+    if (parsed == null) return null;
+
+    AgentMemory? profile;
+    final profileMap = parsed['profile'];
+    if (profileMap is Map<String, dynamic>) {
+      profile = AgentMemory.fromMap(profileMap);
+    }
+
+    final topicUpserts = <MemoryTopic>[];
+    final topicDeletions = <String>[];
+    final topics = parsed['topics'];
+    if (topics is List) {
+      for (final t in topics) {
+        if (t is! Map) continue;
+        final key = t['key']?.toString();
+        if (key == null || key.isEmpty) continue;
+        final delete = t['delete'] == true;
+        final content = t['content']?.toString() ?? '';
+        if (delete || content.isEmpty) {
+          topicDeletions.add(key);
+        } else {
+          topicUpserts.add(MemoryTopic(topicKey: key, content: content));
+        }
+      }
+    }
+
+    final ephemeralDeletions = <String>[];
+    final ephemeral = parsed['ephemeral'];
+    if (ephemeral is List) {
+      for (final e in ephemeral) {
+        if (e is! Map) continue;
+        final key = e['key']?.toString();
+        if (key == null || key.isEmpty) continue;
+        if (e['delete'] == true) ephemeralDeletions.add(key);
+      }
+    }
+
+    return ForgetResult(
+      profile: profile,
+      topicUpserts: topicUpserts,
+      topicDeletions: topicDeletions,
+      ephemeralDeletions: ephemeralDeletions,
+    );
   }
 
   /// Parses ephemeral update instructions into EphemeralContext objects.
@@ -678,5 +727,19 @@ class TopicAction {
     required this.key,
     required this.content,
     this.fromKey,
+  });
+}
+
+class ForgetResult {
+  final AgentMemory? profile;
+  final List<MemoryTopic> topicUpserts;
+  final List<String> topicDeletions;
+  final List<String> ephemeralDeletions;
+
+  ForgetResult({
+    this.profile,
+    this.topicUpserts = const [],
+    this.topicDeletions = const [],
+    this.ephemeralDeletions = const [],
   });
 }

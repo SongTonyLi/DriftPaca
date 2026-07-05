@@ -31,6 +31,11 @@ class MemoryService extends ChangeNotifier {
   String? _lastError;
   String? get lastError => _lastError;
 
+  /// Per-chat reset generation. Bumped whenever a chat's conversation summary
+  /// is force-reset (e.g. after an exchange delete). A summarization update
+  /// that began before the reset must NOT write its now-stale summary back.
+  final Map<String, int> _convResetGeneration = {};
+
   /// In-memory caches to avoid DB reads on every message send.
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
   static const int _maxConversationCacheSize = 20;
@@ -232,6 +237,7 @@ class MemoryService extends ChangeNotifier {
       // Fetch existing memories first — the coverage marker tells us where the
       // summary currently ends, so we ingest exactly the un-summarized tail and
       // never leave a gap. See debug-context-pollution.md F2.
+      final resetGen = _convResetGeneration[chatId] ?? 0;
       final existingConvMemory = await getConversationMemory(chatId);
       final existingProfile = await getAgentMemory();
       final existingTopics = await getTopics();
@@ -275,7 +281,9 @@ class MemoryService extends ChangeNotifier {
           ? messages.length - MemoryConstants.recentMessagesToKeep
           : 0;
       await parseAndSave(chatId, responseBody,
-          skipAgentMemory: skipAgentMemory, summarizedThrough: newCoverage);
+          skipAgentMemory: skipAgentMemory,
+          summarizedThrough: newCoverage,
+          convResetGeneration: resetGen);
     } catch (e) {
       debugPrint('MemoryService update failed: $e');
     } finally {
@@ -324,7 +332,7 @@ class MemoryService extends ChangeNotifier {
 
   @visibleForTesting
   Future<void> parseAndSave(String chatId, String responseBody,
-      {bool skipAgentMemory = false, int? summarizedThrough}) async {
+      {bool skipAgentMemory = false, int? summarizedThrough, int? convResetGeneration}) async {
     try {
       final parsed = _extractJson(responseBody);
       if (parsed == null) {
@@ -340,13 +348,22 @@ class MemoryService extends ChangeNotifier {
       // Parse conversation memory
       final convMap = parsed['conversation_memory'] as Map<String, dynamic>?;
       if (convMap != null) {
-        var convMemory = ConversationMemory.fromMap(convMap);
-        if (summarizedThrough != null) {
-          convMemory =
-              convMemory.copyWith(summarizedMessageCount: summarizedThrough);
+        // If the chat's summary was force-reset (e.g. an exchange delete) while
+        // this update was in flight, this summary is stale — skip the write so
+        // the reset wins. See resetConversationMemory / ChatProvider.deleteExchange.
+        final currentGen = _convResetGeneration[chatId] ?? 0;
+        if (convResetGeneration == null || currentGen == convResetGeneration) {
+          var convMemory = ConversationMemory.fromMap(convMap);
+          if (summarizedThrough != null) {
+            convMemory =
+                convMemory.copyWith(summarizedMessageCount: summarizedThrough);
+          }
+          _conversationMemoryCache[chatId] = convMemory;
+          await _db.updateConversationMemory(chatId, convMemory);
+        } else {
+          debugPrint(
+              'MemoryService: skipped stale conversation summary write (reset during update)');
         }
-        _conversationMemoryCache[chatId] = convMemory;
-        _db.updateConversationMemory(chatId, convMemory);
       }
 
       if (skipAgentMemory) return;
@@ -691,6 +708,7 @@ class MemoryService extends ChangeNotifier {
   /// injected. Coverage resets to 0; the summary rebuilds lazily on the next
   /// memory update over the corrected message list.
   Future<void> resetConversationMemory(String chatId) async {
+    _convResetGeneration[chatId] = (_convResetGeneration[chatId] ?? 0) + 1;
     _conversationMemoryCache.remove(chatId);
     await _db.updateConversationMemory(chatId, ConversationMemory());
     notifyListeners();

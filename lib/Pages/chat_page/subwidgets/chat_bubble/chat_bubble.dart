@@ -22,7 +22,7 @@ import 'package:llamaseek/Widgets/search_card.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
-import 'chat_bubble_menu.dart';
+import 'package:llamaseek/Widgets/glass_context_menu.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
 import 'streaming_llama.dart';
 
@@ -135,17 +135,26 @@ class _ChatBubbleBody extends StatelessWidget {
   }
 
   Widget _wrapWithMenu(BuildContext context, Widget child) {
-    return ChatBubbleMenu(
-      menuChildren: [
-        MenuItemButton(
-          onPressed: isStreaming
-              ? null
-              : () => ChatBubbleActions(message).handleDeleteExchange(context),
-          leadingIcon: const Icon(Icons.delete_outline, color: Colors.red),
-          child: const Text('Delete exchange',
-              style: TextStyle(color: Colors.red)),
-        ),
-      ],
+    // Long-press only — no tap/double-tap recognizers — so citation links and
+    // other tappable content inside the bubble keep their taps. Disabled while
+    // the reply is still streaming.
+    return GestureDetector(
+      behavior: HitTestBehavior.deferToChild,
+      onLongPressStart: isStreaming
+          ? null
+          : (details) => showGlassContextMenu(
+                context: context,
+                position: details.globalPosition,
+                actions: [
+                  GlassMenuAction(
+                    icon: Icons.delete_outline,
+                    label: 'Delete exchange',
+                    isDestructive: true,
+                    onTap: () =>
+                        ChatBubbleActions(message).handleDeleteExchange(context),
+                  ),
+                ],
+              ),
       child: child,
     );
   }

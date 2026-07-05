@@ -10,6 +10,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/memory_service.dart';
+import 'package:llamaseek/Widgets/glass_context_menu.dart';
 import 'package:llamaseek/Widgets/memory_bottom_sheet.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -197,63 +198,44 @@ class ChatNavigationDrawer extends StatelessWidget {
     BuildContext context,
     OllamaChat chat,
     Offset position,
-  ) async {
-    final result = await showGeneralDialog<String>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Dismiss',
-      barrierColor: Colors.black26,
-      transitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (_, __, ___) => const SizedBox.shrink(),
-      transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
-        final curvedAnimation = CurvedAnimation(
-          parent: animation,
-          curve: const Cubic(0.16, 1.0, 0.3, 1.0),
-          reverseCurve: const Cubic(0.4, 0.0, 0.7, 0.2),
-        );
-
-        return Stack(
-          children: [
-            Positioned(
-              left: position.dx.clamp(16.0, MediaQuery.of(dialogContext).size.width - 196),
-              top: position.dy.clamp(60.0, MediaQuery.of(dialogContext).size.height - 160),
-              child: ScaleTransition(
-                scale: curvedAnimation,
-                alignment: Alignment.topLeft,
-                child: FadeTransition(
-                  opacity: animation,
-                  child: _GlassContextMenu(
-                    onRename: () => Navigator.pop(dialogContext, 'rename'),
-                    onMemory: () => Navigator.pop(dialogContext, 'memory'),
-                    onDelete: () => Navigator.pop(dialogContext, 'delete'),
-                    chatTitle: chat.title,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (result == null || !context.mounted) return;
-
+  ) {
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
 
-    if (result == 'rename') {
-      final newTitle =
-          await _showRenameDialog(context, currentTitle: chat.title);
-      if (newTitle != null) {
-        await chatProvider.updateChat(chat, newTitle: newTitle);
-      }
-    } else if (result == 'memory') {
-      _showConversationMemory(context, chat);
-    } else if (result == 'delete') {
-      final confirmed = await _showDeleteDialog(context);
-      if (confirmed == true) {
-        await chatProvider.deleteChat(chat);
-      }
-    }
+    showGlassContextMenu(
+      context: context,
+      position: position,
+      header: chat.title,
+      width: 180,
+      actions: [
+        GlassMenuAction(
+          icon: Icons.edit_outlined,
+          label: 'Rename',
+          onTap: () async {
+            final newTitle =
+                await _showRenameDialog(context, currentTitle: chat.title);
+            if (newTitle != null && context.mounted) {
+              await chatProvider.updateChat(chat, newTitle: newTitle);
+            }
+          },
+        ),
+        GlassMenuAction(
+          icon: Icons.auto_awesome_outlined,
+          label: 'Memory',
+          onTap: () => _showConversationMemory(context, chat),
+        ),
+        GlassMenuAction(
+          icon: Icons.delete_outline,
+          label: 'Delete',
+          isDestructive: true,
+          onTap: () async {
+            final confirmed = await _showDeleteDialog(context);
+            if (confirmed == true && context.mounted) {
+              await chatProvider.deleteChat(chat);
+            }
+          },
+        ),
+      ],
+    );
   }
 
   void _showConversationMemory(BuildContext context, OllamaChat chat) async {
@@ -363,138 +345,6 @@ class ChatNavigationDrawer extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _GlassContextMenu extends StatelessWidget {
-  final VoidCallback onRename;
-  final VoidCallback onMemory;
-  final VoidCallback onDelete;
-  final String chatTitle;
-
-  const _GlassContextMenu({
-    required this.onRename,
-    required this.onMemory,
-    required this.onDelete,
-    required this.chatTitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final menuColor = isDark
-        ? colorScheme.surface.withValues(alpha: 0.92)
-        : Colors.white.withValues(alpha: 0.96);
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16.0),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-        child: Material(
-          color: menuColor,
-          borderRadius: BorderRadius.circular(16.0),
-          child: Container(
-            width: 180,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16.0),
-              border: Border.all(
-                color: isDark
-                    ? colorScheme.outlineVariant.withValues(alpha: 0.3)
-                    : Colors.white.withValues(alpha: 0.8),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.12),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Text(
-                  chatTitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Divider(height: 1, indent: 12, endIndent: 12),
-              _GlassMenuItem(
-                icon: Icons.edit_outlined,
-                label: 'Rename',
-                onTap: onRename,
-              ),
-              _GlassMenuItem(
-                icon: Icons.auto_awesome_outlined,
-                label: 'Memory',
-                onTap: onMemory,
-              ),
-              _GlassMenuItem(
-                icon: Icons.delete_outline,
-                label: 'Delete',
-                onTap: onDelete,
-                isDestructive: true,
-              ),
-              const SizedBox(height: 4),
-            ],
-          ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _GlassMenuItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool isDestructive;
-
-  const _GlassMenuItem({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.isDestructive = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isDestructive
-        ? Colors.red
-        : Theme.of(context).colorScheme.onSurface;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 15,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -122,6 +122,15 @@ void main() {
 
       expect(await db.getAllEphemeralContexts(), isEmpty);
     });
+
+    test('processForgetQueue keeps jobs when memory is disabled', () async {
+      await db.insertForgetJob('chat-x', 'USER: something');
+      await memory.processForgetQueue(); // isEnabled is false (no API key) -> no-op
+      expect(await db.getForgetJobs(), isNotEmpty);
+      // cleanup so other tests see a clean queue
+      final ids = (await db.getForgetJobs()).map((j) => j.id).toList();
+      await db.deleteForgetJobs(ids);
+    });
   });
 }
 

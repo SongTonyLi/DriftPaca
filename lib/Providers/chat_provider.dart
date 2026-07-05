@@ -150,6 +150,9 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.open("ollama_chat.db");
     _chats = await _databaseService.getAllChats();
     notifyListeners();
+
+    // Drain any forget jobs left queued by an offline/previous-session delete.
+    _memoryService.processForgetQueue();
   }
 
   void destinationChatSelected(int destination) {
@@ -791,6 +794,79 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     await _databaseService.updateMessage(message, newContent: newContent);
+  }
+
+  /// Returns the [start, end) index range covering the exchange (turn-pair)
+  /// that [anchor] belongs to: a user message and the contiguous run of
+  /// non-user messages that follow it (its reply). An orphan message with no
+  /// owning user turn maps to just itself. Returns an empty span if [anchor]
+  /// is not in [messages].
+  @visibleForTesting
+  static ({int start, int end}) computeExchangeSpan(
+    List<OllamaMessage> messages,
+    OllamaMessage anchor,
+  ) {
+    final i = messages.indexOf(anchor);
+    if (i == -1) return (start: 0, end: 0);
+
+    int start = i;
+    if (anchor.role != OllamaMessageRole.user) {
+      int j = i;
+      while (j >= 0 && messages[j].role != OllamaMessageRole.user) {
+        j--;
+      }
+      if (j < 0) return (start: i, end: i + 1); // orphan reply
+      start = j;
+    }
+
+    int end = start + 1;
+    while (end < messages.length &&
+        messages[end].role != OllamaMessageRole.user) {
+      end++;
+    }
+    return (start: start, end: end);
+  }
+
+  /// Deletes the whole exchange (turn-pair) that [anchor] belongs to: from the
+  /// UI, the DB, and derived memory. Conversation summary is reset only if the
+  /// pair had been summarized; global memory is scrubbed via a queued cloud
+  /// pass (skipped for incognito chats, which never wrote global memory).
+  Future<void> deleteExchange(OllamaMessage anchor) async {
+    final chat = currentChat;
+    if (chat == null) return;
+
+    final span = computeExchangeSpan(_messages, anchor);
+    if (span.end <= span.start) return;
+
+    final removed = _messages.sublist(span.start, span.end);
+
+    // Mutate in place to preserve list identity for ChatListView's bubble cache.
+    _messages.removeRange(span.start, span.end);
+    notifyListeners();
+
+    await _databaseService.deleteMessages(removed);
+
+    final convMemory = await _memoryService.getConversationMemory(chat.id);
+    final coverage = convMemory?.summarizedMessageCount ?? 0;
+    if (span.start < coverage) {
+      await _memoryService.resetConversationMemory(chat.id);
+    }
+
+    if (!chat.isIncognito) {
+      await _memoryService.enqueueForget(
+        chatId: chat.id,
+        removedText: _formatRemovedForForget(removed),
+      );
+      _memoryService.processForgetQueue(); // fire-and-forget
+    }
+  }
+
+  String _formatRemovedForForget(List<OllamaMessage> messages) {
+    final buffer = StringBuffer();
+    for (final m in messages) {
+      buffer.writeln('${m.role.name.toUpperCase()}: ${m.content}');
+    }
+    return buffer.toString();
   }
 
   Future<void> deleteMessage(OllamaMessage message) async {

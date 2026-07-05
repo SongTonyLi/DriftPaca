@@ -354,6 +354,23 @@ void main() async {
       expect(await image.exists(), isFalse);
     }
   });
+
+  test('Forget queue: insert, read ordered, delete by ids', () async {
+    final id1 = await service.insertForgetJob('chat-A', 'USER: hi\nASSISTANT: hello');
+    final id2 = await service.insertForgetJob('chat-B', 'USER: secret');
+
+    var jobs = await service.getForgetJobs();
+    expect(jobs.length, greaterThanOrEqualTo(2));
+    final mine = jobs.where((j) => j.id == id1 || j.id == id2).toList();
+    expect(mine.length, 2);
+    final job1 = mine.firstWhere((j) => j.id == id1);
+    expect(job1.chatId, 'chat-A');
+    expect(job1.removedText, contains('hello'));
+
+    await service.deleteForgetJobs([id1, id2]);
+    jobs = await service.getForgetJobs();
+    expect(jobs.where((j) => j.id == id1 || j.id == id2), isEmpty);
+  });
 }
 
 class FakePathProviderPlatform extends Fake

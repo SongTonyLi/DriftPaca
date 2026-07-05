@@ -6,6 +6,7 @@ import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Models/conversation_memory.dart';
 import 'package:llamaseek/Models/memory_topic.dart';
 import 'package:llamaseek/Models/ephemeral_context.dart';
+import 'package:llamaseek/Models/forget_job.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:sqflite/sqflite.dart';
@@ -26,7 +27,7 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 8,
+      version: 9,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
@@ -82,6 +83,14 @@ content TEXT NOT NULL,
 source_chat_id TEXT,
 created_at INTEGER NOT NULL,
 expires_at INTEGER NOT NULL
+)''');
+        }
+        if (oldVersion < 9) {
+          await db.execute('''CREATE TABLE IF NOT EXISTS memory_forget_jobs (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+chat_id TEXT,
+removed_text TEXT NOT NULL,
+created_at INTEGER NOT NULL
 )''');
         }
       },
@@ -147,6 +156,16 @@ content TEXT NOT NULL,
 source_chat_id TEXT,
 created_at INTEGER NOT NULL,
 expires_at INTEGER NOT NULL
+)''');
+
+        await db.execute('''CREATE TABLE IF NOT EXISTS memory_forget_jobs (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+-- No ON DELETE CASCADE by design: the drain scrubs global memory from
+-- removed_text and never joins to chats, so a job orphaned by a chat delete
+-- is harmless and still drains correctly.
+chat_id TEXT,
+removed_text TEXT NOT NULL,
+created_at INTEGER NOT NULL
 )''');
 
         await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)');
@@ -563,5 +582,30 @@ ORDER BY last_update DESC;''');
 
   Future<void> clearAllEphemeral() async {
     await _db.delete('agent_memory_ephemeral');
+  }
+
+  // --- Memory forget queue ---
+
+  Future<int> insertForgetJob(String? chatId, String removedText) async {
+    return await _db.insert('memory_forget_jobs', {
+      'chat_id': chatId,
+      'removed_text': removedText,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<List<ForgetJob>> getForgetJobs() async {
+    final maps = await _db.query('memory_forget_jobs', orderBy: 'created_at ASC');
+    return maps.map((m) => ForgetJob.fromMap(m)).toList();
+  }
+
+  Future<void> deleteForgetJobs(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await _db.delete(
+      'memory_forget_jobs',
+      where: 'id IN ($placeholders)',
+      whereArgs: ids,
+    );
   }
 }

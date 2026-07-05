@@ -22,11 +22,19 @@ class MemoryService extends ChangeNotifier {
   bool _isAgentMemoryUpdating = false;
   bool get isAgentMemoryUpdating => _isAgentMemoryUpdating;
 
+  bool _isForgetting = false;
+  bool get isForgetting => _isForgetting;
+
   String? _updatingChatId;
   String? get updatingChatId => _updatingChatId;
 
   String? _lastError;
   String? get lastError => _lastError;
+
+  /// Per-chat reset generation. Bumped whenever a chat's conversation summary
+  /// is force-reset (e.g. after an exchange delete). A summarization update
+  /// that began before the reset must NOT write its now-stale summary back.
+  final Map<String, int> _convResetGeneration = {};
 
   /// In-memory caches to avoid DB reads on every message send.
   final Map<String, ConversationMemory> _conversationMemoryCache = {};
@@ -207,7 +215,7 @@ class MemoryService extends ChangeNotifier {
     bool skipAgentMemory = false,
   }) {
     if (!isEnabled) return;
-    if (_isUpdating) return;
+    if (_isUpdating || _isForgetting) return;
 
     // Fire and forget
     performUpdate(chatId: chatId, messages: messages, skipAgentMemory: skipAgentMemory);
@@ -229,6 +237,7 @@ class MemoryService extends ChangeNotifier {
       // Fetch existing memories first — the coverage marker tells us where the
       // summary currently ends, so we ingest exactly the un-summarized tail and
       // never leave a gap. See debug-context-pollution.md F2.
+      final resetGen = _convResetGeneration[chatId] ?? 0;
       final existingConvMemory = await getConversationMemory(chatId);
       final existingProfile = await getAgentMemory();
       final existingTopics = await getTopics();
@@ -272,7 +281,9 @@ class MemoryService extends ChangeNotifier {
           ? messages.length - MemoryConstants.recentMessagesToKeep
           : 0;
       await parseAndSave(chatId, responseBody,
-          skipAgentMemory: skipAgentMemory, summarizedThrough: newCoverage);
+          skipAgentMemory: skipAgentMemory,
+          summarizedThrough: newCoverage,
+          convResetGeneration: resetGen);
     } catch (e) {
       debugPrint('MemoryService update failed: $e');
     } finally {
@@ -321,7 +332,7 @@ class MemoryService extends ChangeNotifier {
 
   @visibleForTesting
   Future<void> parseAndSave(String chatId, String responseBody,
-      {bool skipAgentMemory = false, int? summarizedThrough}) async {
+      {bool skipAgentMemory = false, int? summarizedThrough, int? convResetGeneration}) async {
     try {
       final parsed = _extractJson(responseBody);
       if (parsed == null) {
@@ -337,13 +348,22 @@ class MemoryService extends ChangeNotifier {
       // Parse conversation memory
       final convMap = parsed['conversation_memory'] as Map<String, dynamic>?;
       if (convMap != null) {
-        var convMemory = ConversationMemory.fromMap(convMap);
-        if (summarizedThrough != null) {
-          convMemory =
-              convMemory.copyWith(summarizedMessageCount: summarizedThrough);
+        // If the chat's summary was force-reset (e.g. an exchange delete) while
+        // this update was in flight, this summary is stale — skip the write so
+        // the reset wins. See resetConversationMemory / ChatProvider.deleteExchange.
+        final currentGen = _convResetGeneration[chatId] ?? 0;
+        if (convResetGeneration == null || currentGen == convResetGeneration) {
+          var convMemory = ConversationMemory.fromMap(convMap);
+          if (summarizedThrough != null) {
+            convMemory =
+                convMemory.copyWith(summarizedMessageCount: summarizedThrough);
+          }
+          _conversationMemoryCache[chatId] = convMemory;
+          await _db.updateConversationMemory(chatId, convMemory);
+        } else {
+          debugPrint(
+              'MemoryService: skipped stale conversation summary write (reset during update)');
         }
-        _conversationMemoryCache[chatId] = convMemory;
-        _db.updateConversationMemory(chatId, convMemory);
       }
 
       if (skipAgentMemory) return;
@@ -406,7 +426,7 @@ class MemoryService extends ChangeNotifier {
     }
   }
 
-  Map<String, dynamic>? _extractJson(String responseBody) {
+  static Map<String, dynamic>? _extractJson(String responseBody) {
     try {
       var jsonStr = responseBody.trim();
       final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(jsonStr);
@@ -504,6 +524,55 @@ class MemoryService extends ChangeNotifier {
     }
 
     return actions;
+  }
+
+  /// Parses a forget-scrub response into structured mutations. Returns null if
+  /// no JSON object can be extracted (caller keeps prior memory).
+  static ForgetResult? parseForgetResponse(String responseBody) {
+    final parsed = _extractJson(responseBody);
+    if (parsed == null) return null;
+
+    AgentMemory? profile;
+    final profileMap = parsed['profile'];
+    if (profileMap is Map<String, dynamic>) {
+      profile = AgentMemory.fromMap(profileMap);
+    }
+
+    final topicUpserts = <MemoryTopic>[];
+    final topicDeletions = <String>[];
+    final topics = parsed['topics'];
+    if (topics is List) {
+      for (final t in topics) {
+        if (t is! Map) continue;
+        final key = t['key']?.toString();
+        if (key == null || key.isEmpty) continue;
+        final delete = t['delete'] == true;
+        final content = t['content']?.toString() ?? '';
+        if (delete || content.isEmpty) {
+          topicDeletions.add(key);
+        } else {
+          topicUpserts.add(MemoryTopic(topicKey: key, content: content));
+        }
+      }
+    }
+
+    final ephemeralDeletions = <String>[];
+    final ephemeral = parsed['ephemeral'];
+    if (ephemeral is List) {
+      for (final e in ephemeral) {
+        if (e is! Map) continue;
+        final key = e['key']?.toString();
+        if (key == null || key.isEmpty) continue;
+        if (e['delete'] == true) ephemeralDeletions.add(key);
+      }
+    }
+
+    return ForgetResult(
+      profile: profile,
+      topicUpserts: topicUpserts,
+      topicDeletions: topicDeletions,
+      ephemeralDeletions: ephemeralDeletions,
+    );
   }
 
   /// Parses ephemeral update instructions into EphemeralContext objects.
@@ -635,6 +704,118 @@ class MemoryService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clears a chat's conversation summary so no stale (deleted) content is
+  /// injected. Coverage resets to 0; the summary rebuilds lazily on the next
+  /// memory update over the corrected message list.
+  Future<void> resetConversationMemory(String chatId) async {
+    _convResetGeneration[chatId] = (_convResetGeneration[chatId] ?? 0) + 1;
+    _conversationMemoryCache.remove(chatId);
+    await _db.updateConversationMemory(chatId, ConversationMemory());
+    notifyListeners();
+  }
+
+  /// Queues a durable job to scrub global memory of anything the deleted
+  /// [removedText] taught. Survives restarts / offline.
+  Future<void> enqueueForget({
+    required String chatId,
+    required String removedText,
+  }) async {
+    await _db.insertForgetJob(chatId, removedText);
+  }
+
+  /// Applies a parsed forget result to the DB and invalidates caches.
+  ///
+  /// Not transactional across the profile/topics/ephemeral mutations: if a
+  /// mutation midway throws, earlier ones persist and the job is kept for a
+  /// later retry (mutations are idempotent by key). Caches are invalidated in
+  /// `finally` so readers always re-fetch DB truth, even after a partial apply.
+  @visibleForTesting
+  Future<void> applyForgetResult(
+    ForgetResult result, {
+    required List<EphemeralContext> activeEphemeral,
+    required List<MemoryTopic> existingTopics,
+  }) async {
+    try {
+      if (result.profile != null) {
+        await _db.updateAgentMemory(result.profile!);
+      }
+
+      final existingKeys = existingTopics.map((t) => t.topicKey).toSet();
+      for (final t in result.topicUpserts) {
+        if (existingKeys.contains(t.topicKey)) {
+          await _db.updateTopic(t);
+        } else {
+          await _db.insertTopic(t);
+        }
+      }
+      for (final key in result.topicDeletions) {
+        await _db.deleteTopic(key);
+      }
+
+      final byKey = {for (final e in activeEphemeral) e.contextKey: e};
+      for (final key in result.ephemeralDeletions) {
+        final e = byKey[key];
+        if (e?.id != null) {
+          await _db.deleteEphemeralContextById(e!.id!);
+        }
+      }
+    } finally {
+      // Invalidate all touched caches (even on partial failure) so the next
+      // read repopulates from the DB rather than serving pre-scrub data.
+      _profileCache = null;
+      _topicsCache = null;
+      _ephemeralCache = null;
+    }
+  }
+
+  /// Drains the forget queue in a single cloud call. Best-effort: on any
+  /// failure the jobs stay queued for a later retry. Fire-and-forget.
+  Future<void> processForgetQueue() async {
+    if (!isEnabled) return;
+    if (_isForgetting || _isUpdating) return;
+    // Claim the flag synchronously (before any await) so two near-simultaneous
+    // calls can't both pass the guard and issue duplicate scrubs.
+    _isForgetting = true;
+    var started = false;
+    try {
+      final jobs = await _db.getForgetJobs();
+      if (jobs.isEmpty) return;
+      started = true;
+      notifyListeners();
+
+      final removedText = jobs.map((j) => j.removedText).join('\n\n---\n\n');
+      final profile = await getAgentMemory();
+      final topics = await getTopics();
+      final ephemeral =
+          (await getEphemeralContexts()).where((e) => !e.isExpired).toList();
+
+      final prompt = MemoryConstants.buildForgetPrompt(
+        removedText: removedText,
+        existingProfile: profile != null ? jsonEncode(profile.toMap()) : null,
+        existingTopics:
+            topics.isNotEmpty ? topics.map((t) => t.toMap()).toList() : null,
+        existingEphemeral: ephemeral.isNotEmpty
+            ? ephemeral.map((e) => e.toMap()).toList()
+            : null,
+      );
+
+      final responseBody =
+          await _callCloudModel(prompt, model: _generationModel);
+      if (responseBody == null) return; // keep jobs
+      final result = parseForgetResponse(responseBody);
+      if (result == null) return; // keep jobs
+
+      await applyForgetResult(result,
+          activeEphemeral: ephemeral, existingTopics: topics);
+      await _db.deleteForgetJobs(jobs.map((j) => j.id).toList());
+    } catch (e) {
+      debugPrint('MemoryService processForgetQueue failed: $e');
+    } finally {
+      _isForgetting = false;
+      if (started) notifyListeners();
+    }
+  }
+
   // ============================================================
   // Resummarization (when user edits exceed token limits)
   // ============================================================
@@ -678,5 +859,19 @@ class TopicAction {
     required this.key,
     required this.content,
     this.fromKey,
+  });
+}
+
+class ForgetResult {
+  final AgentMemory? profile;
+  final List<MemoryTopic> topicUpserts;
+  final List<String> topicDeletions;
+  final List<String> ephemeralDeletions;
+
+  ForgetResult({
+    this.profile,
+    this.topicUpserts = const [],
+    this.topicDeletions = const [],
+    this.ephemeralDeletions = const [],
   });
 }

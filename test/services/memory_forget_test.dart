@@ -10,6 +10,11 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:llamaseek/Models/ollama_message.dart';
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 void main() {
@@ -130,6 +135,45 @@ void main() {
       // cleanup so other tests see a clean queue
       final ids = (await db.getForgetJobs()).map((j) => j.id).toList();
       await db.deleteForgetJobs(ids);
+    });
+
+    test('a reset during an in-flight summarization update is not clobbered', () async {
+      final chat = await db.createChat('llama3.2');
+
+      final gate = Completer<void>();
+      final client = MockClient((req) async {
+        await gate.future; // block so we can reset mid-flight
+        final content = jsonEncode({
+          'conversation_memory': {'summary': 'STALE summary from deleted content'},
+        });
+        return http.Response(jsonEncode({'message': {'content': content}}), 200,
+            headers: {'content-type': 'application/json'});
+      });
+      final racyMemory = MemoryService(db: db, client: client);
+
+      // 25 messages so the update would write a non-zero coverage (25 - 20).
+      final messages = List.generate(
+          25, (i) => OllamaMessage('m$i', role: OllamaMessageRole.user));
+
+      // Start the summarization update; it parks on the gated cloud call.
+      final updateFuture = racyMemory.performUpdate(
+          chatId: chat.id, messages: messages, skipAgentMemory: true);
+      await pumpEventQueue(); // let performUpdate reach the gated cloud call
+
+      // Simulate an exchange delete resetting the summary mid-flight.
+      await racyMemory.resetConversationMemory(chat.id);
+
+      // Let the (now-stale) cloud response come back and be parsed.
+      gate.complete();
+      await updateFuture;
+
+      // The reset must win: the summary stays blank, coverage 0.
+      final stored = await db.getConversationMemory(chat.id);
+      expect(stored == null || stored.isEmpty, isTrue,
+          reason: 'stale in-flight summary must not clobber the reset');
+      expect(stored?.summarizedMessageCount ?? 0, 0);
+
+      racyMemory.dispose();
     });
   });
 }

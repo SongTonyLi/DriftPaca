@@ -160,6 +160,9 @@ expires_at INTEGER NOT NULL
 
         await db.execute('''CREATE TABLE IF NOT EXISTS memory_forget_jobs (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
+-- No ON DELETE CASCADE by design: the drain scrubs global memory from
+-- removed_text and never joins to chats, so a job orphaned by a chat delete
+-- is harmless and still drains correctly.
 chat_id TEXT,
 removed_text TEXT NOT NULL,
 created_at INTEGER NOT NULL

@@ -1,5 +1,8 @@
 class ForgetJob {
   final int id;
+
+  /// Origin chat, stored for future per-chat scoping. The current drain scrubs
+  /// global memory and does not read this — the scrub works off [removedText].
   final String? chatId;
   final String removedText;
   final DateTime createdAt;

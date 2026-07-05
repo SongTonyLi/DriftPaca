@@ -85,6 +85,34 @@ class ChatBubbleActions {
     );
   }
 
+  void handleDeleteExchange(BuildContext context) {
+    final viewModel = Provider.of<ChatPageViewModel>(context, listen: false);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete this exchange?'),
+          content: const Text(
+              "The messages and anything they taught memory will be removed. This can't be undone."),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                await viewModel.deleteExchange(message);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              },
+              child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void handleDelete(BuildContext context) {
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
 

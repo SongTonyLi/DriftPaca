@@ -275,6 +275,11 @@ class ChatPageViewModel extends ChangeNotifier {
     return await _chatProvider.fetchAvailableModels();
   }
 
+  /// Deletes the exchange (turn-pair) that [message] belongs to.
+  Future<void> deleteExchange(OllamaMessage message) async {
+    await _chatProvider.deleteExchange(message);
+  }
+
   // ============================================================
   // Model Selection
   // ============================================================

@@ -22,6 +22,7 @@ import 'package:llamaseek/Widgets/search_card.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
+import 'chat_bubble_menu.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
 import 'streaming_llama.dart';
 
@@ -110,20 +111,42 @@ class _ChatBubbleBody extends StatelessWidget {
                       ),
                     ),
                   ),
-                  _UserBubble(message: message, buildMarkdown: _buildMarkdown),
+                  _wrapWithMenu(
+                    context,
+                    _UserBubble(message: message, buildMarkdown: _buildMarkdown),
+                  ),
                   _UserActionButtons(message: message),
                 ],
               ),
             )
           else
-            _AssistantBubble(
-              message: message,
-              isStreaming: isStreaming,
-              buildMarkdown: _buildMarkdown,
-              searchSegments: searchSegments,
+            _wrapWithMenu(
+              context,
+              _AssistantBubble(
+                message: message,
+                isStreaming: isStreaming,
+                buildMarkdown: _buildMarkdown,
+                searchSegments: searchSegments,
+              ),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _wrapWithMenu(BuildContext context, Widget child) {
+    return ChatBubbleMenu(
+      menuChildren: [
+        MenuItemButton(
+          onPressed: isStreaming
+              ? null
+              : () => ChatBubbleActions(message).handleDeleteExchange(context),
+          leadingIcon: const Icon(Icons.delete_outline, color: Colors.red),
+          child: const Text('Delete exchange',
+              style: TextStyle(color: Colors.red)),
+        ),
+      ],
+      child: child,
     );
   }
 

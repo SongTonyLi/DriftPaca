@@ -36,5 +36,29 @@ void main() {
     test('returns null on non-JSON', () {
       expect(MemoryService.parseForgetResponse('no json here'), isNull);
     });
+
+    test('empty JSON object yields a non-null result with no mutations', () {
+      final result = MemoryService.parseForgetResponse('{}')!;
+      expect(result.profile, isNull);
+      expect(result.topicUpserts, isEmpty);
+      expect(result.topicDeletions, isEmpty);
+      expect(result.ephemeralDeletions, isEmpty);
+    });
+
+    test('non-list topics/ephemeral are ignored', () {
+      const raw = '{ "topics": "oops", "ephemeral": {} }';
+      final result = MemoryService.parseForgetResponse(raw)!;
+      expect(result.topicUpserts, isEmpty);
+      expect(result.topicDeletions, isEmpty);
+      expect(result.ephemeralDeletions, isEmpty);
+    });
+
+    test('non-map entries inside arrays are skipped', () {
+      const raw = '{ "topics": [1, "x", null], "ephemeral": [true, 2] }';
+      final result = MemoryService.parseForgetResponse(raw)!;
+      expect(result.topicUpserts, isEmpty);
+      expect(result.topicDeletions, isEmpty);
+      expect(result.ephemeralDeletions, isEmpty);
+    });
   });
 }

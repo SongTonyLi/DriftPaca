@@ -225,6 +225,14 @@ void main() {
     });
   });
 
+  group('deleteExchange', () {
+    test('delegates to ChatProvider.deleteExchange', () async {
+      final msg = OllamaMessage('hi', role: OllamaMessageRole.user);
+      await viewModel.deleteExchange(msg);
+      expect(fakeChatProvider.deletedExchangeAnchor, same(msg));
+    });
+  });
+
   group('sendMessage', () {
     test('should return false when text field is empty', () async {
       final result = await viewModel.sendMessage(
@@ -460,6 +468,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   int? lastRegenerateSearchAttempts;
   int? lastEditAndResendSearchAttempts;
   int? lastRetrySearchAttempts;
+  OllamaMessage? deletedExchangeAnchor;
 
   void setMessages(List<OllamaMessage> messages) {
     _messages = messages;
@@ -519,6 +528,11 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   Future<void> regenerateMessage(OllamaMessage message, {int searchAttemptsRemaining = 0}) async {
     regenerateMessageCalled = true;
     lastRegenerateSearchAttempts = searchAttemptsRemaining;
+  }
+
+  @override
+  Future<void> deleteExchange(OllamaMessage anchor) async {
+    deletedExchangeAnchor = anchor;
   }
 
   @override

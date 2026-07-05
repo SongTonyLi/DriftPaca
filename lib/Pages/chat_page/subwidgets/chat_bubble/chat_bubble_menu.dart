@@ -22,19 +22,24 @@ class _ChatBubbleMenuState extends State<ChatBubbleMenu> {
       menuChildren: widget.menuChildren,
       builder: (context, controller, child) {
         return GestureDetector(
-          onTap: () => controller.close(),
+          // Only intercept taps while the menu is open (to dismiss it). When
+          // closed, claiming taps would steal them from link/citation taps
+          // inside the bubble content.
+          onTap: controller.isOpen ? () => controller.close() : null,
           onLongPressStart: (details) {
             if (!controller.isOpen) {
               controller.open(position: details.localPosition);
             }
           },
-          onDoubleTapDown: (details) {
-            if (controller.isOpen) {
-              controller.close();
-            } else {
-              controller.open(position: details.localPosition);
-            }
-          },
+          // A DoubleTapGestureRecognizer holds the gesture arena open on every
+          // first tap-down (waiting ~300ms for a possible second tap), which
+          // starves the citation-favicon link's TapGestureRecognizer inside the
+          // bubble and swallows single taps on citations. Only register the
+          // double-tap handler while the menu is already open (to toggle it
+          // closed). When closed, long-press and right-click are the ways in, so
+          // a plain tap reaches the link children unobstructed.
+          onDoubleTapDown:
+              controller.isOpen ? (details) => controller.close() : null,
           onSecondaryTapDown: (details) {
             controller.open(position: details.localPosition);
           },

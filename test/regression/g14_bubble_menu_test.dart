@@ -38,9 +38,12 @@ void main() {
 
       final detector = menuGestureDetector(tester);
 
-      // The double-tap-down fires eagerly and opens the menu at position A.
-      detector.onDoubleTapDown!(
-        TapDownDetails(localPosition: const Offset(10, 10)),
+      // Open the menu at position A. (Long-press is the primary open gesture;
+      // double-tap-to-open on a closed bubble was removed because its
+      // DoubleTapGestureRecognizer starved citation-link taps — see
+      // test/citation_tap_routing_test.dart.)
+      detector.onLongPressStart!(
+        const LongPressStartDetails(localPosition: Offset(10, 10)),
       );
       await tester.pumpAndSettle();
 

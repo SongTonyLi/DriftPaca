@@ -793,6 +793,37 @@ class ChatProvider extends ChangeNotifier {
     await _databaseService.updateMessage(message, newContent: newContent);
   }
 
+  /// Returns the [start, end) index range covering the exchange (turn-pair)
+  /// that [anchor] belongs to: a user message and the contiguous run of
+  /// non-user messages that follow it (its reply). An orphan message with no
+  /// owning user turn maps to just itself. Returns an empty span if [anchor]
+  /// is not in [messages].
+  @visibleForTesting
+  static ({int start, int end}) computeExchangeSpan(
+    List<OllamaMessage> messages,
+    OllamaMessage anchor,
+  ) {
+    final i = messages.indexOf(anchor);
+    if (i == -1) return (start: 0, end: 0);
+
+    int start = i;
+    if (anchor.role != OllamaMessageRole.user) {
+      int j = i;
+      while (j >= 0 && messages[j].role != OllamaMessageRole.user) {
+        j--;
+      }
+      if (j < 0) return (start: i, end: i + 1); // orphan reply
+      start = j;
+    }
+
+    int end = start + 1;
+    while (end < messages.length &&
+        messages[end].role != OllamaMessageRole.user) {
+      end++;
+    }
+    return (start: start, end: end);
+  }
+
   Future<void> deleteMessage(OllamaMessage message) async {
     await _databaseService.deleteMessage(message.id);
 

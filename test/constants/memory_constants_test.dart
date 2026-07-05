@@ -30,6 +30,26 @@ void main() {
       });
     });
 
+    test('buildForgetPrompt includes removed text and existing memory', () {
+      final prompt = MemoryConstants.buildForgetPrompt(
+        removedText: 'USER: my cat is named Mittens',
+        existingProfile: '{"name":"Song"}',
+        existingTopics: [
+          {'topic_key': 'pets', 'content': 'has a cat named Mittens'}
+        ],
+        existingEphemeral: null,
+      );
+
+      expect(prompt, contains('Mittens'));
+      expect(prompt, contains('pets'));
+      expect(prompt, contains('Song'));
+      // Must instruct explicit deletion marking and strict JSON.
+      expect(prompt.toLowerCase(), contains('delete'));
+      expect(prompt, contains('"profile"'));
+      expect(prompt, contains('"topics"'));
+      expect(prompt, contains('"ephemeral"'));
+    });
+
     group('buildSelectionPrompt', () {
       test('includes recent messages and key lists', () {
         final prompt = MemoryConstants.buildSelectionPrompt(

@@ -210,7 +210,7 @@ class MemoryService extends ChangeNotifier {
     bool skipAgentMemory = false,
   }) {
     if (!isEnabled) return;
-    if (_isUpdating) return;
+    if (_isUpdating || _isForgetting) return;
 
     // Fire and forget
     performUpdate(chatId: chatId, messages: messages, skipAgentMemory: skipAgentMemory);
@@ -693,6 +693,7 @@ class MemoryService extends ChangeNotifier {
   Future<void> resetConversationMemory(String chatId) async {
     _conversationMemoryCache.remove(chatId);
     await _db.updateConversationMemory(chatId, ConversationMemory());
+    notifyListeners();
   }
 
   /// Queues a durable job to scrub global memory of anything the deleted
@@ -705,42 +706,48 @@ class MemoryService extends ChangeNotifier {
   }
 
   /// Applies a parsed forget result to the DB and invalidates caches.
+  ///
+  /// Not transactional across the profile/topics/ephemeral mutations: if a
+  /// mutation midway throws, earlier ones persist and the job is kept for a
+  /// later retry (mutations are idempotent by key). Caches are invalidated in
+  /// `finally` so readers always re-fetch DB truth, even after a partial apply.
   @visibleForTesting
   Future<void> applyForgetResult(
     ForgetResult result, {
     required List<EphemeralContext> activeEphemeral,
     required List<MemoryTopic> existingTopics,
   }) async {
-    if (result.profile != null) {
-      _profileCache = result.profile;
-      await _db.updateAgentMemory(result.profile!);
-    }
-
-    final existingKeys = existingTopics.map((t) => t.topicKey).toSet();
-    for (final t in result.topicUpserts) {
-      if (existingKeys.contains(t.topicKey)) {
-        await _db.updateTopic(t);
-      } else {
-        await _db.insertTopic(t);
+    try {
+      if (result.profile != null) {
+        await _db.updateAgentMemory(result.profile!);
       }
-    }
-    for (final key in result.topicDeletions) {
-      await _db.deleteTopic(key);
-    }
-    if (result.topicUpserts.isNotEmpty || result.topicDeletions.isNotEmpty) {
+
+      final existingKeys = existingTopics.map((t) => t.topicKey).toSet();
+      for (final t in result.topicUpserts) {
+        if (existingKeys.contains(t.topicKey)) {
+          await _db.updateTopic(t);
+        } else {
+          await _db.insertTopic(t);
+        }
+      }
+      for (final key in result.topicDeletions) {
+        await _db.deleteTopic(key);
+      }
+
+      final byKey = {for (final e in activeEphemeral) e.contextKey: e};
+      for (final key in result.ephemeralDeletions) {
+        final e = byKey[key];
+        if (e?.id != null) {
+          await _db.deleteEphemeralContextById(e!.id!);
+        }
+      }
+    } finally {
+      // Invalidate all touched caches (even on partial failure) so the next
+      // read repopulates from the DB rather than serving pre-scrub data.
+      _profileCache = null;
       _topicsCache = null;
+      _ephemeralCache = null;
     }
-
-    final byKey = {for (final e in activeEphemeral) e.contextKey: e};
-    var ephemeralChanged = false;
-    for (final key in result.ephemeralDeletions) {
-      final e = byKey[key];
-      if (e?.id != null) {
-        await _db.deleteEphemeralContextById(e!.id!);
-        ephemeralChanged = true;
-      }
-    }
-    if (ephemeralChanged) _ephemeralCache = null;
   }
 
   /// Drains the forget queue in a single cloud call. Best-effort: on any
@@ -748,13 +755,16 @@ class MemoryService extends ChangeNotifier {
   Future<void> processForgetQueue() async {
     if (!isEnabled) return;
     if (_isForgetting || _isUpdating) return;
-
-    final jobs = await _db.getForgetJobs();
-    if (jobs.isEmpty) return;
-
+    // Claim the flag synchronously (before any await) so two near-simultaneous
+    // calls can't both pass the guard and issue duplicate scrubs.
     _isForgetting = true;
-    notifyListeners();
+    var started = false;
     try {
+      final jobs = await _db.getForgetJobs();
+      if (jobs.isEmpty) return;
+      started = true;
+      notifyListeners();
+
       final removedText = jobs.map((j) => j.removedText).join('\n\n---\n\n');
       final profile = await getAgentMemory();
       final topics = await getTopics();
@@ -763,8 +773,7 @@ class MemoryService extends ChangeNotifier {
 
       final prompt = MemoryConstants.buildForgetPrompt(
         removedText: removedText,
-        existingProfile:
-            profile != null ? jsonEncode(profile.toMap()) : null,
+        existingProfile: profile != null ? jsonEncode(profile.toMap()) : null,
         existingTopics:
             topics.isNotEmpty ? topics.map((t) => t.toMap()).toList() : null,
         existingEphemeral: ephemeral.isNotEmpty
@@ -785,7 +794,7 @@ class MemoryService extends ChangeNotifier {
       debugPrint('MemoryService processForgetQueue failed: $e');
     } finally {
       _isForgetting = false;
-      notifyListeners();
+      if (started) notifyListeners();
     }
   }
 

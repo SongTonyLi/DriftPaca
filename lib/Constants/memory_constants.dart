@@ -98,6 +98,69 @@ Return a JSON object with exactly this structure:
 Return ONLY the JSON object, no other text.''';
   }
 
+  /// Prompt for the "forget" scrub pass. The model is given the deleted
+  /// message text plus current global memory and must return that memory with
+  /// anything derived from the deleted content removed — but must keep facts
+  /// that remain independently supported.
+  static String buildForgetPrompt({
+    required String removedText,
+    String? existingProfile,
+    List<Map<String, dynamic>>? existingTopics,
+    List<Map<String, dynamic>>? existingEphemeral,
+  }) {
+    final topicsBlock = existingTopics != null && existingTopics.isNotEmpty
+        ? existingTopics.map((t) => '- "${t['topic_key']}": ${t['content']}').join('\n')
+        : 'No topics';
+
+    final ephemeralBlock = existingEphemeral != null && existingEphemeral.isNotEmpty
+        ? existingEphemeral.map((e) => '- "${e['context_key']}": ${e['content']}').join('\n')
+        : 'No ephemeral context';
+
+    return '''You are a memory manager for a chat application. The user DELETED the messages below and wants every piece of information that was learned FROM them removed from long-term memory.
+
+## Rules
+- Remove any fact, preference, or detail that came from the deleted messages.
+- KEEP anything that is still supported by other knowledge or was clearly established independently of the deleted messages. Do not over-delete.
+- Return the FULL updated profile (all five fields — blank a field only if the deleted content was its sole source).
+- For topics: echo EVERY existing topic. To keep one, return it with its (possibly edited) content. To remove one entirely, return it with "delete": true. Omitting a topic leaves it UNCHANGED, so be explicit.
+- For ephemeral: return only the entries to remove, each with "delete": true.
+
+## Deleted Messages (to forget)
+$removedText
+
+## Existing Stable Profile
+${existingProfile ?? 'None'}
+
+## Existing Topics
+$topicsBlock
+
+## Existing Ephemeral Context
+$ephemeralBlock
+
+---
+
+Return a JSON object with exactly this structure:
+
+{
+  "profile": {
+    "name": "string (blank if the deleted content was its only source)",
+    "primary_language": "string",
+    "tone_and_formality": "string",
+    "role_and_background": "string",
+    "communication_style": "string"
+  },
+  "topics": [
+    { "key": "existing topic key", "content": "kept/edited content" },
+    { "key": "topic to remove", "delete": true }
+  ],
+  "ephemeral": [
+    { "key": "ephemeral key to remove", "delete": true }
+  ]
+}
+
+Return ONLY the JSON object, no other text.''';
+  }
+
   /// Prompt for the lightweight topic selection call before each message.
   static String buildSelectionPrompt({
     required String recentMessagesText,

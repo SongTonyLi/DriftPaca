@@ -213,6 +213,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
 
   Widget _buildBottomOverlay() {
     final footer = _buildChatFooter();
+    final footerIsPromptTabs = footer != null &&
+        _viewModel.messages.isEmpty &&
+        !_viewModel.hasImageAttachments;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -229,10 +232,13 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (footer != null) ...[
-                footer,
-                const SizedBox(height: _footerSpacing),
-              ],
+              if (footer != null)
+                footerIsPromptTabs
+                    ? _collapsiblePromptTabs(footer)
+                    : Padding(
+                        padding: const EdgeInsets.only(bottom: _footerSpacing),
+                        child: footer,
+                      ),
               AnimatedPadding(
                 duration: _composerExpandDuration,
                 curve: _composerExpandCurve,
@@ -260,6 +266,31 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
               : 0.0,
         ),
       ],
+    );
+  }
+
+  Widget _collapsiblePromptTabs(Widget tabs) {
+    final expanded = _shouldShowExpanded;
+
+    return IgnorePointer(
+      ignoring: expanded,
+      child: ClipRect(
+        child: AnimatedAlign(
+          duration: _composerExpandDuration,
+          curve: _composerExpandCurve,
+          alignment: Alignment.bottomCenter,
+          heightFactor: expanded ? 0.0 : 1.0,
+          child: AnimatedOpacity(
+            duration: _composerExpandDuration,
+            curve: Curves.easeOut,
+            opacity: expanded ? 0.0 : 1.0,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: _footerSpacing),
+              child: tabs,
+            ),
+          ),
+        ),
+      ),
     );
   }
 

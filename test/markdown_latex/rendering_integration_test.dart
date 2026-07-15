@@ -106,6 +106,15 @@ Future<String> _askModel(String model, String prompt) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  if (_apiKey.trim().isEmpty) {
+    test(
+      'live Markdown/LaTeX rendering integration tests',
+      () {},
+      skip: 'Set OLLAMA_API_KEY to run live rendering tests.',
+    );
+    return;
+  }
+
   setUpAll(() {
     GoogleFonts.config.allowRuntimeFetching = false;
   });

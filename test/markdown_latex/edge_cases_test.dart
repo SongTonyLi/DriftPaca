@@ -293,13 +293,13 @@ void main() {
   // Code block immunity edge cases
   // ---------------------------------------------------------------------------
   group('code block immunity edge cases', () {
-    testWidgets('LaTeX inside triple-backtick with language tag', (tester) async {
+    testWidgets('bare LaTeX inside a latex fence renders as math', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,
         '```latex\n\\frac{a}{b} + \\sum_{i=0}^n x_i\n```',
       );
       expect(nonOverflowErrors(errors), isEmpty);
-      expect(find.byType(Math), findsNothing);
+      expect(find.byType(Math), findsOneWidget);
     });
 
     testWidgets('dollar signs in Python f-string in code block', (tester) async {

@@ -7,12 +7,13 @@ import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:flutter_markdown_latex/flutter_markdown_latex.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:llamaseek/Extensions/code_syntax_highlighter.dart';
+import 'package:llamaseek/Extensions/matched_latex_block_syntax.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
+import 'package:llamaseek/Utils/markdown_latex_preprocessor.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
@@ -57,7 +58,7 @@ class _ChatBubbleBody extends StatelessWidget {
   static final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
     [
       ...md.ExtensionSet.gitHubFlavored.blockSyntaxes,
-      LatexBlockSyntax(),
+      const MatchedLatexBlockSyntax(),
     ],
     [
       _InlineHtmlBrSyntax(),
@@ -173,7 +174,7 @@ class _ChatBubbleBody extends StatelessWidget {
       removeLeft: true,
       removeRight: true,
       child: MarkdownBody(
-        data: _fixEmphasisFlanking(_escapeCurrencyDollars(_escapeLatexPipesInTables(_preprocessLatex(_unwrapDollarWrappedLinks(_unwrapBacktickWrappedLinks(_unwrapLatexCodeFences(data))))))),
+        data: preprocessMarkdownLatex(data),
         selectable: selectable,
         softLineBreak: true,
         styleSheet: context.markdownStyleSheet,
@@ -195,267 +196,6 @@ class _ChatBubbleBody extends StatelessWidget {
     );
   }
 
-  /// Unwraps code fences with language tag `latex`, `math`, or `markdown`
-  /// so their content is rendered as markdown/LaTeX instead of raw code.
-  /// Some models (e.g. gemma3, qwen3) wrap LaTeX output in these fences.
-  static String _unwrapLatexCodeFences(String content) {
-    return content.replaceAllMapped(
-      RegExp(r'```(?:latex|math|markdown)\s*\n([\s\S]*?)```', multiLine: true),
-      (m) => m.group(1)!,
-    );
-  }
-
-  /// Matches a fenced or inline code span — used to skip preprocessing inside
-  /// code, where `$`, `**`, and `\(...\)` are literal source.
-  static final _codeSpanPattern = RegExp(r'```[\s\S]*?```|`[^`\n]+`');
-
-  /// Converts \(...\) to $...$ and \[...\] to $$...$$ for LaTeX parsing,
-  /// skipping content inside code fences and inline code.
-  static String _preprocessLatex(String content) {
-    final buffer = StringBuffer();
-    int pos = 0;
-    for (final match in _codeSpanPattern.allMatches(content)) {
-      buffer.write(_replaceLatexDelimiters(content.substring(pos, match.start)));
-      buffer.write(match.group(0));
-      pos = match.end;
-    }
-    buffer.write(_replaceLatexDelimiters(content.substring(pos)));
-    return buffer.toString();
-  }
-
-  /// Matches `\tag{...}` / `\tag*{...}` — LaTeX equation numbering that
-  /// flutter_math_fork does not support (it expands to an undefined `\gdef`
-  /// and throws, dropping the whole equation to the raw-source fallback).
-  static final _latexTagPattern = RegExp(r'\\tag(\*)?\s*\{([^{}]*)\}');
-
-  static String _replaceLatexDelimiters(String text) {
-    // Rewrite unsupported `\tag{...}` to a rendered, spaced equation number
-    // so the equation renders instead of erroring:
-    //   \tag{1}  → \quad(1)      \tag*{✦} → \quad{✦}
-    // The starred form shows the label verbatim (no added parentheses),
-    // mirroring amsmath semantics.
-    text = text.replaceAllMapped(_latexTagPattern, (m) {
-      final body = m[2] ?? '';
-      return m[1] != null ? '\\quad{$body}' : '\\quad($body)';
-    });
-    // Convert \[...\] to $$...$$ (only when both delimiters present)
-    text = text.replaceAllMapped(
-      RegExp(r'\\\[([\s\S]*?)\\\]'),
-      (m) {
-        final inner = m[1]!;
-        // A multi-line \[...\] is a display block. LatexBlockSyntax only
-        // recognizes a *bare* `$$` line (its pattern is `^\$\$(?:\n|$)`), so
-        // the delimiters must sit on their own lines with no trailing
-        // whitespace. Source ending in `\]  ` (a trailing hard-break) would
-        // otherwise become `$$  ` — which the block parser fails to match as
-        // the close, so it swallows every following paragraph into one broken
-        // equation. Emitting bare delimiter lines padded by blank lines keeps
-        // the block self-contained.
-        if (inner.contains('\n')) {
-          return '\n\n\$\$\n${inner.trim()}\n\$\$\n\n';
-        }
-        return '\$\$$inner\$\$';
-      },
-    );
-    // Convert \(...\) to $...$
-    text = text.replaceAllMapped(
-      RegExp(r'\\\((.+?)\\\)'),
-      (m) => '\$${m[1]}\$',
-    );
-    return text;
-  }
-
-  /// In table rows, replaces `|` inside LaTeX ($...$, $$...$$) with
-  /// `\vert` so the markdown table parser doesn't split cells on them.
-  ///
-  /// The challenge: `|` is both a table cell delimiter AND valid LaTeX
-  /// (absolute value). A naive regex on the full line would false-match
-  /// currency like `$5 | $10` as one LaTeX expression.
-  ///
-  /// Guard: when a match contains `|`, we check whether the inner
-  /// content (with pipes stripped) is purely numeric/currency-like
-  /// (digits, spaces, punctuation). If so, the `$` signs are currency
-  /// and the `|` is a cell delimiter — skip replacement.
-  static String _escapeLatexPipesInTables(String content) {
-    final lines = content.split('\n');
-    final result = <String>[];
-    // Same pattern as _InlineLatexSyntax for consistency.
-    final latexPattern = RegExp(r'\$\$(.+?)\$\$|\$([^$\n]+?)\$');
-    final codePattern = RegExp(r'`[^`\n]+`');
-
-    for (final line in lines) {
-      if (!line.trimLeft().startsWith('|')) {
-        result.add(line);
-        continue;
-      }
-
-      // Skip inline code, only process non-code segments.
-      final buf = StringBuffer();
-      int pos = 0;
-      for (final codeMatch in codePattern.allMatches(line)) {
-        buf.write(_replacePipesInLatex(line.substring(pos, codeMatch.start), latexPattern));
-        buf.write(codeMatch.group(0));
-        pos = codeMatch.end;
-      }
-      buf.write(_replacePipesInLatex(line.substring(pos), latexPattern));
-
-      result.add(buf.toString());
-    }
-
-    return result.join('\n');
-  }
-
-  /// Regex for content that looks like currency/numeric, NOT LaTeX.
-  /// Digits, whitespace, and common punctuation (no letters).
-  static final _currencyContentPattern = RegExp(r'^[\d\s,.\-+%/()]*$');
-
-  /// Within matched $...$ / $$...$$ regions, replace || with \Vert
-  /// and remaining | with \vert — but skip if the inner content is
-  /// purely numeric (likely currency like `$5 | $10`, not LaTeX).
-  static String _replacePipesInLatex(String text, RegExp pattern) {
-    return text.replaceAllMapped(pattern, (match) {
-      final full = match.group(0)!;
-      if (!full.contains('|')) return full;
-
-      // Guard: if inner content without pipes is purely numeric/currency,
-      // this is `$5 | $10` not LaTeX — leave the | as cell delimiters.
-      final inner = (match.group(1) ?? match.group(2) ?? '').replaceAll('|', '');
-      if (_currencyContentPattern.hasMatch(inner.trim())) return full;
-
-      // Real LaTeX — escape || (norm) first, then single |.
-      var escaped = full.replaceAllMapped(RegExp(r'(?<!\\)\|\|'), (_) => '\\Vert ');
-      escaped = escaped.replaceAllMapped(RegExp(r'(?<!\\)\|'), (_) => '\\vert ');
-      return escaped;
-    });
-  }
-
-  /// Strips dollar signs wrapping markdown links: `$[text](url)$` → `[text](url)`.
-  ///
-  /// Some models (e.g. deepseek, qwen) output citation links wrapped in `$...$`:
-  ///   `满意度 $[[1]](https://example.com)$。`
-  ///
-  /// The inline LaTeX parser matches this as a math expression, consuming the
-  /// entire link. Stripping the `$` before parsing lets the link syntax win.
-  static final _dollarWrappedLinkPattern =
-      RegExp(r'\$(\[+[^\]]*\]+\([^)]+\))\$');
-
-  static String _unwrapDollarWrappedLinks(String content) {
-    return content.replaceAllMapped(
-      _dollarWrappedLinkPattern,
-      (m) => m[1]!,
-    );
-  }
-
-  /// Strips inline-code backticks wrapping one or more contiguous citation
-  /// links: `` `[¹](url)[⁵](url)` `` → `[¹](url)[⁵](url)`.
-  ///
-  /// Some models (observed on Chinese financial-comparison answers) wrap an
-  /// entire run of citation markdown in single backticks, so the markdown
-  /// parser sees inline code and renders the bracket/paren/URL characters as
-  /// monospace literal text instead of clickable favicons.
-  ///
-  /// Only strip when the backtick span's content is *entirely* contiguous
-  /// `[text](url)` fragments — a backtick span that mixes prose with a link
-  /// (e.g. demonstrating markdown syntax in a code example) is left alone.
-  static final _backtickWrappedLinksPattern =
-      RegExp(r'`((?:\[[^\]\n]+\]\([^)\n]+\))+)`');
-
-  static String _unwrapBacktickWrappedLinks(String content) {
-    return content.replaceAllMapped(
-      _backtickWrappedLinksPattern,
-      (m) => m[1]!,
-    );
-  }
-
-  /// Escapes paired `$` signs that surround currency-like content (e.g.
-  /// `$852B ... $500B`) so they render as literal dollars instead of being
-  /// consumed by [_InlineLatexSyntax].
-  ///
-  /// `_InlineLatexSyntax` already detects currency via [_isCurrency] and emits
-  /// the matched range as plain text — but in doing so it swallows any inline
-  /// markdown (e.g. `[³](url)` citation links) between the two `$` signs.
-  /// Pre-escaping the `$` characters lets the link parser see those links.
-  ///
-  /// Skips inside fenced code blocks and inline code. Pairing logic mirrors
-  /// [_InlineLatexSyntax]'s regex so we only escape what the latex syntax
-  /// would have otherwise consumed.
-  static String _escapeCurrencyDollars(String content) {
-    final buffer = StringBuffer();
-    int pos = 0;
-    for (final match in _codeSpanPattern.allMatches(content)) {
-      buffer.write(_escapeCurrencyInText(content.substring(pos, match.start)));
-      buffer.write(match.group(0));
-      pos = match.end;
-    }
-    buffer.write(_escapeCurrencyInText(content.substring(pos)));
-    return buffer.toString();
-  }
-
-  static final _inlineDollarPairPattern = RegExp(r'\$([^$\n]+?)\$');
-  static final _currencyLeadPattern = RegExp(r'^\s*[\d,.]');
-  static final _latexOperatorPattern =
-      RegExp(r'[+=^_\\{}<>]|(?<!\*)\*(?!\*)');
-  // A lone `~` (not part of `~~`) immediately before an amount — `~$4.6T`,
-  // `~€39B`, `~40` — is "approximately", not a strikethrough delimiter. Two
-  // of them otherwise pair into GFM strikethrough and scratch out everything
-  // between two figures. A doubled `~~strike~~` is left untouched.
-  static final _approxTildePattern = RegExp(r'(?<!~)~(?!~)(?=[\$€£¥\d])');
-
-  // Natural-language sentence punctuation (ASCII + CJK fullwidth equivalents).
-  // Used by [_looksLikeCurrencyProse]; deliberately excludes `.` (decimal
-  // points are common in currency numerals).
-  static final _proseLikePunctuationPattern =
-      RegExp(r'[,;:，；：、。（）「」]');
-  // CJK Unified Ideographs — any of these in a `$...$` span is a strong
-  // signal it's Chinese prose with currency, not math (LaTeX expressions
-  // don't contain CJK characters outside `\text{}`).
-  static final _cjkIdeographPattern = RegExp(r'[一-鿿]');
-  // A run of 2+ Latin letters is "word"-like (e.g. `trillion`, `cap`, `USD`);
-  // single letters could be math variables, so we require at least two.
-  static final _multiLetterWordPattern = RegExp(r'[A-Za-z]{2,}');
-
-  /// Additional currency heuristic for `$...$` spans that the operator
-  /// check would reject as "math". Returns true when the span starts with a
-  /// digit, contains natural-language punctuation, contains
-  /// natural-language text (CJK ideographs or multi-letter Latin words),
-  /// and does NOT contain `\text` — the explicit LaTeX command that
-  /// embeds prose in math mode and signals the span IS real math.
-  ///
-  /// Catches financial deltas like `**$971.00**，较前一交易日上涨 **+5.14%**
-  /// （+$47.48）` where the `+` is a sign indicator inside Chinese prose,
-  /// not a math operator. The existing operator check would consume the
-  /// whole span as a non-wrapping LaTeX run.
-  static bool _looksLikeCurrencyProse(String inner) {
-    if (!_currencyLeadPattern.hasMatch(inner)) return false;
-    if (inner.contains(r'\text')) return false;
-    if (!_proseLikePunctuationPattern.hasMatch(inner)) return false;
-    return _cjkIdeographPattern.hasMatch(inner) ||
-        _multiLetterWordPattern.hasMatch(inner);
-  }
-
-  static String _escapeCurrencyInText(String text) {
-    final escaped = text.replaceAll(_approxTildePattern, r'\~');
-    return escaped.replaceAllMapped(_inlineDollarPairPattern, (m) {
-      final full = m[0]!;
-      final inner = m[1]!;
-      if (!_currencyLeadPattern.hasMatch(inner)) return full;
-      // Two escape hatches let us bypass the operator-based reject:
-      //   1. A markdown link inside the span — LaTeX has no `[text](url)`,
-      //      so the `_`/`=`/`+` inside the URL is irrelevant.
-      //   2. Prose-currency signal — CJK or multi-letter word + sentence
-      //      punctuation + no `\text` — the `+` is a sign indicator inside
-      //      natural-language prose, not a math operator.
-      if (!inner.contains('](') && !_looksLikeCurrencyProse(inner)) {
-        // Drop `**` and our own escaped `\~` (inserted above for
-        // "approximately") so neither the bold markers nor that backslash
-        // are mistaken for LaTeX operators.
-        final stripped = inner.replaceAll('**', '').replaceAll(r'\~', '');
-        if (_latexOperatorPattern.hasMatch(stripped)) return full;
-      }
-      return '\\\$$inner\\\$';
-    });
-  }
-
   /// Truncates trailing incomplete link syntax (`[text](url` without closing
   /// `)`) so it doesn't render as raw markdown while the typewriter reveal
   /// catches up to the closing paren. Once `)` is revealed the full link
@@ -467,48 +207,6 @@ class _ChatBubbleBody extends StatelessWidget {
     final match = _incompleteLinkAtEndPattern.firstMatch(content);
     if (match == null) return content;
     return content.substring(0, match.start);
-  }
-
-  /// Fixes CommonMark emphasis flanking failures for CJK + punctuation.
-  ///
-  /// When `**` is directly adjacent to Unicode punctuation (e.g. `"`, `（`,
-  /// `《`), CommonMark's flanking rules require the OTHER side of `**` to be
-  /// whitespace or punctuation. CJK characters satisfy neither, so patterns
-  /// like `CJK**"text"**CJK` fail — `**` can't open/close emphasis, and
-  /// the parser mispairs markers, bolding the wrong text.
-  ///
-  /// Fix: insert a zero-width space (U+200B) between `*` runs and adjacent
-  /// punctuation. ZWSP is neither whitespace nor punctuation, so `**` passes
-  /// the flanking check via the simpler rule (2a) instead of failing rule (2b).
-  static String _fixEmphasisFlanking(String content) {
-    final buffer = StringBuffer();
-    int pos = 0;
-    for (final match in _codeSpanPattern.allMatches(content)) {
-      buffer.write(_insertFlankingZwsp(content.substring(pos, match.start)));
-      buffer.write(match.group(0));
-      pos = match.end;
-    }
-    buffer.write(_insertFlankingZwsp(content.substring(pos)));
-    return buffer.toString();
-  }
-
-  static final _afterStarsPattern =
-      RegExp(r'(\*+)(?!\*)(?=\p{P})', unicode: true);
-  static final _beforeStarsPattern =
-      RegExp(r'(?<=\p{P})(?<!\*)(\*+)', unicode: true);
-
-  static String _insertFlankingZwsp(String text) {
-    // After a * run followed by punctuation: **" → **\u200B"
-    text = text.replaceAllMapped(
-      _afterStarsPattern,
-      (m) => '${m[1]}\u200B',
-    );
-    // Before a * run preceded by punctuation: "** → "\u200B**
-    text = text.replaceAllMapped(
-      _beforeStarsPattern,
-      (m) => '\u200B${m[1]}',
-    );
-    return text;
   }
 }
 
@@ -1506,7 +1204,7 @@ class _InlineLatexSyntax extends md.InlineSyntax {
   /// Currency: starts with digit and contains NO LaTeX operators — OR is
   /// a prose-currency span the preprocessor would have escaped.
   ///
-  /// `_ChatBubbleBody._escapeCurrencyDollars` normally escapes the `$` signs
+  /// [preprocessMarkdownLatex] normally escapes the `$` signs
   /// before this parser ever sees the pair. Mirroring the prose-currency
   /// heuristic here is defense in depth: if a future pipeline change ever
   /// lets a prose-currency span reach this parser unescaped (e.g. through a
@@ -1517,7 +1215,7 @@ class _InlineLatexSyntax extends md.InlineSyntax {
     // Strip markdown bold markers before checking for math operators
     final stripped = content.replaceAll('**', '');
     if (!_mathOperatorPattern.hasMatch(stripped)) return true;
-    return _ChatBubbleBody._looksLikeCurrencyProse(content);
+    return looksLikeCurrencyProse(content);
   }
 
   @override
@@ -1625,13 +1323,13 @@ class _SmartLatexWidget extends StatelessWidget {
 
     if (isDisplay) {
       // Display math: centered, horizontally scrollable for long equations.
-      // When inside a table cell, use _IntrinsicFriendlyClip to avoid
+      // When inside a table cell, use an intrinsic-friendly viewport to avoid
       // IntrinsicColumnWidth crashing on flutter_math_fork's LayoutBuilder.
       final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
       if (inTableCell) {
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          child: _IntrinsicFriendlyClip(child: mathWidget),
+          child: _IntrinsicFriendlyMathViewport(child: mathWidget),
         );
       }
       return Padding(
@@ -1652,10 +1350,10 @@ class _SmartLatexWidget extends StatelessWidget {
     // Inline math in table cells: wrap in a scroll view that provides
     // stub intrinsic dimensions. flutter_math_fork's internal LayoutBuilder
     // cannot report intrinsics, but Table with IntrinsicColumnWidth requires
-    // them — _IntrinsicFriendlyClip resolves this conflict.
+    // them — _IntrinsicFriendlyMathViewport resolves this conflict.
     final inTableCell = context.findAncestorWidgetOfExactType<TableCell>() != null;
     if (inTableCell) {
-      return _IntrinsicFriendlyClip(child: mathWidget);
+      return _IntrinsicFriendlyMathViewport(child: mathWidget);
     }
 
     // Inline math in text: return directly so it flows with surrounding
@@ -1665,7 +1363,7 @@ class _SmartLatexWidget extends StatelessWidget {
   }
 }
 
-/// A horizontally scrollable wrapper that provides stub intrinsic dimensions.
+/// A horizontally scrollable wrapper that provides safe intrinsic dimensions.
 ///
 /// flutter_math_fork uses LayoutBuilder internally for certain complex
 /// constructs (aligned, cases, matrices). LayoutBuilder cannot report intrinsic
@@ -1674,23 +1372,29 @@ class _SmartLatexWidget extends StatelessWidget {
 ///
 /// This widget solves the conflict by:
 /// 1. Reporting a fixed intrinsic width (so the table gets a usable value)
-/// 2. Allowing its child to scroll horizontally when wider than the cell
-class _IntrinsicFriendlyClip extends SingleChildRenderObjectWidget {
-  const _IntrinsicFriendlyClip({required Widget child}) : super(child: child);
+/// 2. Giving a horizontal viewport finite cell constraints during normal layout
+/// 3. Exposing the child's natural width through the viewport's scroll extent
+class _IntrinsicFriendlyMathViewport extends SingleChildRenderObjectWidget {
+  _IntrinsicFriendlyMathViewport({required Widget child})
+      : super(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            primary: false,
+            child: child,
+          ),
+        );
 
   @override
-  RenderObject createRenderObject(BuildContext context) => _RenderIntrinsicFriendlyClip();
+  RenderObject createRenderObject(BuildContext context) => _RenderIntrinsicFriendlyMathViewport();
 }
 
-class _RenderIntrinsicFriendlyClip extends RenderProxyBox {
+class _RenderIntrinsicFriendlyMathViewport extends RenderProxyBox {
   // Fallback intrinsic width when the child (flutter_math_fork) can't report.
   static const double _fallbackWidth = 50.0;
 
   double _safeChildIntrinsic(double height, {required bool min}) {
     try {
-      final v = min
-          ? child?.getMinIntrinsicWidth(height)
-          : child?.getMaxIntrinsicWidth(height);
+      final v = min ? child?.getMinIntrinsicWidth(height) : child?.getMaxIntrinsicWidth(height);
       return (v != null && v > 0) ? v : _fallbackWidth;
     } catch (_) {
       return _fallbackWidth;
@@ -1698,8 +1402,7 @@ class _RenderIntrinsicFriendlyClip extends RenderProxyBox {
   }
 
   @override
-  double computeMinIntrinsicWidth(double height) =>
-      _safeChildIntrinsic(height, min: true);
+  double computeMinIntrinsicWidth(double height) => _safeChildIntrinsic(height, min: true);
 
   @override
   double computeMaxIntrinsicWidth(double height) {
@@ -1728,40 +1431,7 @@ class _RenderIntrinsicFriendlyClip extends RenderProxyBox {
   }
 
   @override
-  void performLayout() {
-    if (child == null) {
-      size = constraints.smallest;
-      return;
-    }
-    // Let child lay out with unbounded width so math isn't clipped.
-    child!.layout(
-      BoxConstraints(
-        maxWidth: double.infinity,
-        maxHeight: constraints.maxHeight,
-      ),
-      parentUsesSize: true,
-    );
-    // Our own size respects the incoming constraints (table cell width).
-    size = constraints.constrain(child!.size);
-  }
-
-  @override
   bool get isRepaintBoundary => true;
-
-  @override
-  void paint(PaintingContext context, Offset offset) {
-    if (child == null) return;
-    // Clip to our size — child may be wider.
-    context.pushClipRect(needsCompositing, offset, Offset.zero & size, (context, offset) {
-      context.paintChild(child!, offset);
-    });
-  }
-
-  @override
-  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
-    if (child == null) return false;
-    return child!.hitTest(result, position: position);
-  }
 }
 
 class _LatexSourceFallback extends StatelessWidget {

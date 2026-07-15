@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
+import 'package:llamaseek/Utils/markdown_latex_preprocessor.dart';
 import 'test_helpers.dart';
 
 void main() {
@@ -110,10 +111,12 @@ void main() {
         // Some models output Unicode math or wrap in code blocks — only
         // assert Math widgets when response contains bare LaTeX delimiters
         // (not inside backtick-code or code fences).
-        final strippedOfCode = response
+        final strippedOfCode = preprocessMarkdownLatex(response)
             .replaceAll(RegExp(r'```[\s\S]*?```'), '')
             .replaceAll(RegExp(r'`[^`\n]+`'), '');
-        final hasLatexDelimiters = RegExp(r'\$[^$\n]+\$|\\\(|\\\[').hasMatch(strippedOfCode);
+        final hasLatexDelimiters = RegExp(
+          r'(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$[^$\n]+?(?<!\\)\$',
+        ).hasMatch(strippedOfCode);
         if (hasLatexDelimiters) {
           testWidgets('[$model] produces Math widgets', (tester) async {
             final errors = await pumpBubbleAndCollectErrors(tester, response);

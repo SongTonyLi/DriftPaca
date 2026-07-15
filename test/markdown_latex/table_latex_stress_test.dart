@@ -146,6 +146,45 @@ void main() {
       expect(overflowErrors(errors), isEmpty);
     });
 
+    testWidgets('wide aligned math in a table cell is horizontally reachable', (
+      tester,
+    ) async {
+      final errors = await pumpBubbleAndCollectErrors(
+        tester,
+        '| Equation |\n'
+        '| --- |\n'
+        r'| $$\begin{aligned} '
+        r'a_1+a_2+a_3+a_4+a_5+a_6+a_7+a_8 &= b \\ '
+        r'c &= d '
+        r'\end{aligned}$$ |',
+        surfaceSize: const Size(300, 800),
+      );
+      expect(nonOverflowErrors(errors), isEmpty);
+
+      final horizontalScrollables = find.descendant(
+        of: find.byType(Table),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.right,
+        ),
+      );
+      expect(horizontalScrollables, findsOneWidget);
+
+      final mathScrollable =
+          tester.state<ScrollableState>(horizontalScrollables.last);
+      expect(mathScrollable.position.maxScrollExtent, greaterThan(0));
+
+      mathScrollable.position.jumpTo(
+        mathScrollable.position.maxScrollExtent,
+      );
+      await tester.pump();
+      expect(
+        mathScrollable.position.pixels,
+        mathScrollable.position.maxScrollExtent,
+      );
+    });
+
     testWidgets('chain of fractions in cell', (tester) async {
       final errors = await pumpBubbleAndCollectErrors(
         tester,

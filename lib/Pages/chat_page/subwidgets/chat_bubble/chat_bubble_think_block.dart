@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 /// Parses message content into thinking and response parts.
 class ThinkBlockParser {
@@ -69,10 +70,13 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   late final bool _wasAlreadyComplete;
   int _elapsedSeconds = 0;
   Timer? _timer;
+  Timer? _autoCollapseTimer;
+  bool _animationsDisabled = false;
 
   late final AnimationController _pulseController;
   late final AnimationController _expandController;
   late final Animation<double> _expandCurve;
+  late final Animation<double> _pulseOpacity;
 
   bool get _isExpanded {
     if (_userToggle != null) return _userToggle!;
@@ -87,6 +91,9 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
+    );
+    _pulseOpacity = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
     // Start expanded if streaming, collapsed if loaded from history
@@ -104,6 +111,19 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
     if (!widget.isComplete) {
       _stopwatch.start();
       _startTimer();
+      _pulseController.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _pulseController.stop();
+      _pulseController.value = 1.0;
+      _expandController.value = _isExpanded ? 1.0 : 0.0;
+    } else if (!widget.isComplete && !_pulseController.isAnimating) {
       _pulseController.repeat(reverse: true);
     }
   }
@@ -130,11 +150,19 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
       _elapsedSeconds = _stopwatch.elapsed.inSeconds;
       _pulseController.stop();
       if (_userToggle == null && !widget.keepExpandedWhenComplete) {
-        _userToggle = false;
-        // Smooth auto-collapse after a brief pause
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted) _expandController.reverse();
-        });
+        _autoCollapseTimer?.cancel();
+        _autoCollapseTimer = Timer(
+          motionDuration(context, const Duration(milliseconds: 300)),
+          () {
+            if (!mounted || _userToggle != null) return;
+            setState(() => _userToggle = false);
+            if (_animationsDisabled) {
+              _expandController.value = 0.0;
+            } else {
+              _expandController.reverse();
+            }
+          },
+        );
       }
     }
   }
@@ -142,6 +170,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   @override
   void dispose() {
     _timer?.cancel();
+    _autoCollapseTimer?.cancel();
     _stopwatch.stop();
     _pulseController.dispose();
     _expandController.dispose();
@@ -149,8 +178,11 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
   }
 
   void _toggle() {
+    _autoCollapseTimer?.cancel();
     setState(() => _userToggle = !_isExpanded);
-    if (_isExpanded) {
+    if (_animationsDisabled) {
+      _expandController.value = _isExpanded ? 1.0 : 0.0;
+    } else if (_isExpanded) {
       _expandController.forward();
     } else {
       _expandController.reverse();
@@ -189,8 +221,7 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
               children: [
                 if (!widget.isComplete)
                   FadeTransition(
-                    opacity: Tween(begin: 0.3, end: 1.0)
-                        .animate(_pulseController),
+                    opacity: _pulseOpacity,
                     child:
                         Icon(Icons.auto_awesome, color: color, size: 16),
                   )

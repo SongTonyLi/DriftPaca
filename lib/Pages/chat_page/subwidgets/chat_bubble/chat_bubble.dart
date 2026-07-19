@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -14,6 +15,7 @@ import 'package:llamaseek/Extensions/matched_latex_block_syntax.dart';
 import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Utils/markdown_latex_preprocessor.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
@@ -228,14 +230,14 @@ class _UserBubbleEntranceState extends State<_UserBubbleEntrance>
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 280),
       vsync: this,
       value: widget.animate ? 0.0 : 1.0,
     );
-    _scale = Tween<double>(begin: 0.4, end: 1.0).animate(
+    _scale = Tween<double>(begin: 0.92, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Cubic(0.34, 1.56, 0.64, 1.0),
+        curve: const Cubic(0.16, 1.0, 0.3, 1.0),
       ),
     );
     _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -244,10 +246,15 @@ class _UserBubbleEntranceState extends State<_UserBubbleEntrance>
         curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
       ),
     );
-    if (widget.animate) {
-      Future.delayed(const Duration(milliseconds: 450), () {
-        if (mounted) _controller.forward();
-      });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!widget.animate || animationsDisabled(context)) {
+      _controller.value = 1.0;
+    } else if (_controller.value == 0.0 && !_controller.isAnimating) {
+      _controller.forward();
     }
   }
 
@@ -327,6 +334,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   int _revealedLength = 0;
   int _revealedThinkingLength = 0;
   Ticker? _revealTicker;
+  bool _animationsDisabled = false;
   double _revealProgress = 0.0;
   double _thinkingRevealProgress = 0.0;
   // Throttles how often the reveal rebuilds (re-parses markdown). Independent
@@ -407,7 +415,15 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     _revealedThinkingLength = _targetThinking.length;
     _revealProgress = _revealedLength.toDouble();
     _thinkingRevealProgress = _revealedThinkingLength.toDouble();
-    if (widget.isStreaming) {
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _settleReveal();
+    } else if (widget.isStreaming) {
       _ensureRevealTicker();
     }
   }
@@ -466,9 +482,11 @@ class _AssistantBubbleState extends State<_AssistantBubble>
   /// Uses a single Ticker for the widget's lifetime to avoid violating
   /// SingleTickerProviderStateMixin's one-ticker contract.
   void _ensureRevealTicker() {
-    if (_revealTicker == null) {
-      _revealTicker = createTicker(_onRevealTick);
+    if (_animationsDisabled) {
+      _settleReveal();
+      return;
     }
+    _revealTicker ??= createTicker(_onRevealTick);
     if (!_revealTicker!.isActive) {
       _revealTicker!.start();
     }
@@ -476,6 +494,16 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
   void _stopRevealTicker() {
     _revealTicker?.stop();
+  }
+
+  void _settleReveal() {
+    _targetContent = widget.message.content;
+    _targetThinking = _displayThinking(widget.message.thinking);
+    _revealedLength = _targetContent.length;
+    _revealedThinkingLength = _targetThinking.length;
+    _revealProgress = _revealedLength.toDouble();
+    _thinkingRevealProgress = _revealedThinkingLength.toDouble();
+    _stopRevealTicker();
   }
 
   void _onRevealTick(Duration elapsed) {
@@ -779,15 +807,23 @@ class _CopyChip extends StatefulWidget {
   State<_CopyChip> createState() => _CopyChipState();
 }
 
-class _CopyChipState extends State<_CopyChip> with SingleTickerProviderStateMixin {
+class _CopyChipState extends State<_CopyChip> {
   bool _copied = false;
+  Timer? _copyFeedbackTimer;
 
   void _handleTap() {
     widget.onCopy();
+    _copyFeedbackTimer?.cancel();
     setState(() => _copied = true);
-    Future.delayed(const Duration(seconds: 3), () {
+    _copyFeedbackTimer = Timer(const Duration(seconds: 3), () {
       if (mounted) setState(() => _copied = false);
     });
+  }
+
+  @override
+  void dispose() {
+    _copyFeedbackTimer?.cancel();
+    super.dispose();
   }
 
   @override

@@ -114,4 +114,56 @@ void main() {
           reason: 'stale bubble cache entry for a removed message should be pruned');
     }
   });
+
+  testWidgets('does not update scroll state after being removed mid-update', (tester) async {
+    final messages = <OllamaMessage>[
+      OllamaMessage('Message', role: OllamaMessageRole.assistant),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatListView(
+            messages: messages,
+            isAwaitingReply: false,
+            composerExpanded: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final state = tester.state(find.byType(ChatListView)) as dynamic;
+    state.debugScheduleScrollButtonVisibilityUpdate();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scroll-to-latest ignores a detached scroll controller',
+      (tester) async {
+    final messages = <OllamaMessage>[
+      OllamaMessage('Message', role: OllamaMessageRole.assistant),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 300,
+            child: ChatListView(
+              messages: messages,
+              isAwaitingReply: false,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final state = tester.state(find.byType(ChatListView)) as dynamic;
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    state.debugScrollToBottom();
+
+    expect(tester.takeException(), isNull);
+  });
 }

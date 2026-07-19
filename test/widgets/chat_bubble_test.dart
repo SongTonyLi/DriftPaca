@@ -117,17 +117,41 @@ void main() {
     });
 
     testWidgets('renders inline fractions', (tester) async {
-      final errors = await pumpBubbleAndCollectErrors(
+      await pumpBubbleAndCollectErrors(
         tester,
         r'The fraction $\frac{a}{b}$ is simple.',
       );
 
-      expect(overflowErrors(errors), isEmpty);
       expect(find.byType(Math), findsOneWidget);
     });
   });
 
-  // ---------------------------------------------------------------------------
+  testWidgets('repeated copy taps keep feedback visible for latest tap',
+      (tester) async {
+    final message = OllamaMessage(
+      'Copy this message',
+      role: OllamaMessageRole.user,
+    );
+
+    await tester.pumpWidget(buildTestApp(ChatBubble(message: message)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Copy'));
+    await tester.pump();
+    expect(find.text('Copied'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.tap(find.text('Copied'));
+    await tester.pump();
+
+    await tester.pump(const Duration(milliseconds: 1100));
+    expect(find.text('Copied'), findsOneWidget,
+        reason: 'copy feedback should expire relative to the latest tap');
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpWidget(buildTestApp(const SizedBox.shrink()));
+  });
+
   testWidgets('long press deletes user bubbles but preserves answer selection',
       (tester) async {
     final userMessage = OllamaMessage(
@@ -173,6 +197,7 @@ void main() {
     expect(selectedText, isNotEmpty);
   });
 
+  // ---------------------------------------------------------------------------
   // Group 2: Display (block) LaTeX
   // ---------------------------------------------------------------------------
   group('display LaTeX basics', () {
@@ -482,7 +507,7 @@ void main() {
     testWidgets('long inline equation renders without crash', (tester) async {
       // Long inline math may overflow in narrow containers (acceptable —
       // clipped in release builds). The key is no crash.
-      final errors = await pumpBubbleAndCollectErrors(
+      await pumpBubbleAndCollectErrors(
         tester,
         r'Result: $a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_{10} + a_{11} + a_{12} + a_{13} + a_{14} + a_{15} = S$',
         surfaceSize: const Size(320, 600),

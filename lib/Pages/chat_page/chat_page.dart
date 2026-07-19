@@ -6,6 +6,7 @@ import 'package:responsive_framework/responsive_framework.dart';
 
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Pages/model_select_page/model_select_route.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 import 'chat_page_view_model.dart';
 import 'subwidgets/subwidgets.dart';
@@ -80,7 +81,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   void _expandInput() {
     setState(() => _isInputExpanded = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _inputFocusNode.requestFocus();
+      if (mounted) _inputFocusNode.requestFocus();
     });
   }
 
@@ -100,7 +101,11 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
     // Drive the search-button pulse animation
     final shouldPulse = _viewModel.webSearchEnabled &&
         (_viewModel.isStreaming || _viewModel.isSearching);
-    if (shouldPulse && !_searchPulseController.isAnimating) {
+    final disableAnimations = animationsDisabled(context);
+    if (disableAnimations) {
+      _searchPulseController.stop();
+      _searchPulseController.value = 0.0;
+    } else if (shouldPulse && !_searchPulseController.isAnimating) {
       _searchPulseController.repeat(reverse: true);
     } else if (!shouldPulse && _searchPulseController.isAnimating) {
       _searchPulseController.stop();
@@ -134,11 +139,11 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                 child: Center(
                   child: AnimatedOpacity(
                     opacity: showIncognitoBadge ? 1.0 : 0.0,
-                    duration: _transitionDuration,
+                    duration: motionDuration(context, _transitionDuration),
                     curve: _transitionCurve,
                     child: AnimatedSlide(
                       offset: showIncognitoBadge ? Offset.zero : const Offset(0, -0.5),
-                      duration: _transitionDuration,
+                      duration: motionDuration(context, _transitionDuration),
                       curve: Curves.easeOutCubic,
                       child: IgnorePointer(
                         ignoring: !showIncognitoBadge,
@@ -240,7 +245,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                         child: footer,
                       ),
               AnimatedPadding(
-                duration: _composerExpandDuration,
+                duration: motionDuration(context, _composerExpandDuration),
                 curve: _composerExpandCurve,
                 padding: EdgeInsets.symmetric(
                   // Stay full width while expanded OR generating, so the stop
@@ -276,12 +281,12 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
       ignoring: expanded,
       child: ClipRect(
         child: AnimatedAlign(
-          duration: _composerExpandDuration,
+          duration: motionDuration(context, _composerExpandDuration),
           curve: _composerExpandCurve,
           alignment: Alignment.bottomCenter,
           heightFactor: expanded ? 0.0 : 1.0,
           child: AnimatedOpacity(
-            duration: _composerExpandDuration,
+            duration: motionDuration(context, _composerExpandDuration),
             curve: Curves.easeOut,
             opacity: expanded ? 0.0 : 1.0,
             child: Padding(
@@ -322,13 +327,13 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
             children: [
               ClipRect(
                 child: AnimatedAlign(
-                  duration: _composerExpandDuration,
+                  duration: motionDuration(context, _composerExpandDuration),
                   curve: _composerExpandCurve,
                   alignment: Alignment.bottomCenter,
                   heightFactor: _shouldShowExpanded ? 1.0 : 0.0,
                   child: AnimatedOpacity(
                     opacity: _shouldShowExpanded ? 1.0 : 0.0,
-                    duration: _composerExpandDuration,
+                    duration: motionDuration(context, _composerExpandDuration),
                     curve: Curves.easeIn,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -414,7 +419,10 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                           behavior: HitTestBehavior.opaque,
                           child: AnimatedOpacity(
                             opacity: _shouldShowExpanded ? 0.0 : 1.0,
-                            duration: const Duration(milliseconds: 300),
+                            duration: motionDuration(
+                              context,
+                              const Duration(milliseconds: 300),
+                            ),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                               child: Text(

@@ -102,6 +102,39 @@ void main() {
           'The user asked about the </think> tag in markup.');
       expect(parsed.responseContent, 'Here is the answer.');
     });
+
+    testWidgets('manual expand wins over pending thinking auto-collapse',
+        (tester) async {
+      var complete = false;
+      late StateSetter rebuild;
+
+      await tester.pumpWidget(
+        _host(
+          StatefulBuilder(
+            builder: (context, setState) {
+              rebuild = setState;
+              return ThinkBlockWidget(
+                content: 'Reasoning',
+                isComplete: complete,
+                isStreaming: !complete,
+              );
+            },
+          ),
+        ),
+      );
+
+      complete = true;
+      rebuild(() {});
+      await tester.pump();
+      await tester.tap(find.textContaining('Thought'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final transition =
+          tester.widget<SizeTransition>(find.byType(SizeTransition));
+      expect(transition.sizeFactor.value, 1.0);
+    });
   });
 
   group('SearchCard result count label', () {

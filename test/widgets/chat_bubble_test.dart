@@ -5,6 +5,17 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
 
+class _RecordingObserver extends NavigatorObserver {
+  TransitionRoute<dynamic>? pushed;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is TransitionRoute<dynamic>) {
+      pushed = route;
+    }
+  }
+}
+
 Widget buildTestApp(Widget child) {
   return MaterialApp(
     home: Scaffold(body: child),
@@ -150,6 +161,32 @@ void main() {
 
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpWidget(buildTestApp(const SizedBox.shrink()));
+  });
+
+  testWidgets('edit popup has zero timing when animations are disabled',
+      (tester) async {
+    final observer = _RecordingObserver();
+    final message = OllamaMessage(
+      'Edit this prompt',
+      role: OllamaMessageRole.user,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [observer],
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: Scaffold(body: ChatBubble(message: message)),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Edit'));
+    await tester.pump();
+
+    expect(observer.pushed!.transitionDuration, Duration.zero);
+    expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
   });
 
   testWidgets('long press deletes user bubbles but preserves answer selection',

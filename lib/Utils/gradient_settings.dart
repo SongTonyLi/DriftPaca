@@ -23,7 +23,7 @@ GradientPair readGradientPair(Box box) {
 }
 
 /// Persist [pair] as ARGB ints under the bgColor keys.
-void writeGradientPair(Box box, GradientPair pair) {
-  box.put(kBgColor1Key, pair.c1.toARGB32());
-  box.put(kBgColor2Key, pair.c2.toARGB32());
-}
+Future<void> writeGradientPair(Box box, GradientPair pair) => box.putAll({
+      kBgColor1Key: pair.c1.toARGB32(),
+      kBgColor2Key: pair.c2.toARGB32(),
+    });

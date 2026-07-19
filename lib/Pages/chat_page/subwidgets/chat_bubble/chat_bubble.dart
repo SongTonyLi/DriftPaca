@@ -872,7 +872,10 @@ Future<String?> _showEditPopup(BuildContext context, OllamaMessage message) asyn
     barrierDismissible: true,
     barrierLabel: 'Dismiss',
     barrierColor: Colors.black38,
-    transitionDuration: const Duration(milliseconds: 400),
+    transitionDuration: motionDuration(
+      context,
+      const Duration(milliseconds: 400),
+    ),
     pageBuilder: (_, __, ___) => const SizedBox.shrink(),
     transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
       final moveCurve = CurvedAnimation(

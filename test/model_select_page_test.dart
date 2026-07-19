@@ -5,6 +5,8 @@ import 'package:llamaseek/Models/model_capabilities.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Pages/model_select_page/model_select_page.dart';
 import 'package:llamaseek/Pages/model_select_page/subwidgets/brand_node.dart';
+import 'package:llamaseek/Pages/model_select_page/subwidgets/logo_wheel.dart';
+import 'package:llamaseek/Pages/model_select_page/subwidgets/wheel_center_disc.dart';
 
 OllamaModel _mk(
   String name,
@@ -119,5 +121,96 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.takeException(), isNull);
     expect(find.text('Loading models…'), findsOneWidget);
+  });
+
+  testWidgets('reduced motion opens model info without an intermediate frame',
+      (tester) async {
+    _phoneSurface(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: ModelSelectPage(models: _models),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.info_outline));
+    await tester.pump();
+
+    expect(find.text('SPECIFICATIONS'), findsOneWidget);
+  });
+
+  testWidgets('reduced motion snaps a tapped wheel node in one frame',
+      (tester) async {
+    var selected = -1;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: Scaffold(
+              body: Center(
+                child: LogoWheel(
+                  nodes: const [
+                    WheelNode(
+                      asset: 'assets/images/model_logos/qwen.svg',
+                      accent: Colors.purple,
+                    ),
+                    WheelNode(
+                      asset: 'assets/images/model_logos/deepseek.svg',
+                      accent: Colors.blue,
+                    ),
+                    WheelNode(
+                      asset: 'assets/images/ollama.svg',
+                      accent: Colors.grey,
+                      tinted: true,
+                    ),
+                  ],
+                  diameter: 340,
+                  centerHole: 184,
+                  onSelectedChanged: (index) => selected = index,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byType(BrandNode).last, warnIfMissed: false);
+    await tester.pump();
+
+    expect(selected, 2);
+  });
+
+  testWidgets('center disc switches immediately with reduced motion',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: const Scaffold(
+              body: WheelCenterDisc(
+                diameter: 180,
+                asset: 'assets/images/model_logos/qwen.svg',
+                accent: Colors.purple,
+                modelName: 'qwen3:8b',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final switcher = tester.widget<AnimatedSwitcher>(
+      find.byType(AnimatedSwitcher),
+    );
+    expect(switcher.duration, Duration.zero);
   });
 }

@@ -16,6 +16,7 @@ import 'package:llamaseek/Models/model_capabilities.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Pages/model_select_page/model_select_page.dart';
 import 'package:llamaseek/Utils/mode_palette.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 void main() => runApp(const PreviewApp());
 
@@ -118,16 +119,23 @@ class _WelcomeScreen extends StatelessWidget {
   });
 
   Future<void> _pick(BuildContext context) async {
+    final disabled = animationsDisabled(context);
     final picked = await Navigator.of(context).push<OllamaModel>(
       PageRouteBuilder<OllamaModel>(
-        transitionDuration: const Duration(milliseconds: 340),
-        reverseTransitionDuration: const Duration(milliseconds: 240),
+        transitionDuration:
+            disabled ? Duration.zero : const Duration(milliseconds: 340),
+        reverseTransitionDuration:
+            disabled ? Duration.zero : const Duration(milliseconds: 240),
         pageBuilder: (_, __, ___) => ModelSelectPage(
           models: _mocks,
           currentModelName: selected.name,
         ),
         transitionsBuilder: (_, anim, __, child) => FadeTransition(
-          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+          opacity: CurvedAnimation(
+            parent: anim,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          ),
           child: child,
         ),
       ),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:llamaseek/Constants/gradient_presets.dart';
 import 'package:llamaseek/Pages/settings_page/subwidgets/themes_settings.dart';
@@ -24,17 +23,37 @@ void main() {
 
   setUp(() async => Hive.box('settings').clear());
 
-  testWidgets('tapping a preset swatch writes that pair', (tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      home: Scaffold(body: SingleChildScrollView(child: ThemesSettings())),
-    ));
+  testWidgets('preset selection writes and respects reduced motion',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: const Scaffold(
+              body: SingleChildScrollView(child: ThemesSettings()),
+            ),
+          ),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
+
+    final selectedSwatch = find.descendant(
+      of: find.byKey(const ValueKey('gradient-preset-0')),
+      matching: find.byType(AnimatedContainer),
+    );
+    expect(
+      tester.widget<AnimatedContainer>(selectedSwatch).duration,
+      Duration.zero,
+    );
 
     final swatch = find.byKey(const ValueKey('gradient-preset-1'));
     expect(swatch, findsOneWidget);
     await tester.tap(swatch);
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(readGradientPair(Hive.box('settings')), kGradientPresets[1]);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

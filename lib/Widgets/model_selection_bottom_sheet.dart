@@ -1,6 +1,5 @@
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:async/async.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,6 +11,7 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/ollama_request_state.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 class ModelSelectionBottomSheet extends StatefulWidget {
   final String title;
@@ -295,8 +295,10 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
       }
 
       return RefreshIndicator(
-        onRefresh: () async {
-          _fetchOperation = CancelableOperation.fromFuture(_fetchModels());
+        onRefresh: () {
+          final refreshFuture = _fetchModels();
+          _fetchOperation = CancelableOperation.fromFuture(refreshFuture);
+          return refreshFuture;
         },
         child: ListView.builder(
           controller: widget.scrollController,
@@ -386,7 +388,11 @@ class _ModelTileState extends State<_ModelTile>
 
   void _snapBack() {
     _snapStartOffset = _dragOffset;
-    _slideController.forward(from: 0);
+    if (animationsDisabled(context)) {
+      setState(() => _dragOffset = 0);
+    } else {
+      _slideController.forward(from: 0);
+    }
   }
 
   void _showInfoCard() {
@@ -397,7 +403,10 @@ class _ModelTileState extends State<_ModelTile>
       barrierDismissible: true,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.black38,
-      transitionDuration: const Duration(milliseconds: 380),
+      transitionDuration: motionDuration(
+        context,
+        const Duration(milliseconds: 380),
+      ),
       pageBuilder: (_, __, ___) => const SizedBox.shrink(),
       transitionBuilder: (dialogContext, animation, _, __) {
         return _ModelInfoTransition(

@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/chat_image.dart';
 
 class ChatBubbleImage extends StatelessWidget {
@@ -26,6 +27,14 @@ class ChatBubbleImage extends StatelessWidget {
         Navigator.of(context).push(
           PageRouteBuilder(
             opaque: false,
+            transitionDuration: motionDuration(
+              context,
+              const Duration(milliseconds: 300),
+            ),
+            reverseTransitionDuration: motionDuration(
+              context,
+              const Duration(milliseconds: 300),
+            ),
             pageBuilder: (context, animation, secondaryAnimation) {
               return _ImageGalleryFullScreen(
                 images: allImages,
@@ -167,7 +176,15 @@ class _ImageGalleryFullScreenState extends State<_ImageGalleryFullScreen>
         parent: _springController,
         curve: Curves.easeOutCubic,
       ));
-      _springController.forward(from: 0);
+      if (animationsDisabled(context)) {
+        setState(() {
+          _dragOffset = Offset.zero;
+          _dragScale = 1.0;
+          _backgroundOpacity = 1.0;
+        });
+      } else {
+        _springController.forward(from: 0);
+      }
     }
   }
 

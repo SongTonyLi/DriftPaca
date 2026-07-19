@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 /// A single tappable row in a [showGlassContextMenu].
 class GlassMenuAction {
@@ -40,7 +41,10 @@ Future<void> showGlassContextMenu({
     barrierDismissible: true,
     barrierLabel: 'Dismiss',
     barrierColor: Colors.black26,
-    transitionDuration: const Duration(milliseconds: 250),
+    transitionDuration: motionDuration(
+      context,
+      const Duration(milliseconds: 250),
+    ),
     pageBuilder: (_, __, ___) => const SizedBox.shrink(),
     transitionBuilder: (dialogContext, animation, secondaryAnimation, _) {
       final curved = CurvedAnimation(

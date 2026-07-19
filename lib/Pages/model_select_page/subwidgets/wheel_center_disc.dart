@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 /// The frosted-glass disc at the center of the wheel. Shows the currently docked
 /// model: its brand logo (cross-fading on change), the model name in JetBrains
@@ -126,7 +127,10 @@ class WheelCenterDisc extends StatelessWidget {
             alignment: Alignment.center,
             padding: EdgeInsets.all(diameter * 0.1),
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 320),
+              duration: motionDuration(
+                context,
+                const Duration(milliseconds: 320),
+              ),
               switchInCurve: Curves.easeOut,
               switchOutCurve: Curves.easeIn,
               transitionBuilder: (child, anim) => FadeTransition(

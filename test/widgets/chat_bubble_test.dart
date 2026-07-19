@@ -128,6 +128,51 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  testWidgets('long press deletes user bubbles but preserves answer selection',
+      (tester) async {
+    final userMessage = OllamaMessage(
+      'User message',
+      role: OllamaMessageRole.user,
+    );
+    final assistantMessage = OllamaMessage(
+      'Assistant answer to select',
+      role: OllamaMessageRole.assistant,
+    );
+    String? selectedText;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SelectionArea(
+            onSelectionChanged: (content) {
+              selectedText = content?.plainText;
+            },
+            child: Column(
+              children: [
+                ChatBubble(message: userMessage),
+                ChatBubble(message: assistantMessage),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('User message'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete exchange'), findsOneWidget);
+
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('Assistant answer to select'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete exchange'), findsNothing);
+    expect(selectedText, isNotNull);
+    expect(selectedText, isNotEmpty);
+  });
+
   // Group 2: Display (block) LaTeX
   // ---------------------------------------------------------------------------
   group('display LaTeX basics', () {

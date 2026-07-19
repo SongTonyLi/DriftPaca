@@ -121,14 +121,11 @@ class _ChatBubbleBody extends StatelessWidget {
               ),
             )
           else
-            _wrapWithMenu(
-              context,
-              _AssistantBubble(
-                message: message,
-                isStreaming: isStreaming,
-                buildMarkdown: _buildMarkdown,
-                searchSegments: searchSegments,
-              ),
+            _AssistantBubble(
+              message: message,
+              isStreaming: isStreaming,
+              buildMarkdown: _buildMarkdown,
+              searchSegments: searchSegments,
             ),
         ],
       ),

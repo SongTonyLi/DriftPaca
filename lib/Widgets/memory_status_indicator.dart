@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:llamaseek/Services/memory_service.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 class MemoryStatusIndicator extends StatefulWidget {
   const MemoryStatusIndicator({super.key});
@@ -32,16 +33,20 @@ class _MemoryStatusIndicatorState extends State<MemoryStatusIndicator>
     super.dispose();
   }
 
-  void _syncAnimation(bool isUpdating) {
-    if (isUpdating) {
-      if (!_controller.isAnimating) {
-        _controller.repeat(reverse: true);
-      }
+  void _syncAnimation({
+    required bool isUpdating,
+    required bool disabled,
+  }) {
+    if (disabled) {
+      _controller
+        ..stop()
+        ..value = 1.0;
+    } else if (isUpdating) {
+      if (!_controller.isAnimating) _controller.repeat(reverse: true);
     } else {
-      if (_controller.isAnimating) {
-        _controller.stop();
-        _controller.value = 0.0;
-      }
+      _controller
+        ..stop()
+        ..value = 0.0;
     }
   }
 
@@ -50,10 +55,14 @@ class _MemoryStatusIndicatorState extends State<MemoryStatusIndicator>
     return Consumer<MemoryService>(
       builder: (context, memoryService, _) {
         if (!memoryService.isEnabled) return const SizedBox.shrink();
+        final disabled = animationsDisabled(context);
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          _syncAnimation(memoryService.isUpdating);
+          _syncAnimation(
+            isUpdating: memoryService.isUpdating,
+            disabled: disabled,
+          );
         });
 
         return AnimatedBuilder(

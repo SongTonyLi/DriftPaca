@@ -4,6 +4,7 @@ import 'package:llamaseek/Constants/memory_constants.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Models/memory_topic.dart';
 import 'package:llamaseek/Models/ephemeral_context.dart';
+import 'package:llamaseek/Widgets/pulsing_icon.dart';
 
 class MemorySection {
   final String label;
@@ -191,7 +192,11 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
                         Consumer<MemoryService>(
                           builder: (context, memoryService, _) {
                             if (memoryService.isUpdating) {
-                              return _PulsingStarIcon(size: 20, color: colorScheme.primary);
+                              return PulsingIcon(
+                                icon: Icons.auto_awesome,
+                                size: 20,
+                                color: colorScheme.primary,
+                              );
                             }
                             return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
                           },
@@ -665,7 +670,6 @@ class _MemoryEditorSheetState extends State<_MemoryEditorSheet> {
     );
   }
 }
-
 // ---------------------------------------------------------------------------
 // Tabbed three-tier editor (agent memory)
 // ---------------------------------------------------------------------------
@@ -803,7 +807,11 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
                     Consumer<MemoryService>(
                       builder: (context, memoryService, _) {
                         if (memoryService.isUpdating) {
-                          return _PulsingStarIcon(size: 20, color: colorScheme.primary);
+                          return PulsingIcon(
+                            icon: Icons.auto_awesome,
+                            size: 20,
+                            color: colorScheme.primary,
+                          );
                         }
                         return Icon(Icons.auto_awesome_outlined, size: 20, color: colorScheme.primary);
                       },
@@ -1901,50 +1909,6 @@ class _TabbedMemorySheetState extends State<_TabbedMemorySheet>
           ),
         ],
       ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Shared animated icon
-// ---------------------------------------------------------------------------
-
-class _PulsingStarIcon extends StatefulWidget {
-  final double size;
-  final Color color;
-
-  const _PulsingStarIcon({required this.size, required this.color});
-
-  @override
-  State<_PulsingStarIcon> createState() => _PulsingStarIconState();
-}
-
-class _PulsingStarIconState extends State<_PulsingStarIcon>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 1200),
-      vsync: this,
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween<double>(begin: 0.3, end: 1.0).animate(
-        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-      ),
-      child: Icon(Icons.auto_awesome, size: widget.size, color: widget.color),
     );
   }
 }

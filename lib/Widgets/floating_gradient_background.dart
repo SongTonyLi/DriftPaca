@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:llamaseek/Utils/drift_speed.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
 
 /// Full-bleed background that is a flat [idleColor] at rest. Only while
@@ -74,6 +75,7 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   static const double _welcomeFadeInPerSecond = 1 / 0.6;
   static const double _welcomeFadeOutPerSecond = 1 / 2.5;
   bool _introActive = false;
+  bool _animationsDisabled = false;
   double _welcomeElapsed = 0;
 
   // Glassy legibility layer over the blobs; its opacity tracks the mesh, so it is
@@ -88,16 +90,42 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     _mesh.canvas = widget.canvas;
     _ticker = createTicker(_onTick);
     _loadShader();
-    // Animate if we open mid-generation; or play the welcome intro if we open on
-    // the empty welcome screen. Otherwise stay flat/idle.
-    if (widget.isGenerating) {
-      _ticker.start();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncMotionPreference();
+  }
+
+  void _syncMotionPreference() {
+    final disabled = animationsDisabled(context);
+    _animationsDisabled = disabled;
+    if (disabled) {
+      _ticker.stop();
+      _introActive = false;
+      _mesh.welcome = false;
+      _mesh.opacity = widget.isGenerating ? 1.0 : 0.0;
+      _glassOpacity.value = _mesh.opacity;
+      _repaint.value++;
+    } else if (widget.isGenerating) {
+      _resetClock = true;
+      if (!_ticker.isActive) _ticker.start();
     } else if (widget.isWelcome) {
       _startWelcomeIntro();
     }
   }
 
   void _startWelcomeIntro() {
+    if (_animationsDisabled) {
+      _introActive = false;
+      _mesh
+        ..welcome = false
+        ..opacity = 0;
+      _glassOpacity.value = 0;
+      _ticker.stop();
+      return;
+    }
     _mesh.welcome = true;
     _introActive = true;
     _welcomeElapsed = 0;
@@ -132,6 +160,12 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     _mesh.a = widget.meshA;
     _mesh.b = widget.meshB;
     _mesh.canvas = widget.canvas;
+    if (_animationsDisabled) {
+      _mesh.opacity = widget.isGenerating ? 1.0 : 0.0;
+      _glassOpacity.value = _mesh.opacity;
+      _repaint.value++;
+      return;
+    }
     if (widget.isGenerating && !old.isGenerating) {
       // Generation starts: wake the (conversation) mesh; cancel any welcome intro.
       _introActive = false;

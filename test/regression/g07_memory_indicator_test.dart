@@ -38,11 +38,17 @@ class _FakeMemoryService extends MemoryService {
   }
 }
 
-Widget _host(_FakeMemoryService service) {
+Widget _host(
+  _FakeMemoryService service, {
+  bool disableAnimations = false,
+}) {
   return MaterialApp(
-    home: ChangeNotifierProvider<MemoryService>.value(
-      value: service,
-      child: const Scaffold(body: MemoryStatusIndicator()),
+    home: MediaQuery(
+      data: MediaQueryData(disableAnimations: disableAnimations),
+      child: ChangeNotifierProvider<MemoryService>.value(
+        value: service,
+        child: const Scaffold(body: MemoryStatusIndicator()),
+      ),
     ),
   );
 }
@@ -108,5 +114,15 @@ void main() {
 
     expect(find.byIcon(Icons.auto_awesome), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reduced motion shows updating state without pulsing',
+      (tester) async {
+    final service = _FakeMemoryService()..setState(updating: true);
+    await tester.pumpWidget(_host(service, disableAnimations: true));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.auto_awesome), findsOneWidget);
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 }

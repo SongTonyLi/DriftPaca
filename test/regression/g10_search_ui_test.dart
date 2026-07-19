@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
+import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/search_detail_dialog.dart';
 import 'package:shimmer/shimmer.dart';
@@ -262,6 +263,41 @@ void main() {
 
       expect(observer.pushed!.transitionDuration, Duration.zero);
       expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
+    });
+
+    testWidgets('source favicon pop is settled immediately', (tester) async {
+      FaviconCache.instance.clearForTest();
+      final segment = SearchCardSegment(
+        query: 'q',
+        isComplete: true,
+        sources: [
+          SearchSource(
+            url: 'https://reduced-motion.invalid',
+            domain: 'reduced-motion.invalid',
+            title: 'Example source',
+            content: 'Full source content',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(disableAnimations: true),
+              child: Scaffold(body: SearchDetailDialog(segment: segment)),
+            ),
+          ),
+        ),
+      );
+
+      final fade = tester.widget<FadeTransition>(
+        find.byKey(const ValueKey('source-favicon-fade')),
+      );
+      expect(fade.opacity.value, 1.0);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      FaviconCache.instance.clearForTest();
     });
   });
 }

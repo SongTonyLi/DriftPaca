@@ -182,4 +182,26 @@ void main() {
     expect(observer.pushed!.transitionDuration, Duration.zero);
     expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
   });
+
+  testWidgets('gallery dots skip size animation with reduced motion',
+      (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ChatBubbleImage(
+          imageFile: images[0],
+          allImages: images,
+          index: 0,
+        ),
+        size: const Size(390, 844),
+        disableAnimations: true,
+      ),
+    );
+    await tester.tap(find.byType(ChatBubbleImage));
+    await tester.pump();
+
+    final dot = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey('gallery-dot-0')),
+    );
+    expect(dot.duration, Duration.zero);
+  });
 }

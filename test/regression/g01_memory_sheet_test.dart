@@ -39,29 +39,44 @@ Widget _host({
   List<MemorySection>? profileSections,
   Future<void> Function(int id)? onDeleteTopic,
   int maxTotalTokens = 100000,
+  bool disableAnimations = false,
+  bool useFlatEditor = false,
 }) {
   final service = _FakeMemoryService();
   return ChangeNotifierProvider<MemoryService>.value(
     value: service,
     child: MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder: (context) => Center(
-            child: ElevatedButton(
-              onPressed: () => showMemoryBottomSheet(
-                context,
-                title: 'Agent Memory',
-                maxTotalTokens: maxTotalTokens,
-                profileSections: profileSections ?? [_profile('Name', '')],
-                onSaveProfile: (_) {},
-                onSaveTopic: (topic) async => topic,
-                onDeleteTopic: onDeleteTopic ?? (_) async {},
-                onSaveEphemeral: (_) async {},
-                onDeleteEphemeral: (_) async {},
-                topics: topics,
-                ephemeralContexts: ephemeral,
+      home: Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(disableAnimations: disableAnimations),
+          child: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: ElevatedButton(
+                  onPressed: () => showMemoryBottomSheet(
+                    context,
+                    title:
+                        useFlatEditor ? 'Conversation Memory' : 'Agent Memory',
+                    maxTotalTokens: maxTotalTokens,
+                    sections: useFlatEditor
+                        ? [_profile('Summary', 'Song')]
+                        : const [],
+                    onSave: (_) {},
+                    profileSections: useFlatEditor
+                        ? null
+                        : profileSections ?? [_profile('Name', '')],
+                    onSaveProfile: (_) {},
+                    onSaveTopic: (topic) async => topic,
+                    onDeleteTopic: onDeleteTopic ?? (_) async {},
+                    onSaveEphemeral: (_) async {},
+                    onDeleteEphemeral: (_) async {},
+                    topics: topics,
+                    ephemeralContexts: ephemeral,
+                  ),
+                  child: const Text('open'),
+                ),
               ),
-              child: const Text('open'),
             ),
           ),
         ),
@@ -178,5 +193,21 @@ void main() {
     );
     expect(warning.style!.color, isNot(Colors.orange));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('memory content switch skips animation with reduced motion',
+      (tester) async {
+    await tester.pumpWidget(_host(
+      topics: const [],
+      disableAnimations: true,
+      useFlatEditor: true,
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+
+    final switcher = tester.widget<AnimatedSwitcher>(
+      find.byType(AnimatedSwitcher).first,
+    );
+    expect(switcher.duration, Duration.zero);
   });
 }

@@ -22,6 +22,7 @@ class ChatBubbleImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final disableAnimations = animationsDisabled(context);
     return GestureDetector(
       onTap: () {
         Navigator.of(context).push(
@@ -39,6 +40,7 @@ class ChatBubbleImage extends StatelessWidget {
               return _ImageGalleryFullScreen(
                 images: allImages,
                 initialIndex: index,
+                disableAnimations: disableAnimations,
               );
             },
             transitionsBuilder: (context, animation, _, child) {
@@ -65,10 +67,12 @@ class ChatBubbleImage extends StatelessWidget {
 class _ImageGalleryFullScreen extends StatefulWidget {
   final List<File> images;
   final int initialIndex;
+  final bool disableAnimations;
 
   const _ImageGalleryFullScreen({
     required this.images,
     required this.initialIndex,
+    required this.disableAnimations,
   });
 
   @override
@@ -176,7 +180,7 @@ class _ImageGalleryFullScreenState extends State<_ImageGalleryFullScreen>
         parent: _springController,
         curve: Curves.easeOutCubic,
       ));
-      if (animationsDisabled(context)) {
+      if (widget.disableAnimations) {
         setState(() {
           _dragOffset = Offset.zero;
           _dragScale = 1.0;
@@ -295,7 +299,10 @@ class _ImageGalleryFullScreenState extends State<_ImageGalleryFullScreen>
                   children: List.generate(widget.images.length, (index) {
                     final isActive = _currentIndex == index;
                     return AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
+                      key: ValueKey('gallery-dot-$index'),
+                      duration: widget.disableAnimations
+                          ? Duration.zero
+                          : const Duration(milliseconds: 200),
                       margin: const EdgeInsets.symmetric(horizontal: 3),
                       width: isActive ? 8 : 6,
                       height: isActive ? 8 : 6,

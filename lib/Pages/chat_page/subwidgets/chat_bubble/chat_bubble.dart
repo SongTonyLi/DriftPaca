@@ -565,7 +565,10 @@ class _AssistantBubbleState extends State<_AssistantBubble>
             ),
           // Smoothly reveal action buttons when streaming ends
           AnimatedSize(
-            duration: const Duration(milliseconds: 300),
+            duration: motionDuration(
+              context,
+              const Duration(milliseconds: 300),
+            ),
             curve: Curves.easeOutCubic,
             alignment: Alignment.topLeft,
             child: _isRevealing
@@ -832,7 +835,10 @@ class _CopyChipState extends State<_CopyChip> {
     final color = _copied ? colorScheme.primary : colorScheme.onSurfaceVariant;
 
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 200),
+      duration: motionDuration(
+        context,
+        const Duration(milliseconds: 200),
+      ),
       child: InkWell(
         key: ValueKey(_copied),
         onTap: _handleTap,
@@ -1111,6 +1117,7 @@ class _LinkFaviconState extends State<_LinkFavicon>
   Uint8List? _bytes;
   String _domain = '';
   bool _resolved = false;
+  bool _animationsDisabled = false;
 
   @override
   void initState() {
@@ -1144,6 +1151,15 @@ class _LinkFaviconState extends State<_LinkFavicon>
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _controller.value = 1.0;
+    }
+  }
+
   Future<void> _resolveFavicon() async {
     if (_domain.isEmpty) {
       _resolved = true;
@@ -1160,7 +1176,11 @@ class _LinkFaviconState extends State<_LinkFavicon>
     // Only animate when bytes have just arrived from the network — there
     // was a real "appear" moment to celebrate. Cached bytes never get
     // here.
-    _controller.forward();
+    if (_animationsDisabled) {
+      _controller.value = 1.0;
+    } else {
+      _controller.forward();
+    }
   }
 
   @override
@@ -1182,6 +1202,7 @@ class _LinkFaviconState extends State<_LinkFavicon>
       child: ScaleTransition(
         scale: _scale,
         child: FadeTransition(
+          key: const ValueKey('link-favicon-fade'),
           opacity: _fade,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,

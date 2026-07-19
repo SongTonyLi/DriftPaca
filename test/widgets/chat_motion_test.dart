@@ -5,6 +5,7 @@ import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dar
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/streaming_llama.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_welcome.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/welcome_scaffold.dart';
+import 'package:llamaseek/Utils/favicon_cache.dart';
 
 Widget reducedMotionHost(Widget child) => MaterialApp(
       home: MediaQuery(
@@ -110,5 +111,60 @@ void main() {
     await tester.pump();
 
     expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
+  testWidgets('assistant actions skip size animation with reduced motion',
+      (tester) async {
+    final message = OllamaMessage(
+      'Completed answer',
+      role: OllamaMessageRole.assistant,
+    );
+
+    await tester.pumpWidget(
+      reducedMotionHost(ChatBubble(message: message)),
+    );
+
+    final animatedSize = tester.widget<AnimatedSize>(
+      find.byType(AnimatedSize),
+    );
+    expect(animatedSize.duration, Duration.zero);
+  });
+
+  testWidgets('copy feedback skips switch animation with reduced motion',
+      (tester) async {
+    final message = OllamaMessage(
+      'Copy this prompt',
+      role: OllamaMessageRole.user,
+    );
+
+    await tester.pumpWidget(
+      reducedMotionHost(ChatBubble(message: message)),
+    );
+
+    final switcher = tester.widget<AnimatedSwitcher>(
+      find.byType(AnimatedSwitcher),
+    );
+    expect(switcher.duration, Duration.zero);
+  });
+
+  testWidgets('link favicon pop is settled with reduced motion',
+      (tester) async {
+    FaviconCache.instance.clearForTest();
+    final message = OllamaMessage(
+      '[Example](https://reduced-motion.invalid)',
+      role: OllamaMessageRole.assistant,
+    );
+
+    await tester.pumpWidget(
+      reducedMotionHost(ChatBubble(message: message)),
+    );
+
+    final fade = tester.widget<FadeTransition>(
+      find.byKey(const ValueKey('link-favicon-fade')),
+    );
+    expect(fade.opacity.value, 1.0);
+
+    await tester.pumpWidget(reducedMotionHost(const SizedBox.shrink()));
+    FaviconCache.instance.clearForTest();
   });
 }

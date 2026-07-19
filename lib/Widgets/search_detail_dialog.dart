@@ -447,6 +447,7 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
 
   Uint8List? _bytes;
   bool _resolved = false;
+  bool _animationsDisabled = false;
 
   @override
   void initState() {
@@ -473,6 +474,15 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _controller.value = 1.0;
+    }
+  }
+
   Future<void> _load() async {
     final bytes = await FaviconCache.instance.fetch(widget.domain);
     if (!mounted) return;
@@ -480,7 +490,11 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
       _bytes = bytes;
       _resolved = true;
     });
-    _controller.forward();
+    if (_animationsDisabled) {
+      _controller.value = 1.0;
+    } else {
+      _controller.forward();
+    }
   }
 
   @override
@@ -499,6 +513,7 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
       child: ScaleTransition(
         scale: _scale,
         child: FadeTransition(
+          key: const ValueKey('source-favicon-fade'),
           opacity: _fade,
           child: _resolved ? _buildIcon(colorScheme) : null,
         ),

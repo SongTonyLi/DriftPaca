@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Shows search details as a bottom sheet with sources and per-source snippets.
@@ -244,7 +245,11 @@ class _SourceContentCardState extends State<_SourceContentCard>
 
   void _snapBack() {
     _snapStartOffset = _dragOffset;
-    _slideController.forward(from: 0);
+    if (animationsDisabled(context)) {
+      setState(() => _dragOffset = 0);
+    } else {
+      _slideController.forward(from: 0);
+    }
   }
 
   Future<void> _openUrl() async {
@@ -259,7 +264,10 @@ class _SourceContentCardState extends State<_SourceContentCard>
       barrierDismissible: true,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.black38,
-      transitionDuration: const Duration(milliseconds: 380),
+      transitionDuration: motionDuration(
+        context,
+        const Duration(milliseconds: 380),
+      ),
       pageBuilder: (_, __, ___) => const SizedBox.shrink(),
       transitionBuilder: (dialogContext, animation, _, __) {
         final curve = CurvedAnimation(

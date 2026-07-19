@@ -307,23 +307,33 @@ class _ChatListViewState extends State<ChatListView> {
 
   /// Skeleton loading indicator with animated text placeholder lines.
   Widget _buildSkeletonLoader(BuildContext context) {
+    final skeleton = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _skeletonLine(width: 220),
+        const SizedBox(height: 10),
+        _skeletonLine(width: 180),
+        const SizedBox(height: 10),
+        _skeletonLine(width: 140),
+      ],
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
-      child: Shimmer.fromColors(
-        baseColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
-        highlightColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.14),
-        period: const Duration(milliseconds: 1500),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _skeletonLine(width: 220),
-            const SizedBox(height: 10),
-            _skeletonLine(width: 180),
-            const SizedBox(height: 10),
-            _skeletonLine(width: 140),
-          ],
-        ),
-      ),
+      child: animationsDisabled(context)
+          ? skeleton
+          : Shimmer.fromColors(
+              baseColor: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.06),
+              highlightColor: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.14),
+              period: const Duration(milliseconds: 1500),
+              child: skeleton,
+            ),
     );
   }
 

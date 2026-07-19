@@ -4,8 +4,20 @@ import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/search_detail_dialog.dart';
+import 'package:shimmer/shimmer.dart';
 
 Widget _host(Widget child) => MaterialApp(home: Scaffold(body: child));
+
+class _RecordingObserver extends NavigatorObserver {
+  TransitionRoute<dynamic>? pushed;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is TransitionRoute<dynamic>) {
+      pushed = route;
+    }
+  }
+}
 
 void main() {
   group('search source preview truncation', () {
@@ -161,6 +173,95 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('3 sources'), findsOneWidget);
+    });
+
+    testWidgets('pending rows are static when animations are disabled',
+        (tester) async {
+      final segment = SearchCardSegment(
+        query: 'q',
+        urls: [
+          SearchURLStatus(
+            url: 'https://example.com',
+            domain: 'example.com',
+            state: SearchURLState.pending,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: Scaffold(body: SearchCard(segment: segment)),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(Shimmer), findsNothing);
+      expect(find.byIcon(Icons.hourglass_top_rounded), findsWidgets);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('tapping an in-progress card collapses its source list',
+        (tester) async {
+      final segment = SearchCardSegment(
+        query: 'q',
+        urls: [
+          SearchURLStatus(
+            url: 'https://example.com',
+            domain: 'example.com',
+            state: SearchURLState.pending,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_host(SearchCard(segment: segment)));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.textContaining('Searching:'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final transition =
+          tester.widget<SizeTransition>(find.byType(SizeTransition));
+      expect(transition.sizeFactor.value, 0.0);
+    });
+  });
+
+  group('SearchDetailDialog reduced motion', () {
+    testWidgets('full source dialog has zero transition duration',
+        (tester) async {
+      final observer = _RecordingObserver();
+      final segment = SearchCardSegment(
+        query: 'q',
+        isComplete: true,
+        sources: [
+          SearchSource(
+            url: 'https://example.com',
+            domain: 'example.com',
+            title: 'Example source',
+            content: 'Full source content',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [observer],
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: Scaffold(body: SearchDetailDialog(segment: segment)),
+          ),
+        ),
+      );
+      await tester.drag(
+        find.text('Example source'),
+        const Offset(-100, 0),
+      );
+      await tester.pump();
+
+      expect(observer.pushed!.transitionDuration, Duration.zero);
+      expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
     });
   });
 }

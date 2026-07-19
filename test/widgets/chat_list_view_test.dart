@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_list_view.dart';
+import 'package:shimmer/shimmer.dart';
 
 void main() {
   Widget buildTestApp(Widget child) {
@@ -165,5 +166,26 @@ void main() {
     state.debugScrollToBottom();
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('awaiting-reply skeleton is static when animations are disabled',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: Scaffold(
+            body: ChatListView(
+              messages: [],
+              isAwaitingReply: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(Shimmer), findsNothing);
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 }

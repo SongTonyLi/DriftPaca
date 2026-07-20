@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:llamaseek/Constants/gradient_presets.dart';
 import 'package:llamaseek/Utils/gradient_settings.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 class ThemesSettings extends StatefulWidget {
   const ThemesSettings({super.key});
@@ -32,11 +33,11 @@ class _ThemesSettingsState extends State<ThemesSettings> {
     );
     if (picked == null) return;
     final current = _pair;
-    writeGradientPair(
+    await writeGradientPair(
       _settingsBox,
       isFirst ? GradientPair(picked, current.c2) : GradientPair(current.c1, picked),
     );
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   @override
@@ -73,9 +74,9 @@ class _ThemesSettingsState extends State<ThemesSettings> {
                 key: ValueKey('gradient-preset-$i'),
                 pair: kGradientPresets[i],
                 isSelected: _isSelectedPreset(kGradientPresets[i]),
-                onTap: () {
-                  writeGradientPair(_settingsBox, kGradientPresets[i]);
-                  setState(() {});
+                onTap: () async {
+                  await writeGradientPair(_settingsBox, kGradientPresets[i]);
+                  if (mounted) setState(() {});
                 },
               ),
           ],
@@ -133,7 +134,10 @@ class _GradientSwatch extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: motionDuration(
+          context,
+          const Duration(milliseconds: 200),
+        ),
         width: 48,
         height: 48,
         decoration: BoxDecoration(

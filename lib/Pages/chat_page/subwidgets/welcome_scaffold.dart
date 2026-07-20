@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 /// Shared layout + one-shot staggered entrance for the empty-chat welcome
 /// screens (normal and incognito), so both read as the same family.
@@ -49,7 +50,17 @@ class _WelcomeScaffoldState extends State<WelcomeScaffold>
     _entrance = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
-    )..forward();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (animationsDisabled(context)) {
+      _entrance.value = 1.0;
+    } else if (_entrance.value == 0.0 && !_entrance.isAnimating) {
+      _entrance.forward();
+    }
   }
 
   @override

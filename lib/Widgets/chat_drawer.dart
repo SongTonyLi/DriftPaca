@@ -12,6 +12,7 @@ import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Widgets/glass_context_menu.dart';
 import 'package:llamaseek/Widgets/memory_bottom_sheet.dart';
+import 'package:llamaseek/Widgets/pulsing_icon.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -81,7 +82,6 @@ class ChatDrawer extends StatelessWidget {
     );
   }
 }
-
 class ChatNavigationDrawer extends StatelessWidget {
   const ChatNavigationDrawer({super.key});
 
@@ -366,7 +366,7 @@ class _AgentMemoryTile extends StatelessWidget {
         child: Row(
           children: [
             if (isUpdating)
-              _PulsingIcon(
+              PulsingIcon(
                 icon: Icons.auto_awesome,
                 size: 22,
                 color: colorScheme.primary,
@@ -523,7 +523,7 @@ class _ChatDrawerTile extends StatelessWidget {
                   if (isSummarizing)
                     Padding(
                       padding: const EdgeInsets.only(left: 6),
-                      child: _PulsingIcon(
+                      child: PulsingIcon(
                         icon: Icons.auto_awesome,
                         size: 14,
                         color: colorScheme.primary,
@@ -535,46 +535,6 @@ class _ChatDrawerTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _PulsingIcon extends StatefulWidget {
-  final IconData icon;
-  final double size;
-  final Color color;
-
-  const _PulsingIcon({required this.icon, required this.size, required this.color});
-
-  @override
-  State<_PulsingIcon> createState() => _PulsingIconState();
-}
-
-class _PulsingIconState extends State<_PulsingIcon> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 1200),
-      vsync: this,
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween<double>(begin: 0.3, end: 1.0).animate(
-        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-      ),
-      child: Icon(widget.icon, size: widget.size, color: widget.color),
     );
   }
 }

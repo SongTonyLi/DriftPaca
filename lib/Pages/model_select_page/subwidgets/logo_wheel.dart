@@ -4,6 +4,7 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 import 'brand_node.dart';
 
@@ -63,6 +64,7 @@ class _LogoWheelState extends State<LogoWheel>
 
   late final AnimationController _spin; // 0..1 driver for momentum + snap
   late final AnimationController _entrance; // one-shot bloom-in on mount
+  bool _animationsDisabled = false;
   double _animBegin = 0;
   double _animEnd = 0;
 
@@ -89,8 +91,19 @@ class _LogoWheelState extends State<LogoWheel>
     _rotation.value = widget.initialIndex * _step;
     _lastDetent = widget.initialIndex;
     _entrance = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 720))
-      ..forward();
+        vsync: this, duration: const Duration(milliseconds: 720));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _entrance.value = 1.0;
+      _spin.stop();
+    } else if (_entrance.value == 0.0 && !_entrance.isAnimating) {
+      _entrance.forward();
+    }
   }
 
   @override
@@ -123,6 +136,10 @@ class _LogoWheelState extends State<LogoWheel>
   }
 
   void _animateRotation(double target, double speed) {
+    if (_animationsDisabled) {
+      _setRotation(target);
+      return;
+    }
     _spin.stop();
     final begin = _rotation.value;
     final dist = (target - begin).abs();
@@ -350,6 +367,7 @@ class _NotchPulse extends StatefulWidget {
 class _NotchPulseState extends State<_NotchPulse>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c;
+  bool _animationsDisabled = false;
 
   @override
   void initState() {
@@ -362,7 +380,24 @@ class _NotchPulseState extends State<_NotchPulse>
     widget.tick.addListener(_pulse);
   }
 
-  void _pulse() => _c.forward(from: 0);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _c
+        ..stop()
+        ..value = 1.0;
+    }
+  }
+
+  void _pulse() {
+    if (_animationsDisabled) {
+      _c.value = 1.0;
+    } else {
+      _c.forward(from: 0);
+    }
+  }
 
   @override
   void dispose() {

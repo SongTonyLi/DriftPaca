@@ -37,7 +37,7 @@ void main() {
   test('round-trips an arbitrary custom color', () async {
     final box = await Hive.openBox('grad_test');
     const pair = GradientPair(Color(0xFF123456), Color(0xFF654321));
-    writeGradientPair(box, pair);
+    await writeGradientPair(box, pair);
     expect(readGradientPair(box), pair);
     await box.close();
   });

@@ -5,6 +5,7 @@ import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Pages/openwebui_page.dart';
 import 'package:llamaseek/Utils/gradient_settings.dart';
 import 'package:llamaseek/Utils/mode_palette.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Widgets/chat_drawer.dart';
 import 'package:llamaseek/Widgets/floating_gradient_background.dart';
@@ -89,7 +90,10 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
 
     return AnimatedTheme(
       data: isIncognito ? incognitoTheme : normalTheme,
-      duration: const Duration(milliseconds: 400),
+      duration: motionDuration(
+        context,
+        const Duration(milliseconds: 400),
+      ),
       curve: Curves.easeInOutCubic,
       child: Stack(
         children: [
@@ -150,8 +154,13 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
     ));
     final normalTheme = withContrastText(baseTheme);
 
-    return Theme(
+    return AnimatedTheme(
       data: isIncognito ? incognitoTheme : normalTheme,
+      duration: motionDuration(
+        context,
+        const Duration(milliseconds: 400),
+      ),
+      curve: Curves.easeInOutCubic,
       child: Stack(
         children: [
           Positioned.fill(

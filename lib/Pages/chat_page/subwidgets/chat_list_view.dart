@@ -7,6 +7,7 @@ import 'package:llamaseek/Models/search_event.dart';
 
 import 'chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Utils/observe_size.dart';
 import 'package:llamaseek/Utils/retained_position_scroll_physics.dart';
 
@@ -100,11 +101,9 @@ class _ChatListViewState extends State<ChatListView> {
 
     // Add to the post frame callback to ensure that the scroll offset is
     // read after the widget has been updated.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Update the button visibility when the user switches chats,
-      // regenerates a message or delete a message.
-      _updateScrollToBottomButtonVisibility();
-    });
+    // Update the button visibility when the user switches chats,
+    // regenerates a message or delete a message.
+    _scheduleScrollButtonVisibilityUpdate();
   }
 
   /// Drops cached bubble widgets (and animation bookkeeping) for messages that
@@ -116,6 +115,23 @@ class _ChatListViewState extends State<ChatListView> {
     _bubbleCache.removeWhere((id, _) => !currentIds.contains(id));
     _bubbleKeys.removeWhere((id, _) => !currentIds.contains(id));
     _animatedMessageIds.removeWhere((id) => !currentIds.contains(id));
+  }
+
+  @visibleForTesting
+  void debugScheduleScrollButtonVisibilityUpdate() {
+    _scheduleScrollButtonVisibilityUpdate();
+  }
+
+  @visibleForTesting
+  void debugScrollToBottom() {
+    _scrollToBottom();
+  }
+
+  void _scheduleScrollButtonVisibilityUpdate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _updateScrollToBottomButtonVisibility();
+    });
   }
 
   @override
@@ -241,11 +257,17 @@ class _ChatListViewState extends State<ChatListView> {
           bottom: _scrollToBottomButtonBottomOffset(),
           child: AnimatedScale(
             scale: showScrollButton ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 250),
-            curve: _isScrollToBottomButtonVisible ? Curves.easeOutBack : Curves.easeIn,
+            duration: motionDuration(
+              context,
+              const Duration(milliseconds: 250),
+            ),
+            curve: showScrollButton ? Curves.easeOutBack : Curves.easeIn,
             child: AnimatedOpacity(
               opacity: showScrollButton ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 200),
+              duration: motionDuration(
+                context,
+                const Duration(milliseconds: 200),
+              ),
               child: IgnorePointer(
                 ignoring: !showScrollButton,
                 child: Container(
@@ -285,23 +307,33 @@ class _ChatListViewState extends State<ChatListView> {
 
   /// Skeleton loading indicator with animated text placeholder lines.
   Widget _buildSkeletonLoader(BuildContext context) {
+    final skeleton = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _skeletonLine(width: 220),
+        const SizedBox(height: 10),
+        _skeletonLine(width: 180),
+        const SizedBox(height: 10),
+        _skeletonLine(width: 140),
+      ],
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
-      child: Shimmer.fromColors(
-        baseColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
-        highlightColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.14),
-        period: const Duration(milliseconds: 1500),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _skeletonLine(width: 220),
-            const SizedBox(height: 10),
-            _skeletonLine(width: 180),
-            const SizedBox(height: 10),
-            _skeletonLine(width: 140),
-          ],
-        ),
-      ),
+      child: animationsDisabled(context)
+          ? skeleton
+          : Shimmer.fromColors(
+              baseColor: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.06),
+              highlightColor: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withValues(alpha: 0.14),
+              period: const Duration(milliseconds: 1500),
+              child: skeleton,
+            ),
     );
   }
 
@@ -323,13 +355,15 @@ class _ChatListViewState extends State<ChatListView> {
   }
 
   void _updateScrollToBottomButtonVisibility() {
-    if (_scrollController.position.pixels > 100 && !_isScrollToBottomButtonVisible) {
+    if (!mounted || !_scrollController.hasClients) return;
+    final pixels = _scrollController.position.pixels;
+    if (pixels > 100 && !_isScrollToBottomButtonVisible) {
       setState(() {
         _isScrollToBottomButtonVisible = true;
       });
     }
 
-    if (_scrollController.position.pixels < 100 && _isScrollToBottomButtonVisible) {
+    if (pixels < 100 && _isScrollToBottomButtonVisible) {
       setState(() {
         _isScrollToBottomButtonVisible = false;
       });
@@ -337,9 +371,13 @@ class _ChatListViewState extends State<ChatListView> {
   }
 
   void _scrollToBottom() {
+    if (!mounted || !_scrollController.hasClients) return;
     _scrollController.animateTo(
       0.0,
-      duration: const Duration(milliseconds: 300),
+      duration: motionDuration(
+        context,
+        const Duration(milliseconds: 300),
+      ),
       curve: Curves.easeOutCubic,
     );
   }

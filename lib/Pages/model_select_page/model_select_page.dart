@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:llamaseek/Constants/brand_logos.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/floating_gradient_background.dart';
 import 'subwidgets/logo_wheel.dart';
 import 'subwidgets/model_info_card.dart';
@@ -104,10 +105,20 @@ class _ModelSelectPageState extends State<ModelSelectPage>
       final topLeft = discBox.localToGlobal(Offset.zero, ancestor: selfBox);
       _discCenter = topLeft + discBox.size.center(Offset.zero);
     }
-    _infoCtrl.forward();
+    if (animationsDisabled(context)) {
+      _infoCtrl.value = 1.0;
+    } else {
+      _infoCtrl.forward();
+    }
   }
 
-  void _closeInfo() => _infoCtrl.reverse();
+  void _closeInfo() {
+    if (animationsDisabled(context)) {
+      _infoCtrl.value = 0.0;
+    } else {
+      _infoCtrl.reverse();
+    }
+  }
 
   String _initialName() {
     final name = widget.currentModelName;
@@ -179,7 +190,10 @@ class _ModelSelectPageState extends State<ModelSelectPage>
         // the body can't shrink it (which left a black gap above the keyboard).
         // It animates its tint as the docked brand changes.
         TweenAnimationBuilder<Color?>(
-          duration: const Duration(milliseconds: 600),
+          duration: motionDuration(
+            context,
+            const Duration(milliseconds: 600),
+          ),
           curve: Curves.easeInOut,
           tween: ColorTween(begin: _firstAccent, end: accent),
           builder: (context, c, _) {

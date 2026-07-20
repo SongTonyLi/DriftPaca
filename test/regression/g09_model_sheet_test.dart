@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,17 @@ import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
+
+class _RecordingObserver extends NavigatorObserver {
+  TransitionRoute<dynamic>? pushed;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is TransitionRoute<dynamic>) {
+      pushed = route;
+    }
+  }
+}
 
 class _FakeDb extends DatabaseService {
   @override
@@ -38,10 +50,41 @@ class _FakeOllamaService extends OllamaService {
       'readme for $modelName';
 }
 
+class _RefreshOllamaService extends OllamaService {
+  _RefreshOllamaService(this._models);
+
+  final List<OllamaModel> _models;
+  final refreshCompleted = Completer<List<OllamaModel>>();
+  int listModelsCalls = 0;
+
+  @override
+  Future<List<OllamaModel>> listModels() {
+    listModelsCalls++;
+    if (listModelsCalls == 1) return Future.value(_models);
+    return refreshCompleted.future;
+  }
+
+  @override
+  String? getCachedReadme(String modelName) => 'readme for $modelName';
+
+  @override
+  Future<String?> fetchModelReadme(String modelName) async =>
+      'readme for $modelName';
+}
+
 class _FakeChatProvider extends ChatProvider {
   _FakeChatProvider(List<OllamaModel> models)
       : super(
           ollamaService: _FakeOllamaService(models),
+          databaseService: _FakeDb(),
+          memoryService: MemoryService(db: _FakeDb()),
+        );
+}
+
+class _RefreshChatProvider extends ChatProvider {
+  _RefreshChatProvider(_RefreshOllamaService service)
+      : super(
+          ollamaService: service,
           databaseService: _FakeDb(),
           memoryService: MemoryService(db: _FakeDb()),
         );
@@ -73,6 +116,33 @@ Widget _host(Widget child) {
     home: ChangeNotifierProvider<ChatProvider>.value(
       value: _FakeChatProvider(_models),
       child: Scaffold(body: child),
+    ),
+  );
+}
+
+Widget _hostWithProvider(Widget child, ChatProvider provider) {
+  return MaterialApp(
+    home: ChangeNotifierProvider<ChatProvider>.value(
+      value: provider,
+      child: Scaffold(body: child),
+    ),
+  );
+}
+
+Widget _reducedMotionHost(
+  Widget child, {
+  required NavigatorObserver observer,
+}) {
+  return MaterialApp(
+    navigatorObservers: [observer],
+    home: Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(disableAnimations: true),
+        child: ChangeNotifierProvider<ChatProvider>.value(
+          value: _FakeChatProvider(_models),
+          child: Scaffold(body: child),
+        ),
+      ),
     ),
   );
 }
@@ -161,5 +231,57 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('refresh indicator stays active until model fetch completes',
+      (tester) async {
+    final service = _RefreshOllamaService(_models);
+    final provider = _RefreshChatProvider(service);
+
+    await tester.pumpWidget(_hostWithProvider(
+      ModelSelectionBottomSheet(
+        title: 'Select model',
+        scrollController: ScrollController(),
+      ),
+      provider,
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    final indicator = tester.widget<RefreshIndicator>(
+      find.byType(RefreshIndicator),
+    );
+    var refreshCompleted = false;
+    final refreshFuture = indicator.onRefresh().then((_) {
+      refreshCompleted = true;
+    });
+
+    await tester.pump();
+    expect(service.listModelsCalls, 2);
+    expect(refreshCompleted, isFalse,
+        reason: 'refresh must remain pending while the model request is pending');
+
+    service.refreshCompleted.complete(_models);
+    await refreshFuture;
+    await tester.pump();
+    expect(refreshCompleted, isTrue);
+  });
+
+  testWidgets('model info dialog has zero timing with reduced motion',
+      (tester) async {
+    final observer = _RecordingObserver();
+    await tester.pumpWidget(
+      _reducedMotionHost(
+        const ModelSelectionBottomSheet(title: 'Select model'),
+        observer: observer,
+      ),
+    );
+    await tester.pump();
+
+    await tester.fling(find.text('qwen3:8b').first, const Offset(-120, 0), 800);
+    await tester.pump();
+
+    expect(observer.pushed!.transitionDuration, Duration.zero);
+    expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
   });
 }

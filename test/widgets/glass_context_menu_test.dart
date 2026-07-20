@@ -2,13 +2,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Widgets/glass_context_menu.dart';
 
-Widget _harness(void Function(BuildContext) onOpen) => MaterialApp(
-      home: Scaffold(
-        body: Builder(
-          builder: (context) => Center(
-            child: TextButton(
-              onPressed: () => onOpen(context),
-              child: const Text('open'),
+class _RecordingObserver extends NavigatorObserver {
+  TransitionRoute<dynamic>? pushed;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is TransitionRoute<dynamic>) {
+      pushed = route;
+    }
+  }
+}
+
+Widget _harness(
+  void Function(BuildContext) onOpen, {
+  bool disableAnimations = false,
+  NavigatorObserver? observer,
+}) =>
+    MaterialApp(
+      navigatorObservers: [if (observer != null) observer],
+      home: Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(disableAnimations: disableAnimations),
+          child: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: TextButton(
+                  onPressed: () => onOpen(context),
+                  child: const Text('open'),
+                ),
+              ),
             ),
           ),
         ),
@@ -77,5 +100,33 @@ void main() {
 
     expect(fired, isFalse);
     expect(find.text('Delete exchange'), findsNothing);
+  });
+
+  testWidgets('uses zero transition duration when animations are disabled',
+      (tester) async {
+    final observer = _RecordingObserver();
+    await tester.pumpWidget(_harness(
+      (context) {
+        showGlassContextMenu(
+          context: context,
+          position: const Offset(100, 300),
+          actions: [
+            GlassMenuAction(
+              icon: Icons.copy,
+              label: 'Copy',
+              onTap: () {},
+            ),
+          ],
+        );
+      },
+      disableAnimations: true,
+      observer: observer,
+    ));
+
+    await tester.tap(find.text('open'));
+    await tester.pump();
+
+    expect(observer.pushed!.transitionDuration, Duration.zero);
+    expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
   });
 }

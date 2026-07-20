@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'model_select_page.dart';
 
 /// Pushes the wheeler model selector and resolves to the chosen [OllamaModel]
@@ -14,14 +15,21 @@ Future<OllamaModel?> showModelSelectWheel({
   String? currentModelName,
   String title = 'Choose a model',
 }) {
+  final disabled = animationsDisabled(context);
   return Navigator.of(context).push<OllamaModel>(
     PageRouteBuilder<OllamaModel>(
-      transitionDuration: const Duration(milliseconds: 340),
-      reverseTransitionDuration: const Duration(milliseconds: 240),
+      transitionDuration:
+          disabled ? Duration.zero : const Duration(milliseconds: 340),
+      reverseTransitionDuration:
+          disabled ? Duration.zero : const Duration(milliseconds: 240),
       pageBuilder: (_, __, ___) =>
           _ModelSelectLoader(currentModelName: currentModelName, title: title),
       transitionsBuilder: (_, anim, __, child) => FadeTransition(
-        opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+        opacity: CurvedAnimation(
+          parent: anim,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        ),
         child: child,
       ),
     ),

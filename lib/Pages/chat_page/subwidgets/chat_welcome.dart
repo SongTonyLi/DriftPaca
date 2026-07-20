@@ -1,6 +1,7 @@
 import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/settings_route_arguments.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 class ChatWelcome extends StatelessWidget {
   final CrossFadeState showingState;
@@ -20,6 +21,10 @@ class ChatWelcome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (animationsDisabled(context)) {
+      return _ChatConfigureServerAddressButton();
+    }
+
     return AnimatedCrossFade(
       crossFadeState: showingState,
       duration: const Duration(milliseconds: 300),

@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Shows search details as a bottom sheet with sources and per-source snippets.
@@ -244,7 +245,11 @@ class _SourceContentCardState extends State<_SourceContentCard>
 
   void _snapBack() {
     _snapStartOffset = _dragOffset;
-    _slideController.forward(from: 0);
+    if (animationsDisabled(context)) {
+      setState(() => _dragOffset = 0);
+    } else {
+      _slideController.forward(from: 0);
+    }
   }
 
   Future<void> _openUrl() async {
@@ -259,7 +264,10 @@ class _SourceContentCardState extends State<_SourceContentCard>
       barrierDismissible: true,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.black38,
-      transitionDuration: const Duration(milliseconds: 380),
+      transitionDuration: motionDuration(
+        context,
+        const Duration(milliseconds: 380),
+      ),
       pageBuilder: (_, __, ___) => const SizedBox.shrink(),
       transitionBuilder: (dialogContext, animation, _, __) {
         final curve = CurvedAnimation(
@@ -439,6 +447,7 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
 
   Uint8List? _bytes;
   bool _resolved = false;
+  bool _animationsDisabled = false;
 
   @override
   void initState() {
@@ -465,6 +474,15 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _controller.value = 1.0;
+    }
+  }
+
   Future<void> _load() async {
     final bytes = await FaviconCache.instance.fetch(widget.domain);
     if (!mounted) return;
@@ -472,7 +490,11 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
       _bytes = bytes;
       _resolved = true;
     });
-    _controller.forward();
+    if (_animationsDisabled) {
+      _controller.value = 1.0;
+    } else {
+      _controller.forward();
+    }
   }
 
   @override
@@ -491,6 +513,7 @@ class _FaviconAvatarState extends State<_FaviconAvatar>
       child: ScaleTransition(
         scale: _scale,
         child: FadeTransition(
+          key: const ValueKey('source-favicon-fade'),
           opacity: _fade,
           child: _resolved ? _buildIcon(colorScheme) : null,
         ),

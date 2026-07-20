@@ -64,4 +64,25 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('reduced motion paints generation without scheduling frames',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: FloatingGradientBackground(
+            meshA: Color(0xFF4FB4FF),
+            meshB: Color(0xFFFF73B3),
+            canvas: Color(0xFFF4E9FF),
+            idleColor: Color(0xFFFFFFFF),
+            isGenerating: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
 }

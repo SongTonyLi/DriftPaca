@@ -4,6 +4,7 @@ import 'package:llamaseek/Models/chat_configure_arguments.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/flexible_text.dart';
 
 import 'ollama_bottom_sheet_header.dart';
@@ -69,6 +70,32 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
     super.dispose();
   }
 
+  @visibleForTesting
+  void debugToggleAdvancedConfigurations() {
+    _toggleAdvancedConfigurations();
+  }
+
+  void _toggleAdvancedConfigurations() {
+    setState(() {
+      _showAdvancedConfigurations = !_showAdvancedConfigurations;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final target = _showAdvancedConfigurations
+          ? _scrollController.position.maxScrollExtent
+          : _scrollController.position.minScrollExtent;
+      if (animationsDisabled(context)) {
+        _scrollController.jumpTo(target);
+      } else {
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -119,24 +146,16 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
         ),
         // The advanced configurations section
         TextButton(
-          onPressed: () {
-            setState(() {
-              _showAdvancedConfigurations = !_showAdvancedConfigurations;
-
-              _scrollController.animateTo(
-                _showAdvancedConfigurations
-                    ? _scrollController.position.pixels + 100
-                    : _scrollController.position.minScrollExtent,
-                duration: const Duration(milliseconds: 500),
-                curve: Curves.ease,
-              );
-            });
-          },
+          onPressed: _toggleAdvancedConfigurations,
           child: Text(
             _showAdvancedConfigurations ? 'Hide Advanced Configurations' : 'Show Advanced Configurations',
           ),
         ),
-        if (_showAdvancedConfigurations) ...[
+        Builder(
+          builder: (context) {
+            final child = Column(
+            children: [
+              if (_showAdvancedConfigurations) ...[
           _BottomSheetTextField(
             initialValue: _chatOptions.maxTokens,
             labelText: 'Max Tokens',
@@ -259,7 +278,18 @@ class __ChatConfigureBottomSheetContentState extends State<_ChatConfigureBottomS
               Navigator.of(context).pop();
             },
           ),
-        ],
+              ],
+            ],
+            );
+            if (animationsDisabled(context)) return child;
+            return AnimatedSize(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: child,
+            );
+          },
+        ),
       ],
     );
   }

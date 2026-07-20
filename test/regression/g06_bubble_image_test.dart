@@ -7,6 +7,17 @@ import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_ima
 import 'package:llamaseek/Widgets/chat_image.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 
+class _RecordingObserver extends NavigatorObserver {
+  TransitionRoute<dynamic>? pushed;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is TransitionRoute<dynamic>) {
+      pushed = route;
+    }
+  }
+}
+
 /// A 1x1 transparent PNG written to disk so `FileImage` has a real source.
 const List<int> _tinyPng = [
   0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, //
@@ -22,12 +33,21 @@ const List<int> _tinyPng = [
 
 /// Pumps [child] under a [MaterialApp] with a fixed logical screen [size] so
 /// the orientation-dependent thumbnail math is deterministic.
-Widget _host(Widget child, {required Size size}) {
+Widget _host(
+  Widget child, {
+  required Size size,
+  bool disableAnimations = false,
+  NavigatorObserver? observer,
+}) {
   return MaterialApp(
+    navigatorObservers: [if (observer != null) observer],
     home: Builder(
       builder: (context) {
         return MediaQuery(
-          data: MediaQuery.of(context).copyWith(size: size),
+          data: MediaQuery.of(context).copyWith(
+            size: size,
+            disableAnimations: disableAnimations,
+          ),
           child: Scaffold(body: Center(child: child)),
         );
       },
@@ -138,5 +158,50 @@ void main() {
 
     expect(find.text('2 / 3'), findsOneWidget,
         reason: 'the page counter should advance to the second image');
+  });
+
+  testWidgets('gallery route has zero timing when animations are disabled',
+      (tester) async {
+    final observer = _RecordingObserver();
+    await tester.pumpWidget(
+      _host(
+        ChatBubbleImage(
+          imageFile: images[0],
+          allImages: images,
+          index: 0,
+        ),
+        size: const Size(390, 844),
+        disableAnimations: true,
+        observer: observer,
+      ),
+    );
+
+    await tester.tap(find.byType(ChatBubbleImage));
+    await tester.pump();
+
+    expect(observer.pushed!.transitionDuration, Duration.zero);
+    expect(observer.pushed!.reverseTransitionDuration, Duration.zero);
+  });
+
+  testWidgets('gallery dots skip size animation with reduced motion',
+      (tester) async {
+    await tester.pumpWidget(
+      _host(
+        ChatBubbleImage(
+          imageFile: images[0],
+          allImages: images,
+          index: 0,
+        ),
+        size: const Size(390, 844),
+        disableAnimations: true,
+      ),
+    );
+    await tester.tap(find.byType(ChatBubbleImage));
+    await tester.pump();
+
+    final dot = tester.widget<AnimatedContainer>(
+      find.byKey(const ValueKey('gallery-dot-0')),
+    );
+    expect(dot.duration, Duration.zero);
   });
 }

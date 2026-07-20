@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:llamaseek/Utils/motion.dart';
 
 /// A tiny animated llama that runs while streaming, then winds down through
 /// idle behaviors (eating grass, looking around) and falls asleep.
@@ -15,6 +16,7 @@ class StreamingLlama extends StatefulWidget {
 class _StreamingLlamaState extends State<StreamingLlama>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _controller;
+  bool _animationsDisabled = false;
 
   // Where the idle play-through settles: mid-sleep, so the final frozen
   // frame shows a closed eye and zzz particles. Stopping (rather than
@@ -32,10 +34,20 @@ class _StreamingLlamaState extends State<StreamingLlama>
     _applyMode();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    _applyMode();
+  }
+
   /// Running loops the gait cycle; idle plays eat → look → sleep once and
   /// stops at [_sleepPhase].
   void _applyMode() {
-    if (widget.isRunning) {
+    if (_animationsDisabled) {
+      _controller.stop();
+      _controller.value = widget.isRunning ? 0.0 : _sleepPhase;
+    } else if (widget.isRunning) {
       _controller.duration = _runCycle;
       _controller.repeat();
     } else {
@@ -51,11 +63,7 @@ class _StreamingLlamaState extends State<StreamingLlama>
         state == AppLifecycleState.inactive) {
       _controller.stop();
     } else if (state == AppLifecycleState.resumed) {
-      if (widget.isRunning) {
-        _controller.repeat();
-      } else if (_controller.value < _sleepPhase) {
-        _controller.animateTo(_sleepPhase);
-      }
+      _applyMode();
     }
   }
 

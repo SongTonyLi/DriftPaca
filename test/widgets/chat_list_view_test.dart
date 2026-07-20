@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_list_view.dart';
+import 'package:shimmer/shimmer.dart';
 
 void main() {
   Widget buildTestApp(Widget child) {
@@ -113,5 +114,78 @@ void main() {
       expect(cachedAfter, isNot(contains(id)),
           reason: 'stale bubble cache entry for a removed message should be pruned');
     }
+  });
+
+  testWidgets('does not update scroll state after being removed mid-update', (tester) async {
+    final messages = <OllamaMessage>[
+      OllamaMessage('Message', role: OllamaMessageRole.assistant),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatListView(
+            messages: messages,
+            isAwaitingReply: false,
+            composerExpanded: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final state = tester.state(find.byType(ChatListView)) as dynamic;
+    state.debugScheduleScrollButtonVisibilityUpdate();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scroll-to-latest ignores a detached scroll controller',
+      (tester) async {
+    final messages = <OllamaMessage>[
+      OllamaMessage('Message', role: OllamaMessageRole.assistant),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 300,
+            child: ChatListView(
+              messages: messages,
+              isAwaitingReply: false,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final state = tester.state(find.byType(ChatListView)) as dynamic;
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    state.debugScrollToBottom();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('awaiting-reply skeleton is static when animations are disabled',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: Scaffold(
+            body: ChatListView(
+              messages: [],
+              isAwaitingReply: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(Shimmer), findsNothing);
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 }

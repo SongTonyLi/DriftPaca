@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/search_detail_dialog.dart';
 import 'package:shimmer/shimmer.dart';
 
@@ -23,6 +24,7 @@ class _SearchCardState extends State<SearchCard>
   late final AnimationController _entranceController;
   late final Animation<double> _entranceFade;
   late final Animation<Offset> _entranceSlide;
+  bool _animationsDisabled = false;
 
   // Track previous isComplete state locally because SearchCardSegment is
   // mutable and mutated in-place, so oldWidget.segment === widget.segment.
@@ -56,7 +58,19 @@ class _SearchCardState extends State<SearchCard>
       parent: _entranceController,
       curve: Curves.easeOutCubic,
     ));
-    _entranceController.forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animationsDisabled = animationsDisabled(context);
+    if (_animationsDisabled) {
+      _entranceController.value = 1.0;
+      _expandController.value = _expanded ? 1.0 : 0.0;
+    } else if (_entranceController.value == 0.0 &&
+        !_entranceController.isAnimating) {
+      _entranceController.forward();
+    }
   }
 
   @override
@@ -73,7 +87,9 @@ class _SearchCardState extends State<SearchCard>
   void _toggleExpand() {
     setState(() {
       _expanded = !_expanded;
-      if (_expanded) {
+      if (_animationsDisabled) {
+        _expandController.value = _expanded ? 1.0 : 0.0;
+      } else if (_expanded) {
         _expandController.forward();
       } else {
         _expandController.reverse();
@@ -159,7 +175,10 @@ class _SearchCardState extends State<SearchCard>
                       const SizedBox(width: 4),
                       AnimatedRotation(
                         turns: _expanded ? 0.0 : -0.25,
-                        duration: const Duration(milliseconds: 200),
+                        duration: motionDuration(
+                          context,
+                          const Duration(milliseconds: 200),
+                        ),
                         child: Icon(
                           Icons.keyboard_arrow_down,
                           size: 18,
@@ -208,6 +227,13 @@ class _SearchCardState extends State<SearchCard>
       return Icon(Icons.check_circle_outline,
           size: 16, color: theme.colorScheme.primary);
     }
+    if (_animationsDisabled) {
+      return Icon(
+        Icons.hourglass_top_rounded,
+        size: 16,
+        color: theme.colorScheme.primary,
+      );
+    }
     return SizedBox(
       width: 16,
       height: 16,
@@ -242,6 +268,7 @@ class _UrlRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final disabled = animationsDisabled(context);
     final isPending = url.state == SearchURLState.pending;
     final isFailed = url.state == SearchURLState.failed;
 
@@ -268,7 +295,7 @@ class _UrlRow extends StatelessWidget {
           _StatusGlyph(state: url.state),
           const SizedBox(width: 6),
           Expanded(
-            child: isPending
+            child: isPending && !disabled
                 ? Shimmer.fromColors(
                     baseColor: colorScheme.onSurfaceVariant
                         .withValues(alpha: 0.45),
@@ -297,21 +324,29 @@ class _StatusGlyph extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final disabled = animationsDisabled(context);
 
     Widget glyph;
     switch (state) {
       case SearchURLState.pending:
-        glyph = SizedBox(
-          key: const ValueKey('pending'),
-          width: 12,
-          height: 12,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.5,
-            valueColor: AlwaysStoppedAnimation(
-              colorScheme.primary.withValues(alpha: 0.75),
-            ),
-          ),
-        );
+        glyph = disabled
+            ? Icon(
+                Icons.hourglass_top_rounded,
+                key: const ValueKey('pending'),
+                size: 13,
+                color: colorScheme.primary.withValues(alpha: 0.75),
+              )
+            : SizedBox(
+                key: const ValueKey('pending'),
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  valueColor: AlwaysStoppedAnimation(
+                    colorScheme.primary.withValues(alpha: 0.75),
+                  ),
+                ),
+              );
       case SearchURLState.success:
         glyph = Icon(
           Icons.check_rounded,
@@ -333,7 +368,10 @@ class _StatusGlyph extends StatelessWidget {
       height: 14,
       child: Center(
         child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 280),
+          duration: motionDuration(
+            context,
+            const Duration(milliseconds: 280),
+          ),
           switchInCurve: Curves.easeOutBack,
           switchOutCurve: Curves.easeIn,
           transitionBuilder: (child, animation) {

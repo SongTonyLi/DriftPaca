@@ -58,7 +58,7 @@ void main() {
     test('writes the exact ARGB32 ints and round-trips a custom pair', () async {
       final box = await Hive.openBox('grad_g15_test');
       const pair = GradientPair(Color(0xFF123456), Color(0xFF654321));
-      writeGradientPair(box, pair);
+      await writeGradientPair(box, pair);
 
       expect(box.get(kBgColor1Key), 0xFF123456);
       expect(box.get(kBgColor2Key), 0xFF654321);

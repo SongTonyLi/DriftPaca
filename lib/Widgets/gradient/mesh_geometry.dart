@@ -39,17 +39,61 @@ const List<Blob> kBlobs = [
 /// leaving only thin dotted seams between them.
 const double kConvBlobScale = 1.05;
 
-/// Welcome intro: four breathing corner blobs (radius as a fraction of the short
-/// side), independent of the drifting conversation mesh.
-const double kWelcomeCornerSize = 0.55;
-const double kWelcomeBreatheAmt = 0.16;
+/// Welcome intro: four soft blobs anchored near the corners, independent of the
+/// drifting conversation mesh.
+///
+/// They are inset from the edges (so each reads as a whole blob rather than a
+/// clipped quarter) and sized off the canvas *diagonal* rather than its short
+/// side, so neighbours always overlap whatever the aspect ratio. The overlap is
+/// the point: that is where the shader averages the two hues, and it is what
+/// makes the four read as one blended sheet instead of four separate lamps.
+/// Pinned corners at 0.55 of the short side left the middle of a phone screen
+/// empty and never let the colours meet.
+const double kWelcomeCornerInset = 0.17; // from each edge, fraction of that side
+const double kWelcomeCornerSize = 0.42; // radius, fraction of the diagonal
+const double kWelcomeBreatheAmt = 0.13;
 const double kWelcomeBreatheSpeed = 1.6;
+// Each blob also wanders a little around its anchor, on its own slow ellipse, so
+// the seams where the hues meet keep moving instead of sitting still.
+const double kWelcomeDriftAmt = 0.055; // orbit radius, fraction of the short side
+const double kWelcomeDriftSpeed = 0.55;
+
+/// Anchors for the four welcome blobs — top-left, top-right, bottom-left,
+/// bottom-right as fractions of the canvas. A and B alternate diagonally
+/// (A, B, B, A), so every *adjacent* pair is a two-hue pair and each seam
+/// between them blends.
+const List<Offset> kWelcomeAnchors = [
+  Offset(kWelcomeCornerInset, kWelcomeCornerInset),
+  Offset(1 - kWelcomeCornerInset, kWelcomeCornerInset),
+  Offset(kWelcomeCornerInset, 1 - kWelcomeCornerInset),
+  Offset(1 - kWelcomeCornerInset, 1 - kWelcomeCornerInset),
+];
 
 /// Where a blob sits this frame: on-screen [center] and [radius] in pixels.
 class BlobPlacement {
   final Offset center;
   final double radius;
   const BlobPlacement(this.center, this.radius);
+}
+
+/// Where welcome blob [i] (0..3, see [kWelcomeAnchors]) sits at [phase] seconds
+/// over a canvas of [size]: its anchor plus a slow elliptical wander, with a
+/// diagonal-scaled radius that breathes on its own phase offset.
+BlobPlacement welcomeBlobPlacement(int i, double phase, Size size) {
+  final short = size.shortestSide;
+  final diagonal =
+      math.sqrt(size.width * size.width + size.height * size.height);
+  final anchor = kWelcomeAnchors[i];
+  final drift = kWelcomeDriftAmt * short;
+  final center = Offset(
+    anchor.dx * size.width +
+        drift * math.cos(phase * kWelcomeDriftSpeed + i * 2.4),
+    anchor.dy * size.height +
+        drift * math.sin(phase * kWelcomeDriftSpeed * 0.83 + i * 1.9),
+  );
+  final breathe =
+      1 + kWelcomeBreatheAmt * math.sin(phase * kWelcomeBreatheSpeed + i * 1.7);
+  return BlobPlacement(center, kWelcomeCornerSize * diagonal * breathe);
 }
 
 /// Computes a blob's centre and radius for [phase] over a canvas of [size].
@@ -70,9 +114,10 @@ BlobPlacement blobPlacement(Blob blob, double phase, Size size) {
 /// inverse radius squared on the CPU once per animation tick. That turns the
 /// hottest fragment path from `distance² / (radius * radius)` into a multiply
 /// (`distance² * invRadius²`) without changing the field shape.
-/// The active mode decides the blobs: the welcome intro breathes four corner
-/// blobs; otherwise the six drifting mesh blobs (scaled up so they overlap into a
-/// near-full field with only thin dotted seams). Pure — unit-testable.
+/// The active mode decides the blobs: the welcome intro breathes four
+/// overlapping corner blobs; otherwise the six drifting mesh blobs (scaled up so
+/// they overlap into a near-full field with only thin dotted seams).
+/// Pure — unit-testable.
 Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
   final o = mesh.opacity;
   final u = Float32List(56);
@@ -90,18 +135,11 @@ Float32List buildMeshUniforms(Mesh mesh, Color idle, Size size) {
 
   final blobs = <(Offset, double, Color, double)>[]; // center, radius, colour, alpha
   if (mesh.welcome) {
-    final short = size.shortestSide;
-    final corners = <Offset>[
-      Offset.zero,
-      Offset(size.width, 0),
-      Offset(0, size.height),
-      Offset(size.width, size.height),
-    ];
-    for (var i = 0; i < 4; i++) {
-      final breathe = 1 + kWelcomeBreatheAmt * math.sin(mesh.phase * kWelcomeBreatheSpeed + i * 1.7);
+    for (var i = 0; i < kWelcomeAnchors.length; i++) {
+      final p = welcomeBlobPlacement(i, mesh.phase, size);
       blobs.add((
-        corners[i],
-        kWelcomeCornerSize * short * breathe,
+        p.center,
+        p.radius,
         (i == 0 || i == 3) ? mesh.a : mesh.b,
         0.9 * o,
       ));

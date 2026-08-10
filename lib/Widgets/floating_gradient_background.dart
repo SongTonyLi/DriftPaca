@@ -45,6 +45,9 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   // Fade (opacity change per second): ~2s in, ~3s out.
   static const double _fadeInPerSecond = 1 / 2.0;
   static const double _fadeOutPerSecond = 1 / 3.0;
+  // Dissolve used when the drawn field has to change (intro <-> mesh): brisk,
+  // because it is dead time between two pictures rather than a mood fade.
+  static const double _swapFadePerSecond = 1 / 0.45;
   // Below this, a non-generating mesh is fully hidden and the ticker stops.
   static const double _hideEpsilon = 0.001;
 
@@ -74,9 +77,21 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   static const double _welcomeHoldSeconds = 5.0;
   static const double _welcomeFadeInPerSecond = 1 / 0.6;
   static const double _welcomeFadeOutPerSecond = 1 / 2.5;
-  bool _introActive = false;
   bool _animationsDisabled = false;
+  bool _syncedMotion = false;
+  // The intro is one-shot per visit to the welcome screen: once it has played
+  // out, only leaving and coming back arms it again.
+  bool _introDone = false;
   double _welcomeElapsed = 0;
+
+  /// Whether the corner intro is the field that should be on screen right now.
+  /// Derived from the widget state every tick rather than latched, so a missed
+  /// or duplicated trigger can never leave the mesh stuck in the wrong field.
+  bool get _wantsWelcome =>
+      widget.isWelcome &&
+      !widget.isGenerating &&
+      !_introDone &&
+      !_animationsDisabled;
 
   // Glassy legibility layer over the blobs; its opacity tracks the mesh, so it is
   // absent in the flat idle (pure-colour) state and present whenever blobs show.
@@ -95,43 +110,54 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _syncMotionPreference();
-  }
-
-  void _syncMotionPreference() {
     final disabled = animationsDisabled(context);
+    // This also fires for MediaQuery changes that have nothing to do with the
+    // background — the keyboard sliding up, a rotation, a brightness switch —
+    // and several times over while one of them animates. Only the reduced-motion
+    // preference is ours to react to; treating the rest as a reason to re-sync
+    // is what restarted the welcome intro every time the user tapped the prompt
+    // field or left the page.
+    if (_syncedMotion && disabled == _animationsDisabled) return;
+    _syncedMotion = true;
     _animationsDisabled = disabled;
     if (disabled) {
-      _ticker.stop();
-      _introActive = false;
-      _mesh.welcome = false;
-      _mesh.opacity = widget.isGenerating ? 1.0 : 0.0;
-      _glassOpacity.value = _mesh.opacity;
-      _repaint.value++;
+      _settleWithoutMotion();
     } else if (widget.isGenerating) {
-      _resetClock = true;
-      if (!_ticker.isActive) _ticker.start();
-    } else if (widget.isWelcome) {
+      _wake();
+    } else if (widget.isWelcome && !_introDone) {
       _startWelcomeIntro();
     }
   }
 
   void _startWelcomeIntro() {
     if (_animationsDisabled) {
-      _introActive = false;
-      _mesh
-        ..welcome = false
-        ..opacity = 0;
-      _glassOpacity.value = 0;
-      _ticker.stop();
+      _settleWithoutMotion();
       return;
     }
-    _mesh.welcome = true;
-    _introActive = true;
+    // Only arm the intro — the tick loop dissolves into the corner field on its
+    // own. Forcing the mesh to a fresh state here is what made a restart flash.
+    _introDone = false;
     _welcomeElapsed = 0;
-    _mesh.opacity = 0;
+    _wake();
+  }
+
+  /// Starts the ticker if it is not already running. Re-baselines the clock only
+  /// on a real start, since a running ticker's [Duration] is already continuous
+  /// (resetting it there would drop a frame for nothing).
+  void _wake() {
+    if (_ticker.isActive) return;
     _resetClock = true;
-    if (!_ticker.isActive) _ticker.start();
+    _ticker.start();
+  }
+
+  /// Reduced motion: no drift, no intro, no frames — just the end state.
+  void _settleWithoutMotion() {
+    _ticker.stop();
+    _mesh
+      ..welcome = false
+      ..opacity = widget.isGenerating ? 1.0 : 0.0;
+    _glassOpacity.value = _mesh.opacity;
+    _repaint.value++;
   }
 
   Future<void> _loadShader() async {
@@ -161,18 +187,16 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     _mesh.b = widget.meshB;
     _mesh.canvas = widget.canvas;
     if (_animationsDisabled) {
-      _mesh.opacity = widget.isGenerating ? 1.0 : 0.0;
-      _glassOpacity.value = _mesh.opacity;
-      _repaint.value++;
+      _settleWithoutMotion();
       return;
     }
+    if (!widget.isWelcome) {
+      _introDone = false; // leaving the welcome screen arms the next visit
+    }
     if (widget.isGenerating && !old.isGenerating) {
-      // Generation starts: wake the (conversation) mesh; cancel any welcome intro.
-      _introActive = false;
-      if (!_ticker.isActive) {
-        _resetClock = true;
-        _ticker.start();
-      }
+      // Generation starts: wake the mesh. Any visible intro hands over to it in
+      // _onTick by dissolving out first, so the picture never cuts.
+      _wake();
     } else if (!widget.isGenerating && widget.isWelcome && !old.isWelcome) {
       // Returned to the empty welcome screen: replay the corner-breathe intro.
       _startWelcomeIntro();
@@ -191,48 +215,56 @@ class _FloatingGradientBackgroundState extends State<FloatingGradientBackground>
     if (dt < _minFrameInterval) return; // ~24fps throttle
     _last = elapsed;
 
-    if (widget.isGenerating) {
-      // Conversation: fade the drifting mesh in.
-      _mesh.welcome = false;
-      _introActive = false;
-      _mesh.opacity = math.min(1.0, _mesh.opacity + dt * _fadeInPerSecond);
-      _speed =
-          easeDriftSpeed(_speed, targetDriftSpeed(isGenerating: true), dt);
-      _mesh.phase += dt * _baseRate * _speed;
-    } else if (_introActive) {
-      // Welcome intro: appear, breathe the corners for the hold, then fade out.
-      _mesh.welcome = true;
+    // Advance whichever field is currently drawn.
+    if (_mesh.welcome) {
       _welcomeElapsed += dt;
-      if (_welcomeElapsed < _welcomeHoldSeconds) {
-        _mesh.opacity =
-            math.min(1.0, _mesh.opacity + dt * _welcomeFadeInPerSecond);
-      } else {
-        _mesh.opacity =
-            math.max(0.0, _mesh.opacity - dt * _welcomeFadeOutPerSecond);
-      }
-      _mesh.phase += dt; // corner breathe runs on real seconds
+      _mesh.phase += dt; // corner breathe/drift runs on real seconds
     } else {
-      // Generation ended: fade the conversation mesh back out.
-      _mesh.welcome = false;
-      _mesh.opacity = math.max(0.0, _mesh.opacity - dt * _fadeOutPerSecond);
-      _speed =
-          easeDriftSpeed(_speed, targetDriftSpeed(isGenerating: false), dt);
+      _speed = easeDriftSpeed(
+          _speed, targetDriftSpeed(isGenerating: widget.isGenerating), dt);
       _mesh.phase += dt * _baseRate * _speed;
+    }
+
+    // The corner intro and the drifting mesh are two different pictures, so the
+    // drawn field may only change while nothing is visible: when the two
+    // disagree the current one fades out first and the swap lands at zero
+    // opacity. Every transition is then a dissolve through the flat idle colour
+    // instead of a one-frame jump cut.
+    final swapping = _mesh.welcome != _wantsWelcome;
+    final show = !swapping &&
+        (widget.isGenerating ||
+            (_mesh.welcome && _welcomeElapsed < _welcomeHoldSeconds));
+    final double rate;
+    if (swapping) {
+      rate = _swapFadePerSecond;
+    } else if (show) {
+      rate = _mesh.welcome ? _welcomeFadeInPerSecond : _fadeInPerSecond;
+    } else {
+      rate = _mesh.welcome ? _welcomeFadeOutPerSecond : _fadeOutPerSecond;
+    }
+    _mesh.opacity = show
+        ? math.min(1.0, _mesh.opacity + dt * rate)
+        : math.max(0.0, _mesh.opacity - dt * rate);
+
+    if (_mesh.opacity <= _hideEpsilon) {
+      _mesh.opacity = 0;
+      if (_mesh.welcome && _welcomeElapsed >= _welcomeHoldSeconds) {
+        _introDone = true; // the one-shot intro has run for this welcome screen
+      }
+      if (_mesh.welcome != _wantsWelcome) {
+        _mesh.welcome = _wantsWelcome;
+        _mesh.phase = 0; // each field starts from its own rest configuration
+        _welcomeElapsed = 0;
+      }
     }
 
     _repaint.value++; // repaint only the painter, no widget rebuild
     _glassOpacity.value = _mesh.opacity; // glass tracks the mesh
 
-    // Once fully faded out with nothing active, stop: flat idle, no frames.
-    if (!widget.isGenerating && _mesh.opacity <= _hideEpsilon) {
-      if (_introActive && _welcomeElapsed >= _welcomeHoldSeconds) {
-        _introActive = false;
-      }
-      if (!_introActive) {
-        _glassOpacity.value = 0; // no lingering blur in the flat idle state
-        _ticker.stop();
-        _mesh.welcome = false;
-      }
+    // Nothing visible and nothing pending: flat idle, no frames.
+    if (!widget.isGenerating && !_wantsWelcome && _mesh.opacity <= 0) {
+      _glassOpacity.value = 0; // no lingering blur in the flat idle state
+      _ticker.stop();
     }
   }
 

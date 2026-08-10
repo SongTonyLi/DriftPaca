@@ -66,21 +66,54 @@ void main() {
     final u = buildMeshUniforms(mesh, idle, size);
     expect(u.length, 56);
 
-    // Four corners: TL(0,0) TR(400,0) BL(0,800) BR(400,800); slot base = 8 + i*4.
-    expect(u[8], closeTo(0, 1e-3));
-    expect(u[9], closeTo(0, 1e-3));
-    expect(u[12], closeTo(400, 1e-3));
-    expect(u[13], closeTo(0, 1e-3));
-    expect(u[16], closeTo(0, 1e-3));
-    expect(u[17], closeTo(800, 1e-3));
-    expect(u[20], closeTo(400, 1e-3));
-    expect(u[21], closeTo(800, 1e-3));
-    // Corner blobs have positive inverse-radius/alpha; slots 4 and 5 are unused (alpha 0).
-    expect(u[10], greaterThan(0.0));
-    expect(u[10], lessThan(1.0));
-    expect(u[11], closeTo(0.9, 1e-6));
+    // Slot base = 8 + i*4, packed from welcomeBlobPlacement in anchor order.
+    for (var i = 0; i < kWelcomeAnchors.length; i++) {
+      final p = welcomeBlobPlacement(i, mesh.phase, size);
+      final base = 8 + i * 4;
+      expect(u[base + 0], closeTo(p.center.dx, 1e-3));
+      expect(u[base + 1], closeTo(p.center.dy, 1e-3));
+      expect(u[base + 2], closeTo(1 / (p.radius * p.radius), 1e-9));
+      expect(u[base + 3], closeTo(0.9, 1e-6));
+    }
+    // Slots 4 and 5 are unused (alpha 0).
     expect(u[27], 0.0);
     expect(u[31], 0.0);
+  });
+
+  test('welcome blobs sit inside the canvas and overlap their neighbours', () {
+    // Overlap is what makes the four blend into one sheet instead of reading as
+    // four separate lamps, and it has to hold on every shape of screen.
+    const sizes = [
+      Size(400, 800), // phone portrait
+      Size(800, 400), // phone landscape
+      Size(1024, 1024), // square
+      Size(1600, 900), // desktop window
+    ];
+    // Adjacent pairs (share an edge); the diagonals are the same-hue pairs.
+    const adjacent = [[0, 1], [2, 3], [0, 2], [1, 3]];
+
+    for (final size in sizes) {
+      for (var phase = 0.0; phase < 6.0; phase += 0.7) {
+        final p = [
+          for (var i = 0; i < kWelcomeAnchors.length; i++)
+            welcomeBlobPlacement(i, phase, size)
+        ];
+        for (var i = 0; i < p.length; i++) {
+          expect(p[i].center.dx, inInclusiveRange(0, size.width),
+              reason: 'blob $i drifted off $size');
+          expect(p[i].center.dy, inInclusiveRange(0, size.height),
+              reason: 'blob $i drifted off $size');
+        }
+        for (final pair in adjacent) {
+          final a = p[pair[0]], b = p[pair[1]];
+          final gap = (a.center - b.center).distance;
+          // Well inside touching (r_a + r_b): the fields have to meet with enough
+          // weight left in each to average, not just graze at their zero edges.
+          expect(gap, lessThan(0.8 * (a.radius + b.radius)),
+              reason: 'blobs ${pair[0]}/${pair[1]} are too far apart on $size');
+        }
+      }
+    }
   });
 
   test('mesh shader blob field stays branchless in the per-pixel hot path', () {

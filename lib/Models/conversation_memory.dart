@@ -14,7 +14,7 @@ class ConversationMemory {
 
   /// Number of leading conversation messages represented by this summary.
   /// The send path sends messages from this index onward raw, so no
-  /// unsummarized message is ever dropped. See debug-context-pollution.md F2.
+  /// unsummarized message is ever dropped.
   final int summarizedMessageCount;
 
   final DateTime updatedAt;
@@ -143,7 +143,6 @@ class ConversationMemory {
 
   /// Bounds the injected block so a runaway cumulative summary can't dominate
   /// the model's context window and crowd out real messages.
-  /// See debug-context-pollution.md F1.
   static String _capToBudget(String text) {
     const marker = '\n…[memory truncated]';
     final maxChars = MemoryConstants.maxConversationMemoryTokens * 4;

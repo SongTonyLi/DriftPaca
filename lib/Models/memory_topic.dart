@@ -51,7 +51,7 @@ class MemoryTopic {
 
   /// Injected into the model's context. Includes the last-updated date so the
   /// model can discount stale, never-expiring topics against the current time
-  /// it also receives. See debug-context-pollution.md F3.
+  /// it also receives.
   String toPromptEntry() =>
       '- **[$topicKey]** (as of ${updatedAt.toIso8601String().substring(0, 10)}): $content';
 

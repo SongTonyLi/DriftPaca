@@ -239,6 +239,7 @@ class SearchAgent {
     var allThinking = '';
     var lastContent = '';
     var round = 0;
+    var forcedAnswer = false;
 
     while (true) {
       if (isCancelled?.call() == true) {
@@ -272,6 +273,34 @@ class SearchAgent {
 
       final hasTools = turn.toolCalls.isNotEmpty && canSearch;
       if (!hasTools) {
+        // Dropping `tools` from the request is not enough to make a model
+        // stop researching. Handed a tools-disabled request after its budget
+        // ran out, gpt-oss:120b keeps emitting a tool call and no prose at
+        // all — so the user gets a blank message and loses every fact the
+        // run already established. It has to be told, in the transcript,
+        // that research is closed. Once only: if it still says nothing we
+        // take what we have rather than loop.
+        if (turn.content.isEmpty && turn.toolCalls.isNotEmpty && !forcedAnswer) {
+          forcedAnswer = true;
+          transcript.add(OllamaMessage(
+            '',
+            role: OllamaMessageRole.assistant,
+            thinking: turn.thinking.isEmpty ? null : turn.thinking,
+            toolCalls: turn.toolCalls,
+          ));
+          // Every dangling tool_call needs a tool-role reply or the next
+          // request is malformed.
+          for (final call in turn.toolCalls) {
+            transcript.add(OllamaMessage(
+              'Research is closed — no further searches will run. Answer now '
+              'using the sources already provided. If some detail could not '
+              'be established, say so plainly instead of searching again.',
+              role: OllamaMessageRole.tool,
+              toolName: call.name,
+            ));
+          }
+          continue;
+        }
         if (!turn.answerStarted) {
           listener.onAnswerStart?.call();
           if (turn.content.isNotEmpty) {

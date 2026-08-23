@@ -330,7 +330,9 @@ void main() {
 
     expect(outcome.searchCount, 0);
     expect(outcome.cancelled, isFalse);
-    expect(turns, 6); // maxRounds + 1 final tools-disabled turn
+    // maxRounds + 1 tools-disabled turn + 1 forced-answer retry, since this
+    // fake only ever emits tool calls and never any prose.
+    expect(turns, 7);
   });
 
   test('a near-duplicate query in a later round is redirected without a real network search', () async {
@@ -537,7 +539,9 @@ void main() {
 
     expect(outcome.searchCount, 1);
     expect(outcome.reason, SearchTerminationReason.unproductiveRounds);
-    expect(turn, 4); // round 1 (real search) + 2 unproductive + 1 forced answer
+    // round 1 (real search) + 2 unproductive + tools-withdrawn turn +
+    // 1 forced-answer retry (this fake never emits prose).
+    expect(turn, 5);
   });
 
   test(
@@ -582,7 +586,9 @@ void main() {
 
     expect(outcome.reason, SearchTerminationReason.unproductiveRounds);
     expect(outcome.searchCount, 3);
-    expect(turn, 4); // round 1 (opens) + 2 grouped rounds + 1 forced answer
+    // round 1 (opens) + 2 grouped rounds + tools-withdrawn turn +
+    // 1 forced-answer retry (this fake never emits prose).
+    expect(turn, 5);
   });
 
   test('a sub-goal that never returns results stops the loop as unproductive, not converged', () async {
@@ -614,7 +620,9 @@ void main() {
     expect(outcome.cancelled, isFalse);
     expect(outcome.searchCount, SearchAgent.defaultMaxSearches);
     expect(outcome.reason, SearchTerminationReason.hardCapReached);
-    expect(turn, SearchAgent.defaultMaxSearches + 1);
+    // +1 tools-disabled turn, +1 forced-answer retry: this fake keeps
+    // requesting searches and never volunteers prose.
+    expect(turn, SearchAgent.defaultMaxSearches + 2);
   });
 
   test('the round cap terminates a run that never stalls and never exhausts the search budget', () async {
@@ -957,5 +965,63 @@ void main() {
         contains('lorem'));
     expect(finalToolMessages[finalToolMessages.length - 1].content,
         contains('lorem'));
+  });
+
+  group('a model that will not stop searching still answers', () {
+    // Observed against gpt-oss:120b: handed a request with `tools` omitted
+    // after its budget ran out, it emitted another tool call and no prose,
+    // which surfaced to the user as a completely blank message.
+    test('is told research is closed and given one more turn to answer',
+        () async {
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          // Never volunteers prose — only ever asks to search again, even
+          // once tools have been withdrawn.
+          if (turn <= 2) {
+            return Stream.fromIterable([searchChunk(distinctTopics[turn - 1])]);
+          }
+          return Stream.fromIterable([answerChunk('answer from what I have')]);
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.content, 'answer from what I have',
+          reason: 'a blank answer means the forced-answer turn did not run');
+
+      // Turn 2 is the tools-withdrawn turn whose tool call gets refused.
+      expect(requests[1].toolsEnabled, isFalse);
+
+      // That refusal must be visible to the model as a tool-role reply, or
+      // the follow-up request dangles an unanswered tool_call.
+      final closing = requests.last.transcript
+          .where((m) => m.role == OllamaMessageRole.tool)
+          .last;
+      expect(closing.content, contains('Research is closed'));
+      expect(requests.last.toolsEnabled, isFalse);
+    });
+
+    test('gives up after one forced-answer attempt rather than looping',
+        () async {
+      var turn = 0;
+      final outcome = await agent(
+        maxSearches: 1,
+        // Pathological: only ever emits tool calls, never any prose.
+        streamTurn: (req) {
+          turn++;
+          return Stream.fromIterable([
+            searchChunk(distinctTopics[(turn - 1) % distinctTopics.length]),
+          ]);
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.content, isEmpty);
+      // 1 search turn + 1 withdrawn turn + exactly 1 forced-answer retry.
+      expect(turn, 3, reason: 'the forced-answer turn must fire only once');
+    });
   });
 }

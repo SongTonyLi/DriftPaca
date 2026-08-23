@@ -1019,6 +1019,16 @@ class _TerminationBanner extends StatelessWidget {
           icon: Icons.info_outline,
           text: 'Stopped early — no new information in recent searches',
         );
+      case 'searchUnavailable':
+        // Deliberately distinct from every other stop: the run ended
+        // because searching was impossible, not because an answer was
+        // reached or a budget ran out. Reading this as "research complete"
+        // would badly overstate what the answer below is based on.
+        return (
+          icon: Icons.cloud_off_outlined,
+          text: 'Stopped — the search engine is rate-limiting requests; '
+              'the answer may be incomplete',
+        );
       case 'cancelled':
         return (icon: Icons.cancel_outlined, text: 'Cancelled');
       default:

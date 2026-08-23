@@ -578,6 +578,17 @@ class SearchAgent {
         listener.onSearchSkipped?.call(p.query, reason);
         continue;
       }
+      if (p.kind == _PlanKind.dupe) {
+        // Same query twice in ONE turn. It shares the executed call's key,
+        // so falling through would repeat that call's entire source text a
+        // second time — pure context cost for zero new evidence.
+        const reason = 'Duplicate of another query in this same turn; see '
+            'that result above.';
+        toolMessages.add(OllamaMessage(reason,
+            role: OllamaMessageRole.tool, toolName: 'web_search'));
+        listener.onSearchSkipped?.call(p.query, reason);
+        continue;
+      }
       final message = OllamaMessage(
         formattedByKey[p.key] ?? '',
         role: OllamaMessageRole.tool,

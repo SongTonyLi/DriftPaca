@@ -5,7 +5,7 @@
 /// Hits the real Ollama Cloud API and the real web, so it is excluded from
 /// the normal gate. Run it explicitly:
 ///
-///   OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/agentic_loop_live_test.dart
+///   `OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/agentic_loop_live_test.dart`
 ///
 /// The key is read from the environment and must never be committed.
 ///

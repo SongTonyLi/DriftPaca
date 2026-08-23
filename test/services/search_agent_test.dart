@@ -1024,4 +1024,143 @@ void main() {
       expect(turn, 3, reason: 'the forced-answer turn must fire only once');
     });
   });
+
+  group('a throttled search backend', () {
+    test('stops the run instead of counting as evidence of absence', () async {
+      var turn = 0;
+      var searchCalls = 0;
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          if (turn <= 3) {
+            return Stream.fromIterable([searchChunk(distinctTopics[turn - 1])]);
+          }
+          return Stream.fromIterable([answerChunk('partial answer')]);
+        },
+        search: (req) async {
+          searchCalls++;
+          if (searchCalls == 1) return [hit('https://example.com/a')];
+          throw const WebSearchUnavailableException('rate limited');
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.reason, SearchTerminationReason.searchUnavailable);
+      // The throttled attempt reached no search engine, so it is not
+      // research and must not be billed as such.
+      expect(outcome.searchCount, 1);
+      expect(outcome.content, 'partial answer');
+      // Round 1 searched, round 2 was throttled, and the run ends — it does
+      // not spend the remaining 8 searches of budget hammering the block.
+      expect(searchCalls, 2);
+    });
+
+    test('tells the model it was blocked, not that nothing was found',
+        () async {
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+      await agent(
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk('creatine 2026 opinions')]);
+          }
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        search: (req) async =>
+            throw const WebSearchUnavailableException('rate limited'),
+      ).run(history: history, listener: const SearchAgentListener());
+
+      final notice = requests.last.transcript
+          .where((m) => m.role == OllamaMessageRole.tool)
+          .last;
+      expect(notice.content, contains('NOT searched'));
+      expect(notice.content, contains('Do not rephrase'));
+      // The exact failure mode this fixes: the old text told the model "No
+      // results found ... Try a different phrasing", which reads as evidence
+      // the fact does not exist and invites more requests into the block.
+      expect(notice.content, isNot(contains('No results found')));
+      expect(notice.content, isNot(contains('Try a different phrasing')));
+    });
+
+    test('reports the block through onSearchSkipped', () async {
+      final skips = <String>[];
+      var turn = 0;
+      await agent(
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        search: (req) async =>
+            throw const WebSearchUnavailableException('rate limited'),
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onSearchSkipped: (query, reason) => skips.add(reason),
+        ),
+      );
+
+      expect(skips, hasLength(1));
+      expect(skips.single, contains('rate-limiting'));
+    });
+
+    test('abandons the rest of the round rather than retrying each query',
+        () async {
+      final attempted = <String>[];
+      var turn = 0;
+      await agent(
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([
+              OllamaMessage(
+                '',
+                role: OllamaMessageRole.assistant,
+                toolCalls: [
+                  OllamaToolCall(
+                      name: 'web_search', arguments: {'query': 'first topic'}),
+                  OllamaToolCall(
+                      name: 'web_search',
+                      arguments: {'query': 'unrelated second topic'}),
+                ],
+              ),
+            ]);
+          }
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        search: (req) async {
+          attempted.add(req.query);
+          throw const WebSearchUnavailableException('rate limited');
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      // Both were planned; only the first is attempted. Every extra request
+      // into an active block extends it.
+      expect(attempted, ['first topic']);
+    });
+
+    test('a genuinely empty result set is still treated as a real search',
+        () async {
+      var turn = 0;
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          if (turn <= 2) {
+            return Stream.fromIterable([searchChunk(distinctTopics[turn - 1])]);
+          }
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        search: (req) async => <WebSearchResult>[],
+      ).run(history: history, listener: const SearchAgentListener());
+
+      // A request that reached the engine and came back empty is evidence of
+      // absence, bills against the budget, and must NOT be reported as a
+      // backend outage.
+      expect(outcome.searchCount, 2);
+      expect(outcome.reason, isNot(SearchTerminationReason.searchUnavailable));
+    });
+  });
 }

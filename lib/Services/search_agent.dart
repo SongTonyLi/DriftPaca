@@ -38,6 +38,18 @@ class SearchAgentSearchRequest {
   });
 }
 
+/// What the completeness gate is asked to judge: the run's objective (the
+/// user's question) against the answer the model just drafted for it.
+class CoverageRequest {
+  final String objective;
+  final String draftAnswer;
+
+  const CoverageRequest({
+    required this.objective,
+    required this.draftAnswer,
+  });
+}
+
 class SearchAgentListener {
   final void Function(String delta)? onThinking;
   final void Function(String thinking)? onSearchThinking;
@@ -214,8 +226,24 @@ class SearchAgent {
     );
   }
 
+  /// Corrective research rounds the completeness gate may force. One
+  /// attempt, then whatever the model says next is accepted — same
+  /// discipline as the forced-answer guard, since an unbounded gate is an
+  /// infinite loop with extra steps.
+  static const defaultMaxCoverageChecks = 1;
+
   final Stream<OllamaMessage> Function(SearchAgentRequest) streamTurn;
   final Future<List<WebSearchResult>> Function(SearchAgentSearchRequest) search;
+
+  /// Judges a drafted answer against the objective and returns the parts it
+  /// leaves unaddressed — empty when the answer is complete. Optional: when
+  /// null the loop accepts the model's first answer, which is the behavior
+  /// every caller had before the gate existed.
+  ///
+  /// Deliberately separate from [streamTurn]: this is an isolated,
+  /// tool-less call that must not pollute the research transcript.
+  final Future<List<String>> Function(CoverageRequest)? assessCoverage;
+  final int maxCoverageChecks;
   final int maxSearches;
   final int maxRounds;
   final int roundBatchCap;
@@ -227,6 +255,8 @@ class SearchAgent {
   SearchAgent({
     required this.streamTurn,
     required this.search,
+    this.assessCoverage,
+    this.maxCoverageChecks = defaultMaxCoverageChecks,
     this.maxSearches = defaultMaxSearches,
     this.maxRounds = defaultMaxRounds,
     this.roundBatchCap = defaultRoundBatchCap,
@@ -252,6 +282,7 @@ class SearchAgent {
     var round = 0;
     var forcedAnswer = false;
     var searchUnavailable = false;
+    var coverageChecks = 0;
 
     while (true) {
       if (isCancelled?.call() == true) {
@@ -320,6 +351,35 @@ class SearchAgent {
           }
           continue;
         }
+        // Nothing above forced this answer, so before accepting it, check
+        // that it actually answers the question. Three prompt surfaces push
+        // the model toward stopping and none push back; the ledger can only
+        // see sub-goals the model chose to query, so a part of the question
+        // it never asked about can never show up as still-open. This is the
+        // only mechanism that can notice.
+        if (_shouldRunCoverageGate(
+          content: turn.content,
+          canSearch: canSearch,
+          searchCount: searchCount,
+          coverageChecks: coverageChecks,
+        )) {
+          coverageChecks++;
+          final gaps = await _assessGaps(ledger.objective, turn.content);
+          if (gaps.isNotEmpty) {
+            for (final gap in gaps) {
+              ledger.openGap(gap);
+            }
+            // The rejected answer already streamed to the UI.
+            listener.onResetContent?.call();
+            lastContent = '';
+            transcript.add(OllamaMessage(
+              _gapNotice(gaps),
+              role: OllamaMessageRole.user,
+            ));
+            continue;
+          }
+        }
+
         if (!turn.answerStarted) {
           listener.onAnswerStart?.call();
           if (turn.content.isNotEmpty) {
@@ -389,6 +449,59 @@ class SearchAgent {
       searchCount += executed.uniqueSearchCount;
       round++;
     }
+  }
+
+  /// Whether to spend a call asking what the drafted answer left out.
+  ///
+  /// [canSearch] is the load-bearing precondition: if the budget is spent,
+  /// the round cap is hit, or the backend is rate-limiting, we could not act
+  /// on the answer anyway — and gating a throttled run would contradict the
+  /// whole point of ending it. [searchCount] > 0 keeps the gate to genuine
+  /// research: an answer produced without searching at all is an ordinary
+  /// chat reply, not incomplete research.
+  bool _shouldRunCoverageGate({
+    required String content,
+    required bool canSearch,
+    required int searchCount,
+    required int coverageChecks,
+  }) =>
+      assessCoverage != null &&
+      content.isNotEmpty &&
+      canSearch &&
+      searchCount > 0 &&
+      coverageChecks < maxCoverageChecks;
+
+  /// Runs the gate, treating any failure as "the answer is complete".
+  ///
+  /// A gate that throws must never cost the user an answer already in hand:
+  /// the downside of wrongly accepting is a partial answer, the downside of
+  /// propagating is no answer at all.
+  Future<List<String>> _assessGaps(String objective, String draftAnswer) async {
+    try {
+      final gaps = await assessCoverage!(
+          CoverageRequest(objective: objective, draftAnswer: draftAnswer));
+      return [
+        for (final gap in gaps)
+          if (gap.trim().isNotEmpty) gap.trim()
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static String _gapNotice(List<String> gaps) {
+    final buffer = StringBuffer(
+        'Your draft answer did not address these parts of my question:\n');
+    for (final gap in gaps) {
+      buffer.writeln('- $gap');
+    }
+    return (buffer
+          ..writeln()
+          ..write('Search for them now, then give the complete answer. Keep '
+              'everything you already established — add to it rather than '
+              'starting over. If a part genuinely cannot be found, say so '
+              'explicitly in your answer.'))
+        .toString();
   }
 
   /// Keeps the transcript's raw tool-message text bounded as a run grows

@@ -66,12 +66,17 @@ SearchAgent agent({
   int? maxRounds,
   int? stallLimit,
   int? perSubGoalBudget,
+  Future<List<String>> Function(CoverageRequest)? assessCoverage,
+  int? maxCoverageChecks,
 }) {
   return SearchAgent(
     maxSearches: maxSearches,
     maxRounds: maxRounds ?? SearchAgent.defaultMaxRounds,
     stallLimit: stallLimit ?? SearchAgent.defaultStallLimit,
     perSubGoalBudget: perSubGoalBudget ?? SearchAgent.defaultPerSubGoalBudget,
+    maxCoverageChecks:
+        maxCoverageChecks ?? SearchAgent.defaultMaxCoverageChecks,
+    assessCoverage: assessCoverage,
     streamTurn: streamTurn,
     search: search ??
         (req) async => [hit('https://example.com/${req.query}')],
@@ -1022,6 +1027,193 @@ void main() {
       expect(outcome.content, isEmpty);
       // 1 search turn + 1 withdrawn turn + exactly 1 forced-answer retry.
       expect(turn, 3, reason: 'the forced-answer turn must fire only once');
+    });
+  });
+
+  group('the completeness gate', () {
+    test('reopens research when the answer leaves part of the question open',
+        () async {
+      final requests = <SearchAgentRequest>[];
+      final assessed = <CoverageRequest>[];
+      var resets = 0;
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk('2026 NBA Finals winner')]);
+          }
+          // Answers two of three hops and stops while budget remains — the
+          // exact observed failure.
+          if (turn == 2) {
+            return Stream.fromIterable([answerChunk('Knicks won, Brunson MVP')]);
+          }
+          if (turn == 3) {
+            return Stream.fromIterable([searchChunk('Jalen Brunson college')]);
+          }
+          return Stream.fromIterable(
+              [answerChunk('Knicks won, Brunson MVP, Villanova')]);
+        },
+        assessCoverage: (req) async {
+          assessed.add(req);
+          return ['which college the Finals MVP attended'];
+        },
+      ).run(
+        history: history,
+        listener: SearchAgentListener(onResetContent: () => resets++),
+      );
+
+      // The gate saw the real objective and the real drafted answer.
+      expect(assessed, hasLength(1));
+      expect(assessed.single.objective, 'What is Vietnam GDP?');
+      expect(assessed.single.draftAnswer, 'Knicks won, Brunson MVP');
+
+      // Research actually reopened: the turn after the gate had tools back.
+      expect(requests[2].toolsEnabled, isTrue);
+      final reopened = requests[2].transcript.last;
+      expect(reopened.role, OllamaMessageRole.user);
+      expect(reopened.content, contains('which college the Finals MVP attended'));
+
+      // The discarded answer had already streamed to the UI.
+      expect(resets, greaterThanOrEqualTo(1));
+
+      expect(outcome.content, 'Knicks won, Brunson MVP, Villanova');
+      expect(outcome.searchCount, 2);
+    });
+
+    test('accepts a complete answer after exactly one gate call', () async {
+      var calls = 0;
+      var turn = 0;
+      final outcome = await agent(
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          return Stream.fromIterable([answerChunk('complete answer')]);
+        },
+        assessCoverage: (req) async {
+          calls++;
+          return const [];
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.content, 'complete answer');
+      expect(calls, 1);
+      expect(turn, 2, reason: 'no corrective round should have run');
+    });
+
+    test('accepts the answer when the gate itself fails', () async {
+      var turn = 0;
+      final outcome = await agent(
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          return Stream.fromIterable([answerChunk('answer worth keeping')]);
+        },
+        assessCoverage: (req) async => throw StateError('gate exploded'),
+      ).run(history: history, listener: const SearchAgentListener());
+
+      // Losing an answer we already have is strictly worse than shipping a
+      // possibly-partial one.
+      expect(outcome.content, 'answer worth keeping');
+    });
+
+    test('does not gate once the search budget is spent', () async {
+      var calls = 0;
+      var turn = 0;
+      await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        assessCoverage: (req) async {
+          calls++;
+          return ['something missing'];
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      // Asking what is missing is pointless when no search could run.
+      expect(calls, 0);
+    });
+
+    test('does not gate an answer that required no research at all', () async {
+      var calls = 0;
+      final outcome = await agent(
+        streamTurn: (req) =>
+            Stream.fromIterable([answerChunk('2 + 2 is 4')]),
+        assessCoverage: (req) async {
+          calls++;
+          return ['something missing'];
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(calls, 0, reason: 'an unresearched reply is not incomplete research');
+      expect(outcome.content, '2 + 2 is 4');
+    });
+
+    test('does not gate a run the search backend blocked', () async {
+      var calls = 0;
+      var turn = 0;
+      var searchCalls = 0;
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          if (turn <= 2) {
+            return Stream.fromIterable([searchChunk(distinctTopics[turn - 1])]);
+          }
+          return Stream.fromIterable([answerChunk('partial, sources blocked')]);
+        },
+        // One real search, THEN the block. Without that first success
+        // searchCount stays 0 and the gate is blocked by the research
+        // precondition instead — which is what this test is not about.
+        // Mutation testing caught exactly that: dropping the canSearch
+        // guard left this test passing.
+        search: (req) async {
+          searchCalls++;
+          if (searchCalls == 1) return [hit('https://example.com/a')];
+          throw const WebSearchUnavailableException('rate limited');
+        },
+        assessCoverage: (req) async {
+          calls++;
+          return ['something missing'];
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.searchCount, 1, reason: 'the research precondition is met');
+      // Reopening research into an active block is exactly what 84f3b71
+      // exists to prevent, so only canSearch can be what stops the gate.
+      expect(calls, 0);
+      expect(outcome.reason, SearchTerminationReason.searchUnavailable);
+    });
+
+    test('gives up after maxCoverageChecks corrective rounds', () async {
+      var calls = 0;
+      var turn = 0;
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          // Alternates search / answer, and the answer is never good enough.
+          if (turn.isOdd) {
+            return Stream.fromIterable(
+                [searchChunk(distinctTopics[turn ~/ 2])]);
+          }
+          return Stream.fromIterable([answerChunk('still incomplete $turn')]);
+        },
+        assessCoverage: (req) async {
+          calls++;
+          return ['never satisfied'];
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      // An unbounded gate is an infinite loop with extra steps.
+      expect(calls, SearchAgent.defaultMaxCoverageChecks);
+      expect(outcome.content, isNotEmpty);
     });
   });
 

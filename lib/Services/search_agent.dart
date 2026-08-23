@@ -86,14 +86,25 @@ class SearchAgentListener {
 /// Why a SearchAgent run stopped. Checked in this precedence when several
 /// conditions are true simultaneously: [cancelled] (an external stop
 /// request) beats every convergence/cap reason; among those,
-/// [roundCapReached] beats [hardCapReached] beats [unproductiveRounds]
-/// beats [converged] (the natural "model just answered" stop with nothing
-/// else tripped) — see SearchAgent._terminationReason.
+/// [searchUnavailable] beats [roundCapReached] beats [hardCapReached] beats
+/// [unproductiveRounds] beats [converged] (the natural "model just
+/// answered" stop with nothing else tripped) — see
+/// SearchAgent._terminationReason.
+///
+/// [searchUnavailable] outranks the caps because it describes the world
+/// rather than a policy choice: if the search backend stopped answering,
+/// that is why the run ended, whatever counter happens to also be at its
+/// limit. Reporting a cap there would tell the user the run was cut short
+/// for cost when in fact no research was possible at all.
 enum SearchTerminationReason {
   converged,
   unproductiveRounds,
   hardCapReached,
   roundCapReached,
+
+  /// The search backend refused to run queries — rate limited or serving an
+  /// anti-bot challenge. No further searches were attempted.
+  searchUnavailable,
   cancelled,
 }
 
@@ -239,6 +250,8 @@ class SearchAgent {
     var allThinking = '';
     var lastContent = '';
     var round = 0;
+    var forcedAnswer = false;
+    var searchUnavailable = false;
 
     while (true) {
       if (isCancelled?.call() == true) {
@@ -250,7 +263,14 @@ class SearchAgent {
       // model that keeps emitting tool_calls after budget/round/stall caps
       // trip can't force another search round just because it ignored
       // toolsEnabled:false on the request.
-      final canSearch = searchCount < maxSearches &&
+      // A throttled backend ends research outright rather than counting
+      // against the stall limit. Those counters exist to notice a model
+      // going in circles; spending two more rounds' worth of requests to
+      // "confirm" a block only deepens it, and every one of those rounds
+      // would report back as a failed search the model could mistake for
+      // evidence that nothing is out there.
+      final canSearch = !searchUnavailable &&
+          searchCount < maxSearches &&
           round < maxRounds &&
           ledger.roundsSinceProgress < stallLimit &&
           ledger.roundsSinceNewSubGoal < stallLimit;
@@ -272,6 +292,34 @@ class SearchAgent {
 
       final hasTools = turn.toolCalls.isNotEmpty && canSearch;
       if (!hasTools) {
+        // Dropping `tools` from the request is not enough to make a model
+        // stop researching. Handed a tools-disabled request after its budget
+        // ran out, gpt-oss:120b keeps emitting a tool call and no prose at
+        // all — so the user gets a blank message and loses every fact the
+        // run already established. It has to be told, in the transcript,
+        // that research is closed. Once only: if it still says nothing we
+        // take what we have rather than loop.
+        if (turn.content.isEmpty && turn.toolCalls.isNotEmpty && !forcedAnswer) {
+          forcedAnswer = true;
+          transcript.add(OllamaMessage(
+            '',
+            role: OllamaMessageRole.assistant,
+            thinking: turn.thinking.isEmpty ? null : turn.thinking,
+            toolCalls: turn.toolCalls,
+          ));
+          // Every dangling tool_call needs a tool-role reply or the next
+          // request is malformed.
+          for (final call in turn.toolCalls) {
+            transcript.add(OllamaMessage(
+              'Research is closed — no further searches will run. Answer now '
+              'using the sources already provided. If some detail could not '
+              'be established, say so plainly instead of searching again.',
+              role: OllamaMessageRole.tool,
+              toolName: call.name,
+            ));
+          }
+          continue;
+        }
         if (!turn.answerStarted) {
           listener.onAnswerStart?.call();
           if (turn.content.isNotEmpty) {
@@ -281,7 +329,10 @@ class SearchAgent {
         return _outcome(
           turn.content, allThinking, sourceUrls, searchCount, false,
           reason: _terminationReason(
-              canSearch: canSearch, searchCount: searchCount, round: round),
+              canSearch: canSearch,
+              searchUnavailable: searchUnavailable,
+              searchCount: searchCount,
+              round: round),
           listener: listener,
         );
       }
@@ -307,6 +358,7 @@ class SearchAgent {
         return _outcome(lastContent, allThinking, sourceUrls, searchCount, true,
             reason: SearchTerminationReason.cancelled, listener: listener);
       }
+      if (executed.searchUnavailable) searchUnavailable = true;
 
       _appendLedgerToLastToolMessage(executed.toolMessages, ledger);
       ledger.recordRoundOutcome(
@@ -481,16 +533,33 @@ class SearchAgent {
     final visited = {...excludeUrls};
     var offset = idOffset;
     var anyNonEmptyResults = false;
+    var executedCount = 0;
+    var searchUnavailable = false;
     for (final p in unique) {
       if (isCancelled?.call() == true) {
         return _SearchExec(nextOffset: idOffset, cancelled: true);
       }
       listener.onSearchStart?.call(p.query);
-      final results = await search(SearchAgentSearchRequest(
-        query: p.query,
-        isCancelled: isCancelled,
-        excludeUrls: Set<String>.unmodifiable(visited),
-      ));
+      final List<WebSearchResult> results;
+      try {
+        results = await search(SearchAgentSearchRequest(
+          query: p.query,
+          isCancelled: isCancelled,
+          excludeUrls: Set<String>.unmodifiable(visited),
+        ));
+      } on WebSearchUnavailableException {
+        // Abandon the whole round, not just this call. The remaining
+        // queries would hit the same wall, and each extra request into an
+        // active block extends it. Whatever ran before this point keeps its
+        // results and its place in the transcript.
+        searchUnavailable = true;
+        break;
+      }
+      // Counted here rather than as `unique.length`, so a query that never
+      // reached a search engine isn't billed against the run's budget as
+      // though it had been researched. An empty result set still counts: the
+      // request was made and came back with nothing, which is a finding.
+      executedCount++;
       if (isCancelled?.call() == true) {
         return _SearchExec(nextOffset: idOffset, cancelled: true);
       }
@@ -589,8 +658,18 @@ class SearchAgent {
         listener.onSearchSkipped?.call(p.query, reason);
         continue;
       }
+      final formatted = formattedByKey[p.key];
+      if (formatted == null && searchUnavailable) {
+        // Either the call that hit the block, or one planned behind it that
+        // was never attempted. Both are honestly described the same way:
+        // nothing was searched.
+        toolMessages.add(OllamaMessage(_searchUnavailableNotice,
+            role: OllamaMessageRole.tool, toolName: 'web_search'));
+        listener.onSearchSkipped?.call(p.query, _searchUnavailableNotice);
+        continue;
+      }
       final message = OllamaMessage(
-        formattedByKey[p.key] ?? '',
+        formatted ?? '',
         role: OllamaMessageRole.tool,
         toolName: 'web_search',
       );
@@ -611,11 +690,29 @@ class SearchAgent {
       toolMessages: toolMessages,
       sourceUrls: urls,
       nextOffset: offset,
-      uniqueSearchCount: unique.length,
+      uniqueSearchCount: executedCount,
       anyNonEmptyResults: anyNonEmptyResults,
       searchRecords: searchRecords,
+      searchUnavailable: searchUnavailable,
     );
   }
+
+  /// What the model is told when a query could not be run at all.
+  ///
+  /// This is the whole fix, and it is a context problem rather than a
+  /// networking one. A throttled search used to arrive as `No results found
+  /// for "X". Try a different phrasing` — which is false twice over: it
+  /// reports evidence of absence where there is no evidence at all, and it
+  /// explicitly asks for the one behaviour that makes a rate limit worse.
+  /// A model handed that either asserts the fact does not exist or spends
+  /// the rest of its budget rephrasing into the same wall.
+  static const _searchUnavailableNotice =
+      'This query was NOT searched — the search engine is rate-limiting this '
+      'client, so no request reached the web. This says nothing about '
+      'whether an answer exists. Do not rephrase and try again; no further '
+      'searches will run this turn. Answer now from the sources already '
+      'gathered, and state plainly which parts of the question you could '
+      'not verify.';
 
   List<_Planned> _planSearches(
     List<OllamaToolCall> toolCalls,
@@ -726,10 +823,12 @@ class SearchAgent {
   /// tools on its own. Precedence matches [SearchTerminationReason]'s doc.
   SearchTerminationReason _terminationReason({
     required bool canSearch,
+    required bool searchUnavailable,
     required int searchCount,
     required int round,
   }) {
     if (canSearch) return SearchTerminationReason.converged;
+    if (searchUnavailable) return SearchTerminationReason.searchUnavailable;
     if (round >= maxRounds) return SearchTerminationReason.roundCapReached;
     if (searchCount >= maxSearches) return SearchTerminationReason.hardCapReached;
     return SearchTerminationReason.unproductiveRounds;
@@ -838,6 +937,11 @@ class _SearchExec {
   /// every search came back empty.
   final List<_RoundSearchRecord> searchRecords;
 
+  /// Whether a search in this round was refused by the backend (rate limit
+  /// or anti-bot challenge) rather than executed. Ends the run — see run()'s
+  /// canSearch.
+  final bool searchUnavailable;
+
   _SearchExec({
     this.toolMessages = const [],
     this.sourceUrls = const {},
@@ -846,6 +950,7 @@ class _SearchExec {
     this.cancelled = false,
     this.anyNonEmptyResults = false,
     this.searchRecords = const [],
+    this.searchUnavailable = false,
   });
 }
 

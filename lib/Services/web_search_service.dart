@@ -24,6 +24,23 @@ class WebSearchResult {
   });
 }
 
+/// Thrown when the search backend refused to run a query — a rate limit or
+/// an anti-bot challenge — rather than running it and finding nothing.
+///
+/// The distinction is the point: "no results" is evidence of absence and
+/// reasonably invites a rephrasing, while "we were blocked" is evidence of
+/// nothing at all, and answering it by searching harder both misleads the
+/// model and extends the block. Callers that collapse the two back into an
+/// empty list throw that signal away.
+class WebSearchUnavailableException implements Exception {
+  final String detail;
+
+  const WebSearchUnavailableException(this.detail);
+
+  @override
+  String toString() => 'WebSearchUnavailableException: $detail';
+}
+
 class WebSearchService {
   static const _baseUrl = 'https://html.duckduckgo.com/html/';
   static const _maxPageContentLength = 8000;
@@ -195,9 +212,18 @@ class WebSearchService {
     }
     if (isCancelled?.call() == true) return [];
 
-    // Fall back to HTTP (may be CAPTCHA-blocked)
+    // Fall back to HTTP. This is also the authoritative throttle detector: a
+    // blocked WebView simply renders the challenge and yields zero results,
+    // indistinguishable from a genuine miss, so the HTTP path is always
+    // reached when the WebView comes back empty — and it is the only place
+    // the interstitial is actually recognised.
     try {
       return await _searchOnce(query, maxResults: maxResults);
+    } on WebSearchUnavailableException {
+      // Deliberately not retried. The backend is asking us to send fewer
+      // requests; an immediate second attempt is the opposite of that, and
+      // every extra request while a block is active extends it.
+      rethrow;
     } catch (e) {
       if (e is TimeoutException ||
           e is SocketException ||
@@ -207,6 +233,8 @@ class WebSearchService {
         if (isCancelled?.call() == true) return [];
         try {
           return await _searchOnce(query, maxResults: maxResults);
+        } on WebSearchUnavailableException {
+          rethrow;
         } catch (_) {
           return [];
         }
@@ -492,8 +520,15 @@ ${sourceContext.toString().trim()}
         )
         .timeout(_searchTimeout);
 
-    if (response.statusCode == 429) {
-      throw TimeoutException('Rate limited');
+    // Checked before the status code, because the status code is not a
+    // reliable signal here: DuckDuckGo serves its interstitial with HTTP
+    // 202, a success status, so a status-only check reads a block as an
+    // ordinary empty page. 429 is handled too, though it is not what
+    // DuckDuckGo was measured to send.
+    if (WebSearchService.isChallengePage(response.body) ||
+        response.statusCode == 429) {
+      throw const WebSearchUnavailableException(
+          'the search engine is rate-limiting this client');
     }
 
     if (response.statusCode >= 500) {
@@ -504,6 +539,23 @@ ${sourceContext.toString().trim()}
 
     return _parseResults(response.body, maxResults);
   }
+
+  /// Whether [html] is DuckDuckGo's anti-bot interstitial rather than a
+  /// results page.
+  ///
+  /// Measured by issuing eight rapid searches: the first three returned
+  /// HTTP 200 with ten results each, and every one after that returned HTTP
+  /// 202 with a ~14KB challenge page ("Select all squares containing a
+  /// duck") and no results at all.
+  ///
+  /// Matched on structural markers — the modal's CSS class, the endpoint
+  /// its form posts to, that form's id — rather than on the page's prose,
+  /// which is user-facing copy and could be reworded or localised. None of
+  /// these strings appear in a normal results page.
+  static bool isChallengePage(String html) =>
+      html.contains('anomaly-modal') ||
+      html.contains('anomaly.js') ||
+      html.contains('challenge-form');
 
   Future<void> _fetchPageContent(WebSearchResult result) async {
     try {

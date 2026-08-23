@@ -4,3 +4,4 @@ export 'permission_service.dart';
 export 'image_service.dart';
 export 'web_search_service.dart';
 export 'memory_service.dart';
+export 'search_agent.dart';

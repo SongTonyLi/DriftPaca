@@ -547,9 +547,14 @@ class ChatPageViewModel extends ChangeNotifier {
             FaviconCache.instance.preload(sources.map((s) => s.domain));
           }
           card.isComplete = true;
-          _searchSegments.add(AnswerSegment());
           notifyListeners();
         }
+      },
+      onAnswerStart: () {
+        if (_searchSegments.whereType<AnswerSegment>().isNotEmpty) return;
+        if (_searchSegments.whereType<SearchCardSegment>().isEmpty) return;
+        _searchSegments.add(AnswerSegment());
+        notifyListeners();
       },
     );
 

@@ -1,4 +1,4 @@
-/// Ollama Cloud integration tests — WEBSEARCH behavior across models.
+/// Ollama Cloud integration tests — WEBSEARCH fallback-protocol behavior across models.
 /// Run with: dart test test/integration/ollama_cloud_test.dart --timeout 300s
 ///
 /// Tests the WEBSEARCH instruction compliance, citation quality,
@@ -82,7 +82,7 @@ void main() {
   // Group 1: WEBSEARCH compliance across models
   // =========================================================================
   for (final model in _testModels) {
-    group('[$model] WEBSEARCH compliance', () {
+    group('[$model] WEBSEARCH fallback-protocol compliance', () {
       test('searches for current GDP data', () async {
         final content = await generate(
           "What is Vietnam's GDP in 2025?",

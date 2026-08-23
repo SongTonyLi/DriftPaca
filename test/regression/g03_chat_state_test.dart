@@ -251,6 +251,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     required List<MessageSegment> Function() segmentsProvider,
     void Function(List<WebSearchResult> urls)? onUrlsKnown,
     void Function(String url, bool success)? onUrlFetched,
+    void Function()? onAnswerStart,
   }) {
     activeCallbacks = WebSearchCallbackSet(onSearchStart);
   }

@@ -712,6 +712,10 @@ void main() {
       chatProvider.clearWebSearchCallbacks();
 
       print('Total searches triggered: ${searchQueries.length}');
+      // Unit tests in search_agent_test.dart prove multi-round sequential
+      // and parallel searches; live models are flaky for an exact count of 2.
+      expect(searchQueries.length, greaterThanOrEqualTo(1),
+          reason: 'Live models should search at least once for multi-country GDP');
       expect(searchQueries.length, lessThanOrEqualTo(3),
           reason: 'Should not exceed max 3 search attempts');
     });

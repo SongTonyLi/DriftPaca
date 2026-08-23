@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:uuid/uuid.dart';
 
 class OllamaMessage {
@@ -24,6 +25,12 @@ class OllamaMessage {
   /// The role of the message.
   OllamaMessageRole role;
 
+  /// Tool calls emitted by an assistant turn (ephemeral — not persisted).
+  List<OllamaToolCall>? toolCalls;
+
+  /// Tool name for `role: tool` result messages (ephemeral — not persisted).
+  String? toolName;
+
   /// The model used to generate the message.
   String? model;
 
@@ -43,6 +50,8 @@ class OllamaMessage {
     String? id,
     required this.role,
     this.thinking,
+    this.toolCalls,
+    this.toolName,
     this.images,
     DateTime? createdAt,
     this.model,
@@ -58,28 +67,39 @@ class OllamaMessage {
   })  : id = id ?? Uuid().v4(),
         createdAt = createdAt ?? DateTime.now();
 
-  factory OllamaMessage.fromJson(Map<String, dynamic> json) => OllamaMessage(
-        json["message"] != null
-            ? json["message"]["content"] // For chat messages
-            : json["response"], // For generated messages
-        role: json["message"] != null
-            ? OllamaMessageRole.fromString(json["message"]["role"])
-            : OllamaMessageRole.assistant, // For generated messages (default)
-        thinking: json["message"]?["thinking"], // Thinking/reasoning content
-        images: null, // TODO: Implement image support
-        createdAt: DateTime.parse(json["created_at"]),
-        model: json["model"],
-        // Metadata fields
-        done: json["done"],
-        doneReason: json["done_reason"],
-        // context array skipped — large token ID list unused in chat mode
-        totalDuration: json["total_duration"],
-        loadDuration: json["load_duration"],
-        promptEvalCount: json["prompt_eval_count"],
-        promptEvalDuration: json["prompt_eval_duration"],
-        evalCount: json["eval_count"],
-        evalDuration: json["eval_duration"],
-      );
+  factory OllamaMessage.fromJson(Map<String, dynamic> json) {
+    final message = json["message"];
+    final rawContent = message != null ? message["content"] : json["response"];
+    return OllamaMessage(
+      rawContent?.toString() ?? '',
+      role: message != null
+          ? OllamaMessageRole.fromString(message["role"] ?? 'assistant')
+          : OllamaMessageRole.assistant,
+      thinking: message?["thinking"],
+      toolCalls: _parseToolCalls(message?["tool_calls"]),
+      toolName: message?["tool_name"] as String?,
+      images: null,
+      createdAt: DateTime.parse(json["created_at"]),
+      model: json["model"],
+      done: json["done"],
+      doneReason: json["done_reason"],
+      totalDuration: json["total_duration"],
+      loadDuration: json["load_duration"],
+      promptEvalCount: json["prompt_eval_count"],
+      promptEvalDuration: json["prompt_eval_duration"],
+      evalCount: json["eval_count"],
+      evalDuration: json["eval_duration"],
+    );
+  }
+
+  static List<OllamaToolCall>? _parseToolCalls(dynamic raw) {
+    if (raw is! List || raw.isEmpty) return null;
+    return [
+      for (final item in raw)
+        if (item is Map)
+          OllamaToolCall.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
 
   factory OllamaMessage.fromDatabase(Map<String, dynamic> map) {
     return OllamaMessage(
@@ -118,6 +138,9 @@ class OllamaMessage {
         "content": content,
         if (thinking != null) "thinking": thinking,
         "images": await _base64EncodeImages(),
+        if (toolCalls != null && toolCalls!.isNotEmpty)
+          "tool_calls": [for (final call in toolCalls!) call.toJson()],
+        if (toolName != null) "tool_name": toolName,
       };
 
   Map<String, dynamic> toDatabaseMap() => {
@@ -195,7 +218,8 @@ class OllamaMessage {
 enum OllamaMessageRole {
   user,
   assistant,
-  system;
+  system,
+  tool;
 
   factory OllamaMessageRole.fromString(String role) {
     switch (role) {
@@ -205,6 +229,8 @@ enum OllamaMessageRole {
         return OllamaMessageRole.assistant;
       case 'system':
         return OllamaMessageRole.system;
+      case 'tool':
+        return OllamaMessageRole.tool;
       default:
         throw ArgumentError('Unknown role: $role');
     }

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/conversation_memory.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
+import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 
 void main() {
@@ -78,6 +79,98 @@ void main() {
       }
       expect(prepared.any((m) => m['content'] == 'The answer is 42.'), isTrue,
           reason: 'the visible answer must still be sent');
+    });
+  });
+
+  group('tool transcript extraMessages', () {
+    test('extraMessages survive even when summarizedMessageCount == history.length', () async {
+      final service = OllamaService();
+      final history = [
+        OllamaMessage('latest user turn', role: OllamaMessageRole.user),
+        OllamaMessage(
+          'prior answer',
+          role: OllamaMessageRole.assistant,
+          thinking: 'history thinking must be stripped',
+        ),
+      ];
+      final extra = [
+        OllamaMessage(
+          '',
+          role: OllamaMessageRole.assistant,
+          thinking: 'keep tool-call thinking',
+          toolCalls: [
+            const OllamaToolCall(
+              name: 'web_search',
+              arguments: {'query': 'gdp'},
+            ),
+          ],
+        ),
+        OllamaMessage(
+          'tool result body',
+          role: OllamaMessageRole.tool,
+          toolName: 'web_search',
+        ),
+      ];
+      final mem = ConversationMemory(
+        summary: 'covers everything',
+        summarizedMessageCount: history.length,
+      );
+
+      final prepared = await service.prepareMessagesWithSystemPrompt(
+        history,
+        'SYS',
+        conversationMemory: mem,
+        extraMessages: extra,
+      );
+
+      expect(
+        prepared.any((m) => m['content'] == 'latest user turn'),
+        isTrue,
+        reason: 'fully-summarized history must not drop the latest user turn',
+      );
+      expect(
+        prepared.any((m) => m['content'] == 'tool result body'),
+        isTrue,
+        reason: 'extraMessages must be appended after the coverage window',
+      );
+      expect(prepared.any((m) => m['role'] == 'tool'), isTrue);
+    });
+
+    test('extraMessages with toolCalls keep thinking; history thinking is stripped', () async {
+      final service = OllamaService();
+      final history = [
+        OllamaMessage('q', role: OllamaMessageRole.user),
+        OllamaMessage(
+          'visible answer',
+          role: OllamaMessageRole.assistant,
+          thinking: 'do not resend',
+        ),
+      ];
+      final extra = [
+        OllamaMessage(
+          '',
+          role: OllamaMessageRole.assistant,
+          thinking: 'replay thinking',
+          toolCalls: [
+            const OllamaToolCall(
+              name: 'web_search',
+              arguments: {'query': 'q'},
+            ),
+          ],
+        ),
+      ];
+
+      final prepared = await service.prepareMessagesWithSystemPrompt(
+        history,
+        null,
+        extraMessages: extra,
+      );
+
+      final historyAssistant = prepared.firstWhere((m) => m['content'] == 'visible answer');
+      expect(historyAssistant.containsKey('thinking'), isFalse);
+
+      final replay = prepared.firstWhere((m) => m['tool_calls'] != null);
+      expect(replay['thinking'], 'replay thinking');
     });
   });
 }

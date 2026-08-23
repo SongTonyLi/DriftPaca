@@ -14,6 +14,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/api/create_request.dart';
 
 class OllamaService {
@@ -181,6 +182,8 @@ class OllamaService {
     ConversationMemory? conversationMemory,
     AgentMemory? profile,
     String relevantContext = '',
+    List<OllamaToolDefinition>? tools,
+    List<OllamaMessage> extraMessages = const [],
   }) async {
     final url = constructUrl("/api/chat");
 
@@ -195,7 +198,10 @@ class OllamaService {
           profile: profile,
           relevantContext: relevantContext,
           currentModel: chat.model,
+          extraMessages: extraMessages,
         ),
+        if (tools != null && tools.isNotEmpty)
+          "tools": [for (final t in tools) t.toJson()],
         if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
         "stream": false,
       }),
@@ -217,6 +223,8 @@ class OllamaService {
     ConversationMemory? conversationMemory,
     AgentMemory? profile,
     String relevantContext = '',
+    List<OllamaToolDefinition>? tools,
+    List<OllamaMessage> extraMessages = const [],
   }) async* {
     // Determine vision support: only strip images when we are confident
     // the model lacks vision. Default to true (send images) when unknown.
@@ -239,6 +247,7 @@ class OllamaService {
       relevantContext: relevantContext,
       currentModel: chat.model,
       supportsVision: supportsVision,
+      extraMessages: extraMessages,
     );
 
     final url = constructUrl('/api/chat');
@@ -248,6 +257,8 @@ class OllamaService {
     request.body = json.encode({
       "model": chat.model,
       "messages": preparedMessages,
+      if (tools != null && tools.isNotEmpty)
+        "tools": [for (final t in tools) t.toJson()],
       if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
       "stream": true,
     });
@@ -268,6 +279,7 @@ class OllamaService {
           relevantContext: relevantContext,
           currentModel: chat.model,
           supportsVision: false,
+          extraMessages: extraMessages,
         );
 
         final retryRequest = http.Request("POST", url);
@@ -275,6 +287,8 @@ class OllamaService {
         retryRequest.body = json.encode({
           "model": chat.model,
           "messages": retryMessages,
+          if (tools != null && tools.isNotEmpty)
+            "tools": [for (final t in tools) t.toJson()],
           if (_buildOptions(chat.options) != null) "options": _buildOptions(chat.options),
           "stream": true,
         });
@@ -336,6 +350,7 @@ class OllamaService {
     String relevantContext = '',
     String? currentModel,
     bool supportsVision = true,
+    List<OllamaMessage> extraMessages = const [],
   }) async {
     // Coverage-based window: send raw everything the conversation summary does
     // NOT cover, so a lagging summary yields a larger — never lossy — context
@@ -393,6 +408,17 @@ class OllamaService {
         msgJson['content'] = '(Response from $displayName)\n${msgJson['content']}';
       }
       jsonMessages.add(msgJson);
+    }
+
+    // Tool-call transcript is always appended after the coverage window so a
+    // fully-summarized history cannot drop the latest tool turn.
+    for (final m in extraMessages) {
+      final extraJson = await m.toChatJson();
+      final keepThinking = m.toolCalls != null && m.toolCalls!.isNotEmpty;
+      if (!keepThinking) {
+        extraJson.remove('thinking');
+      }
+      jsonMessages.add(extraJson);
     }
 
     // Build the system prompt with memory injection
@@ -491,6 +517,20 @@ class OllamaService {
       // Silently ignore - endpoint may not exist on cloud or older Ollama versions
     }
 
+    return null;
+  }
+
+  /// Returns cached or freshly-fetched capabilities for [model].
+  /// Null means unknown (show failed or returned no capabilities).
+  Future<ModelCapabilities?> getCapabilities(String model) async {
+    final cached = _capabilitiesCache[model];
+    if (cached != null) return cached;
+    final show = await _showModel(model);
+    if (show != null && show.capabilities.isNotEmpty) {
+      final caps = ModelCapabilities.fromList(show.capabilities);
+      _capabilitiesCache[model] = caps;
+      return caps;
+    }
     return null;
   }
 

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
@@ -21,6 +24,14 @@ class _RecordingObserver extends NavigatorObserver {
 }
 
 void main() {
+  setUpAll(() {
+    // Pumping a full ChatBubble (new in this file — the rest of it pumps
+    // SearchCard/SearchDetailDialog directly) exercises markdown rendering,
+    // which pulls a Google Font for code spans. Disable runtime fetching so
+    // tests are deterministic offline, matching test/widgets/chat_bubble_test.dart.
+    GoogleFonts.config.allowRuntimeFetching = false;
+  });
+
   group('search source preview truncation', () {
     testWidgets('does not split a surrogate pair at the boundary',
         (tester) async {
@@ -298,6 +309,110 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       FaviconCache.instance.clearForTest();
+    });
+  });
+
+  group('goal-directed research rendering', () {
+    testWidgets(
+        'renders multiple rounds, goal progress, and a termination banner',
+        (tester) async {
+      final message =
+          OllamaMessage('Final answer text.', role: OllamaMessageRole.assistant);
+      final segments = <MessageSegment>[
+        SearchCardSegment(
+          query: 'first query',
+          isComplete: true,
+          resultCount: 2,
+          round: 1,
+        ),
+        SearchCardSegment(
+          query: 'first query rephrased',
+          skipReason: 'You already asked something very close to this.',
+          isComplete: true,
+          round: 2,
+        ),
+        SearchCardSegment(
+          query: 'second query',
+          isComplete: true,
+          resultCount: 1,
+          round: 3,
+        ),
+        ResearchLedgerSegment(
+          objective: 'What is the objective of this research?',
+          entries: const [
+            LedgerEntryView(
+              query: 'first query',
+              searched: true,
+              sourceIdStart: 1,
+              sourceIdEnd: 2,
+              excerpt: 'supporting evidence',
+            ),
+            LedgerEntryView(
+              query: 'second query',
+              searched: true,
+              sourceIdStart: 3,
+              sourceIdEnd: 3,
+            ),
+            LedgerEntryView(query: 'third query', searched: false),
+          ],
+          terminationReason: 'converged',
+        ),
+      ];
+
+      await tester.pumpWidget(
+          _host(ChatBubble(message: message, searchSegments: segments)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(tester.takeException(), isNull);
+      // Every round is visible, in order, including the skipped one.
+      expect(find.textContaining('Search 1'), findsOneWidget);
+      expect(find.textContaining('Search 2'), findsOneWidget);
+      expect(find.textContaining('Search 3'), findsOneWidget);
+      expect(
+          find.text('You already asked something very close to this.'),
+          findsOneWidget);
+      // Goal progress: objective, plus an open sub-goal never searched.
+      expect(find.text('What is the objective of this research?'),
+          findsOneWidget);
+      expect(find.text('third query'), findsOneWidget);
+      // Termination banner reflects convergence, not a safety-cap cutoff.
+      expect(find.textContaining('Research complete'), findsOneWidget);
+    });
+
+    testWidgets(
+        'renders a pre-existing (round/skipReason/ledger-less) segment list unchanged',
+        (tester) async {
+      // Exactly what step 10's decoder still produces for a chat persisted
+      // before this work — no round, no skipReason, no ResearchLedgerSegment.
+      final message =
+          OllamaMessage('Old answer text.', role: OllamaMessageRole.assistant);
+      final segments = <MessageSegment>[
+        ThinkingSegment('Some earlier reasoning.'),
+        SearchCardSegment(
+          query: 'legacy query',
+          isComplete: true,
+          resultCount: 1,
+          urls: [
+            SearchURLStatus(
+              url: 'https://example.com',
+              domain: 'example.com',
+              state: SearchURLState.success,
+            ),
+          ],
+        ),
+      ];
+
+      await tester.pumpWidget(
+          _host(ChatBubble(message: message, searchSegments: segments)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(tester.takeException(), isNull);
+      // Byte-identical to the pre-round/skip/ledger label format.
+      expect(find.text('Searched: "legacy query"'), findsOneWidget);
+      expect(find.textContaining('Search 1'), findsNothing);
+      expect(find.text('Research goal'), findsNothing);
     });
   });
 }

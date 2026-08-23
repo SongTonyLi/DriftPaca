@@ -10,6 +10,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
@@ -402,6 +403,137 @@ void main() {
     });
   });
 
+  group('web search UI wiring (round, ledger, skip, termination)', () {
+    setUp(() async {
+      fakeChatProvider.setCurrentChat(createTestChat('test-id'));
+      viewModel.setTextFieldValue('Hello');
+      viewModel.acceptWebSearchConsent(); // enables web search
+
+      await viewModel.sendMessage(
+        onModelSelectionRequired: () async {},
+        onServerNotConfigured: () {},
+      );
+    });
+
+    test('captured onSearchStart stamps increasing round numbers in order', () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+
+      onSearchStart('first query');
+      onSearchStart('second query');
+      onSearchStart('third query');
+
+      final cards =
+          viewModel.searchSegments.whereType<SearchCardSegment>().toList();
+      expect(cards.map((c) => c.round).toList(), [1, 2, 3]);
+      expect(cards.map((c) => c.query).toList(),
+          ['first query', 'second query', 'third query']);
+    });
+
+    test(
+        'onLedgerUpdate creates exactly one ResearchLedgerSegment and updates it in place',
+        () {
+      final onLedgerUpdate = fakeChatProvider.capturedOnLedgerUpdate!;
+      final goal = SubGoal(query: 'q1', normalizedQuery: 'q1')
+        ..status = SubGoalStatus.searched
+        ..sourceIdStart = 1
+        ..sourceIdEnd = 2
+        ..excerpt = 'evidence found';
+
+      onLedgerUpdate('what is the objective', [goal]);
+
+      var ledgers = viewModel.searchSegments
+          .whereType<ResearchLedgerSegment>()
+          .toList();
+      expect(ledgers.length, 1);
+      expect(ledgers.single.objective, 'what is the objective');
+      expect(ledgers.single.entries.single.query, 'q1');
+      expect(ledgers.single.entries.single.searched, isTrue);
+      expect(ledgers.single.entries.single.sourceIdStart, 1);
+      expect(ledgers.single.entries.single.excerpt, 'evidence found');
+
+      // A second update (e.g. a later round) must overwrite the same
+      // segment in place, not append a second one.
+      final secondGoal = SubGoal(query: 'q2', normalizedQuery: 'q2');
+      onLedgerUpdate('what is the objective', [goal, secondGoal]);
+
+      ledgers = viewModel.searchSegments
+          .whereType<ResearchLedgerSegment>()
+          .toList();
+      expect(ledgers.length, 1,
+          reason: 'must update in place, not append a duplicate segment');
+      expect(ledgers.single.entries.length, 2);
+      expect(ledgers.single.entries[1].searched, isFalse);
+    });
+
+    test(
+        'onSearchSkipped always appends a new card and never mutates an existing one',
+        () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchComplete = fakeChatProvider.capturedOnSearchComplete!;
+      final onSearchSkipped = fakeChatProvider.capturedOnSearchSkipped!;
+
+      onSearchStart('q1');
+      onSearchComplete([
+        WebSearchResult(
+            url: 'https://example.com',
+            title: 't',
+            snippet: 's',
+            pageContent: 'body'),
+      ]);
+      onSearchSkipped(
+          'q1 again', 'You already asked something very close to this.');
+
+      final cards =
+          viewModel.searchSegments.whereType<SearchCardSegment>().toList();
+      expect(cards.length, 2);
+      expect(cards[0].query, 'q1');
+      expect(cards[0].skipReason, isNull);
+      expect(cards[0].urls, isNotEmpty,
+          reason: 'the completed card must be untouched by the skip');
+      expect(cards[1].query, 'q1 again');
+      expect(cards[1].skipReason,
+          'You already asked something very close to this.');
+      expect(cards[1].isComplete, isTrue);
+      expect(cards[1].round, 2);
+    });
+
+    test('onResearchDone sets terminationReason on the ledger segment', () {
+      fakeChatProvider.capturedOnLedgerUpdate!('objective', const []);
+      fakeChatProvider.capturedOnResearchDone!(SearchTerminationReason.converged);
+
+      final ledger = viewModel.searchSegments
+          .whereType<ResearchLedgerSegment>()
+          .single;
+      expect(ledger.terminationReason, 'converged');
+    });
+
+    test(
+        'onSearchComplete truncates persisted source content and drops the duplicate extractedContent copy',
+        () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchComplete = fakeChatProvider.capturedOnSearchComplete!;
+
+      onSearchStart('q1');
+      onSearchComplete([
+        WebSearchResult(
+          url: 'https://example.com/a',
+          title: 't',
+          snippet: 's',
+          pageContent: 'x'.padRight(5000, 'x'),
+        ),
+      ]);
+
+      final card =
+          viewModel.searchSegments.whereType<SearchCardSegment>().single;
+      // sources[].content already carries this (SearchDetailDialog prefers
+      // it); persisting the same text a second time here just bloats the
+      // `thinking` blob every card gets base64-JSON'd into.
+      expect(card.extractedContent, isNull);
+      expect(card.sources, isNotNull);
+      expect(card.sources!.single.content.length, lessThan(5000));
+    });
+  });
+
   group('isServerConfigured', () {
     test('should return true when serverAddress is set', () {
       expect(viewModel.isServerConfigured, isTrue);
@@ -469,6 +601,21 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   int? lastEditAndResendSearchAttempts;
   int? lastRetrySearchAttempts;
   OllamaMessage? deletedExchangeAnchor;
+
+  // Captured web-search callbacks — installed by ChatPageViewModel via
+  // setWebSearchCallbacks. Tests invoke these directly to simulate
+  // SearchAgent driving the UI, instead of running a real search.
+  void Function(String thinking)? capturedOnSearchThinking;
+  void Function(String query)? capturedOnSearchStart;
+  void Function(String query)? capturedOnSearchQueryUpdate;
+  void Function(List<WebSearchResult> results)? capturedOnSearchComplete;
+  List<MessageSegment> Function()? capturedSegmentsProvider;
+  void Function(List<WebSearchResult> urls)? capturedOnUrlsKnown;
+  void Function(String url, bool success)? capturedOnUrlFetched;
+  void Function()? capturedOnAnswerStart;
+  void Function(String objective, List<SubGoal> snapshot)? capturedOnLedgerUpdate;
+  void Function(String query, String reason)? capturedOnSearchSkipped;
+  void Function(SearchTerminationReason reason)? capturedOnResearchDone;
 
   void setMessages(List<OllamaMessage> messages) {
     _messages = messages;
@@ -550,8 +697,23 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     required List<MessageSegment> Function() segmentsProvider,
     void Function(List<WebSearchResult> urls)? onUrlsKnown,
     void Function(String url, bool success)? onUrlFetched,
+    void Function()? onAnswerStart,
+    void Function(String objective, List<SubGoal> snapshot)? onLedgerUpdate,
+    void Function(String query, String reason)? onSearchSkipped,
+    void Function(SearchTerminationReason reason)? onResearchDone,
   }) {
     setWebSearchCallbacksCalled = true;
+    capturedOnSearchThinking = onSearchThinking;
+    capturedOnSearchStart = onSearchStart;
+    capturedOnSearchQueryUpdate = onSearchQueryUpdate;
+    capturedOnSearchComplete = onSearchComplete;
+    capturedSegmentsProvider = segmentsProvider;
+    capturedOnUrlsKnown = onUrlsKnown;
+    capturedOnUrlFetched = onUrlFetched;
+    capturedOnAnswerStart = onAnswerStart;
+    capturedOnLedgerUpdate = onLedgerUpdate;
+    capturedOnSearchSkipped = onSearchSkipped;
+    capturedOnResearchDone = onResearchDone;
   }
 
   @override

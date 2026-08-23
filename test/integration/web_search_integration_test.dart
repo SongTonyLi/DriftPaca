@@ -44,7 +44,7 @@ void main() {
   // =========================================================================
   // Group 1: Ollama Cloud — WEBSEARCH behavior
   // =========================================================================
-  group('Ollama Cloud — WEBSEARCH instruction', () {
+  group('Ollama Cloud — WEBSEARCH fallback-protocol instruction', () {
     late OllamaService ollamaService;
 
     setUp(() {

@@ -58,6 +58,24 @@ String encodeSearchSegments(List<MessageSegment> segments) {
                     'content': s.content,
                   })
               .toList(),
+        if (segment.round != null) 'round': segment.round,
+        if (segment.skipReason != null) 'skipReason': segment.skipReason,
+      });
+    } else if (segment is ResearchLedgerSegment && segment.objective.isNotEmpty) {
+      data.add({
+        'type': 'ledger',
+        'objective': segment.objective,
+        'entries': segment.entries
+            .map((e) => {
+                  'query': e.query,
+                  'searched': e.searched,
+                  if (e.sourceIdStart != null) 'sourceIdStart': e.sourceIdStart,
+                  if (e.sourceIdEnd != null) 'sourceIdEnd': e.sourceIdEnd,
+                  if (e.excerpt != null) 'excerpt': e.excerpt,
+                })
+            .toList(),
+        if (segment.terminationReason != null)
+          'terminationReason': segment.terminationReason,
       });
     }
   }
@@ -114,6 +132,24 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
           isComplete: true,
           extractedContent: item['content'] as String?,
           sources: sources,
+          round: item['round'] as int?,
+          skipReason: item['skipReason'] as String?,
+        ));
+      } else if (type == 'ledger') {
+        final entries = (item['entries'] as List?)
+                ?.map((e) => LedgerEntryView(
+                      query: e['query'] as String? ?? '',
+                      searched: e['searched'] as bool? ?? false,
+                      sourceIdStart: e['sourceIdStart'] as int?,
+                      sourceIdEnd: e['sourceIdEnd'] as int?,
+                      excerpt: e['excerpt'] as String?,
+                    ))
+                .toList() ??
+            [];
+        segments.add(ResearchLedgerSegment(
+          objective: item['objective'] as String? ?? '',
+          entries: entries,
+          terminationReason: item['terminationReason'] as String?,
         ));
       }
     }

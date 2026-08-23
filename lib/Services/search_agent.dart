@@ -897,6 +897,15 @@ class SearchAgent {
   /// legitimate refinement from a duplicate (measured near-duplicate and
   /// refinement query pairs score within a few hundredths of each other).
   bool _isLedgerBlocked(String query, SubGoal matched) {
+    // Nothing has been searched for this sub-goal, so there is no duplicate
+    // to refuse. This is not hypothetical: the completeness gate opens a
+    // sub-goal using the gap's own wording, and the model's natural
+    // rephrasing of that gap scores 0.795 against it — over the 0.75
+    // threshold — so the harness refused the very search it had just
+    // demanded and ended the run as `converged` after one search. It also
+    // told the model "That search found nothing new either" about a search
+    // that never happened. Requiring a prior search closes both.
+    if (matched.searchCount == 0) return false;
     if (matched.normalizedQuery == _normalizeQuery(query)) return true;
     if (trigramJaccard(query, matched.query) >=
         _ledgerDupeSimilarityThreshold) {

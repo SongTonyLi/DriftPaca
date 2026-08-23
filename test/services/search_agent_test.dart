@@ -1084,6 +1084,50 @@ void main() {
       expect(outcome.searchCount, 2);
     });
 
+    test('does not block the corrective search it just asked for', () async {
+      // The gate opens a sub-goal using the GAP'S OWN WORDING. The model
+      // then phrases its corrective query naturally, which lands at 0.795
+      // trigram similarity against that wording — over the 0.75 block
+      // threshold. So the harness refused the exact search it had just
+      // demanded, ended as `converged` with one search, and told the model
+      // "That search found nothing new either" about a search that never
+      // ran. That is the reported symptom, manufactured by the fix for it.
+      final executed = <String>[];
+      final skipped = <String>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk('2026 NBA Finals winner')]);
+          }
+          if (turn == 2) {
+            return Stream.fromIterable([answerChunk('Knicks won, Brunson MVP')]);
+          }
+          if (turn == 3) {
+            return Stream.fromIterable(
+                [searchChunk('which college did Jalen Brunson attend')]);
+          }
+          return Stream.fromIterable([answerChunk('complete with Villanova')]);
+        },
+        assessCoverage: (req) async => ['which college Jalen Brunson attended'],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onSearchStart: executed.add,
+          onSearchSkipped: (q, r) => skipped.add(q),
+        ),
+      );
+
+      expect(skipped, isEmpty,
+          reason: 'the gate-opened sub-goal must not block its own follow-up');
+      expect(executed, hasLength(2));
+      expect(executed.last, 'which college did Jalen Brunson attend');
+      expect(outcome.searchCount, 2);
+    });
+
     test('accepts a complete answer after exactly one gate call', () async {
       var calls = 0;
       var turn = 0;

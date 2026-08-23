@@ -43,7 +43,48 @@ class WebSearchUnavailableException implements Exception {
 
 class WebSearchService {
   static const _baseUrl = 'https://html.duckduckgo.com/html/';
-  static const _maxPageContentLength = 8000;
+  /// Ceiling on extracted page text kept for chunking.
+  ///
+  /// Was 8,000, applied BEFORE [splitText] ran — which meant chunk ranking
+  /// could only ever choose between chunks drawn from the top of the
+  /// document. On a Wikipedia article the top of the document is navigation
+  /// chrome ("Toggle the table of contents ... 33 languages ..."), so the
+  /// ranker was picking the best of several thousand characters of nothing
+  /// while the answer sat a little further down. Raised so the ranker sees
+  /// the whole article; what actually reaches the model is unchanged, since
+  /// [formatResultsAsContext] still sends at most 2 chunks per source.
+  static const _maxPageContentLength = 200000;
+
+  /// Ceiling on a fetched response body before we give up on extracting
+  /// from it.
+  ///
+  /// This bounds EXTRACTION cost, not download cost. `response.bodyBytes` is
+  /// already fully materialized by the time this is checked, so the
+  /// bandwidth and the peak allocation have been paid either way — a low
+  /// ceiling saves nothing and only discards data already in hand.
+  ///
+  /// The previous ceiling was 1 MB, and it was not a rare edge case.
+  /// Measured against real pages: Jalen Brunson's Wikipedia article is
+  /// 1,462,709 B, the New York Knicks' 1,588,516 B, Vietnam's 2,516,643 B —
+  /// six of eight popular reference pages exceeded it. Each was silently
+  /// reduced to a title-and-snippet stub of a couple hundred characters
+  /// which STILL consumed a source id (see searchAndExtract's survival
+  /// filter), so the model was handed a citation slot containing nothing
+  /// and no signal that anything had been lost.
+  static const _maxResponseBytes = 16 * 1024 * 1024;
+
+  /// Whether a fetched body is too large to bother extracting from. Exposed
+  /// so the ceiling is testable against real measured page sizes rather
+  /// than asserted in a comment.
+  @visibleForTesting
+  static bool isBodyTooLarge(int byteLength) => byteLength > _maxResponseBytes;
+
+  /// Exposed so tests can express "above/below the ceiling" relative to the
+  /// real value instead of hardcoding a number that silently becomes wrong
+  /// the next time the ceiling moves — which is exactly how the previous
+  /// truncation test rotted.
+  @visibleForTesting
+  static int get maxPageContentLength => _maxPageContentLength;
   static const _fetchTimeout = Duration(seconds: 8);
   static const _searchTimeout = Duration(seconds: 10);
   static const _retryBackoff = Duration(seconds: 2);
@@ -578,8 +619,7 @@ ${sourceContext.toString().trim()}
         return;
       }
 
-      // Skip responses > 1MB
-      if (response.bodyBytes.length > 1024 * 1024) return;
+      if (isBodyTooLarge(response.bodyBytes.length)) return;
 
       final html = _decodeResponseBody(response);
       final extracted = extractTextFromHtml(html);

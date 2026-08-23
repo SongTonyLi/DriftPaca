@@ -2,13 +2,29 @@
 // Used by ResearchLedger to group near-duplicate search queries onto the
 // same research sub-goal and to rank excerpts by relevance to a query.
 
+/// Matches anything that is not a letter, a digit, or whitespace, in ANY
+/// script. Unicode-aware on purpose: the previous form was `[^a-z0-9\s]`,
+/// which treated every non-ASCII character as punctuation and deleted it.
+///
+/// That was catastrophic rather than merely lossy. A pure-CJK query
+/// normalized to the empty string, so `_trigrams` returned `{''}` for all of
+/// them and any two unrelated Chinese questions scored a perfect 1.0 —
+/// "越南目前的人口是多少" and "法国的首都是哪座城市" among them. ResearchLedger
+/// then grouped every non-Latin query onto one sub-goal and SearchAgent
+/// refused every search after the first as a near-duplicate, so a Chinese,
+/// Japanese, Korean, Arabic, Hebrew or Thai user got exactly one search per
+/// turn no matter what they asked.
+final _nonWordPattern = RegExp(r'[^\p{L}\p{N}\s]', unicode: true);
+
+final _whitespacePattern = RegExp(r'\s+');
+
 /// Normalizes text for trigram comparison: lowercase, strip apostrophes and
 /// periods (so "D.C." / "DC" and "won't" / "wont" compare identically),
 /// collapse remaining punctuation to a space, collapse whitespace.
 String _normalizeForTrigrams(String s) {
   final stripped = s.toLowerCase().replaceAll("'", '').replaceAll('.', '');
-  final spaced = stripped.replaceAll(RegExp(r'[^a-z0-9\s]'), ' ');
-  return spaced.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final spaced = stripped.replaceAll(_nonWordPattern, ' ');
+  return spaced.replaceAll(_whitespacePattern, ' ').trim();
 }
 
 /// The set of 3-character sliding-window trigrams for [s]. Strings shorter

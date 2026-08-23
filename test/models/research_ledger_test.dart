@@ -36,6 +36,33 @@ void main() {
     });
   });
 
+  group('ResearchLedger.openGap', () {
+    test('opens a sub-goal nobody has searched, without billing a search', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      final gap = ledger.openGap('which college did that player attend');
+
+      expect(ledger.subGoals, hasLength(1));
+      expect(gap.status, SubGoalStatus.open);
+      // upsert() represents a query actually issued and increments this. A
+      // gap is a question nobody has asked yet, so charging it a search
+      // would eat the per-sub-goal budget before any search happens.
+      expect(gap.searchCount, 0);
+      expect(ledger.render(), contains('which college did that player attend'));
+    });
+
+    test('reuses an existing sub-goal rather than spawning a lookalike', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      final searched = ledger.upsert('Jalen Brunson college career');
+      final gap = ledger.openGap('Jalen Brunson college');
+
+      expect(gap, same(searched));
+      expect(ledger.subGoals, hasLength(1));
+      // Reusing must not quietly re-open something already searched, nor
+      // bill it a second search.
+      expect(searched.searchCount, 1);
+    });
+  });
+
   group('ResearchLedger.markSearched', () {
     test('is idempotent — the first evidence wins', () {
       final ledger = ResearchLedger(objective: 'objective');

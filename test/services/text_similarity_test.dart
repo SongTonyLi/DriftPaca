@@ -72,6 +72,50 @@ void main() {
       }
     });
 
+    // The normalizer used to collapse every non-ASCII character to a space,
+    // so ANY pure-CJK query normalized to the empty string. Two completely
+    // unrelated Chinese questions therefore scored 1.0, the ledger grouped
+    // every one of them onto a single sub-goal, and _isLedgerBlocked
+    // refused every search after the first — a Chinese user got exactly one
+    // search per turn, forever, with the ledger reporting one sub-goal.
+    test('keeps unrelated non-Latin queries apart', () {
+      const unrelated = <List<String>>[
+        ['越南目前的人口是多少', '法国的首都是哪座城市'],
+        ['苹果公司的首席执行官是谁', '珠穆朗玛峰有多高'],
+        ['東京の人口', '大阪の天気'],
+        ['ما هو عدد سكان فيتنام', 'ما هي عاصمة فرنسا'],
+      ];
+      for (final pair in unrelated) {
+        final score = trigramJaccard(pair[0], pair[1]);
+        expect(score, lessThan(0.40),
+            reason: '"${pair[0]}" vs "${pair[1]}" scored '
+                '${score.toStringAsFixed(3)} — at or above the ledger\'s '
+                'grouping threshold these become one sub-goal');
+
+        final ledger = ResearchLedger(objective: 'irrelevant');
+        ledger.upsert(pair[0]);
+        ledger.upsert(pair[1]);
+        expect(ledger.subGoals, hasLength(2));
+      }
+    });
+
+    test('still groups genuine near-duplicates in a non-Latin script', () {
+      // The mechanism has to keep working, not just stop over-firing.
+      final ledger = ResearchLedger(objective: 'irrelevant');
+      final first = ledger.upsert('越南目前的人口是多少');
+      final second = ledger.upsert('越南目前的人口是多少人');
+      expect(identical(first, second), isTrue,
+          reason: 'score '
+              '${trigramJaccard('越南目前的人口是多少', '越南目前的人口是多少人').toStringAsFixed(3)}');
+    });
+
+    test('a mixed-script query is not mistaken for a pure-script one', () {
+      // "2026" alone used to be all that survived normalization here, so a
+      // CJK question containing a year compared as if it were just that year.
+      expect(trigramJaccard('2026年世界杯冠军是哪个国家', '2026年奥运会金牌最多的国家'),
+          lessThan(0.75));
+    });
+
     test('is symmetric and 1.0 for identical strings modulo case/whitespace', () {
       expect(trigramJaccard('Vietnam GDP', 'vietnam   gdp'), 1.0);
       expect(

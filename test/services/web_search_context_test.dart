@@ -102,16 +102,21 @@ void main() {
     });
   });
 
-  test('a page longer than 4000 but under the raised ceiling is no longer truncated at 4000', () {
-    final longText = 'x' * 6000;
-    final truncated = WebSearchService.truncatePageContent(longText);
-    expect(truncated.length, 6000);
+  // Both cases are expressed relative to the real ceiling. The previous
+  // version hardcoded 6000 and 50000, which were chosen against an 8000
+  // ceiling; when the ceiling was raised so chunk ranking could reach past
+  // a page's navigation chrome, 50000 quietly fell BELOW it and the test
+  // started asserting the opposite of its own name.
+  test('a page under the ceiling is not truncated', () {
+    final underCeiling = 'x' * (WebSearchService.maxPageContentLength - 1);
+    expect(WebSearchService.truncatePageContent(underCeiling).length,
+        underCeiling.length);
   });
 
-  test('a page much longer than the ceiling is still truncated', () {
-    final veryLongText = 'y' * 50000;
-    final truncated = WebSearchService.truncatePageContent(veryLongText);
-    expect(truncated.length, lessThan(50000));
+  test('a page longer than the ceiling is truncated to it', () {
+    final overCeiling = 'y' * (WebSearchService.maxPageContentLength * 2);
+    expect(WebSearchService.truncatePageContent(overCeiling).length,
+        WebSearchService.maxPageContentLength);
   });
 
   test('formatResultsAsContext prefers the query-relevant chunk over the positionally-first one', () {

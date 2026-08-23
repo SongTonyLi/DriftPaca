@@ -96,6 +96,25 @@ class ResearchLedger {
     return goal;
   }
 
+  /// Records a question that still needs answering but that nobody has
+  /// searched for — typically a part of the objective the drafted answer
+  /// left unaddressed (see SearchAgent's completeness gate).
+  ///
+  /// Deliberately not [upsert]: that represents a query actually issued and
+  /// increments [SubGoal.searchCount], which would spend the per-sub-goal
+  /// search budget on a search that never ran. A gap starts at zero.
+  ///
+  /// Reuses a matching sub-goal when one exists rather than spawning a
+  /// lookalike, and leaves its status and counters alone — a gap naming
+  /// something already searched adds nothing.
+  SubGoal openGap(String question) {
+    final existing = findMatch(question);
+    if (existing != null) return existing;
+    final goal = SubGoal(query: question, normalizedQuery: _normalize(question));
+    subGoals.add(goal);
+    return goal;
+  }
+
   /// Marks [goal] searched with supporting evidence. Idempotent: the first
   /// result set that returned something wins — a later redundant search
   /// against the same sub-goal doesn't overwrite the original source range

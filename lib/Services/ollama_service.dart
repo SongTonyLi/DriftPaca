@@ -355,7 +355,7 @@ class OllamaService {
     // Coverage-based window: send raw everything the conversation summary does
     // NOT cover, so a lagging summary yields a larger — never lossy — context
     // instead of silently dropping the messages between the summary and the
-    // recent window. See debug-context-pollution.md F2.
+    // recent window.
     int coveredCount = 0;
     if (conversationMemory != null && !conversationMemory.isEmpty) {
       final c = conversationMemory.summarizedMessageCount;
@@ -393,7 +393,6 @@ class OllamaService {
       // Never re-send prior reasoning or the persisted <!--SEARCH_DATA:…--> blob
       // to the model — history should carry only the visible answer. The stored
       // copy (decoded by the UI think-block / search card) keeps `thinking`.
-      // See debug-context-pollution.md F4.
       msgJson.remove('thinking');
 
       // Only annotate assistant messages from a DIFFERENT model in multi-model chats
@@ -431,7 +430,7 @@ class OllamaService {
     // Inject memories if available. The conversation summary is only useful
     // when it covers messages that are NOT in the raw window above; when the
     // whole conversation is sent raw (coveredCount == 0) the summary would just
-    // duplicate it, so skip it. See debug-context-pollution.md F2.
+    // duplicate it, so skip it.
     final profileBlock = profile?.toPromptBlock() ?? '';
     final convBlock =
         coveredCount > 0 ? (conversationMemory?.toPromptBlock() ?? '') : '';

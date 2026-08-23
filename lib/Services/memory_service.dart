@@ -236,7 +236,7 @@ class MemoryService extends ChangeNotifier {
     try {
       // Fetch existing memories first — the coverage marker tells us where the
       // summary currently ends, so we ingest exactly the un-summarized tail and
-      // never leave a gap. See debug-context-pollution.md F2.
+      // never leave a gap.
       final resetGen = _convResetGeneration[chatId] ?? 0;
       final existingConvMemory = await getConversationMemory(chatId);
       final existingProfile = await getAgentMemory();
@@ -276,7 +276,7 @@ class MemoryService extends ChangeNotifier {
       _lastError = null;
 
       // Declare the summary authoritative for everything except the recent
-      // window, which stays in the raw send window. See debug-context-pollution.md F2.
+      // window, which stays in the raw send window.
       final newCoverage = messages.length > MemoryConstants.recentMessagesToKeep
           ? messages.length - MemoryConstants.recentMessagesToKeep
           : 0;
@@ -339,7 +339,7 @@ class MemoryService extends ChangeNotifier {
         // Non-JSON response: keep the last good memory instead of storing raw
         // model output verbatim. Prose, meta-commentary, or half-JSON would be
         // injected as authoritative "Conversation Context" and hallucinated as
-        // fact. See debug-context-pollution.md F1.
+        // fact.
         debugPrint(
             'MemoryService: non-JSON memory response ignored (kept prior memory)');
         return;

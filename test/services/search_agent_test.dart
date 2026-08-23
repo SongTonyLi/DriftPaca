@@ -1191,6 +1191,37 @@ void main() {
       expect(outcome.reason, SearchTerminationReason.searchUnavailable);
     });
 
+    test('a cancel during the corrective round still returns the draft',
+        () async {
+      var cancelled = false;
+      var turn = 0;
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          if (turn == 2) {
+            return Stream.fromIterable([answerChunk('partial but real')]);
+          }
+          // The user hits stop while the corrective round is under way.
+          cancelled = true;
+          return Stream.fromIterable([answerChunk('never delivered')]);
+        },
+        assessCoverage: (req) async => ['a missing part'],
+      ).run(
+        history: history,
+        listener: const SearchAgentListener(),
+        isCancelled: () => cancelled,
+      );
+
+      expect(outcome.cancelled, isTrue);
+      // The gate rejected this draft, but a rejected draft beats a blank
+      // message — the same lesson as dd4ed25. Discarding it because we had
+      // hoped to improve it loses everything the run established.
+      expect(outcome.content, 'partial but real',
+          reason: 'cancelling mid-correction must not blank the answer');
+    });
+
     test('gives up after maxCoverageChecks corrective rounds', () async {
       var calls = 0;
       var turn = 0;

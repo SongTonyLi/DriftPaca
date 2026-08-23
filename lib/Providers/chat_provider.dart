@@ -66,7 +66,9 @@ List ONLY parts of the question the draft leaves genuinely unanswered — includ
 
 If the draft addresses every part, reply with exactly: NONE
 
-Reply NONE unless a part is clearly missing. Do not list a part merely because it could be more detailed, better sourced, updated, or expanded. A draft that answers the question briefly is complete. A draft that explicitly says it could not determine something is NOT complete.''';
+Reply NONE unless a part is clearly missing. Do not list a part merely because it could be more detailed, better sourced, updated, or expanded. A draft that answers the question briefly is complete. A draft that could not determine a fact is NOT complete.
+
+A refusal is a complete answer. If the draft declines a part because it would be unsafe, unethical, illegal, or a violation of someone's privacy, that part is addressed — never list it. Declining to say something is different from failing to find it: the first is settled, the second is a gap. When a draft both declines and says it could not find something, the refusal governs.''';
 
 /// Extracts the search query from a buffer containing "WEBSEARCH: <query>".
 String _extractSearchQuery(String buffer) {

@@ -314,7 +314,12 @@ class SearchAgent {
         toolsEnabled: canSearch,
       );
       allThinking += turn.thinking;
-      lastContent = turn.content;
+      // Only overwrite when this turn actually said something. lastContent
+      // is what a cancelled run falls back on, and a turn that produced
+      // nothing — cut short mid-stream, or a bare tool call — has nothing
+      // better to offer than the answer already in hand. The preamble path
+      // below still clears it explicitly, where discarding really is right.
+      if (turn.content.isNotEmpty) lastContent = turn.content;
 
       if (turn.cancelled) {
         return _outcome(lastContent, allThinking, sourceUrls, searchCount, true,
@@ -369,9 +374,12 @@ class SearchAgent {
             for (final gap in gaps) {
               ledger.openGap(gap);
             }
-            // The rejected answer already streamed to the UI.
+            // The rejected answer already streamed to the UI, so clear it
+            // there — but keep it in lastContent. If the user cancels during
+            // the corrective round, an incomplete draft is still far better
+            // than the blank message dd4ed25 exists to prevent; we rejected
+            // it hoping to improve on it, not because it was worthless.
             listener.onResetContent?.call();
-            lastContent = '';
             transcript.add(OllamaMessage(
               _gapNotice(gaps),
               role: OllamaMessageRole.user,

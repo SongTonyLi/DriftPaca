@@ -581,6 +581,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   Future<void> _handleAttachmentButton() async {
     await _viewModel.pickImages(
       onPermissionDenied: _showPhotosDeniedAlert,
+      onCompressionFailed: _showImageCompressionFailedAlert,
     );
   }
 
@@ -598,6 +599,25 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
         return AlertDialog(
           title: const Text('Photos Permission Denied'),
           content: const Text('Please allow access to photos in the settings.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showImageCompressionFailedAlert() async {
+    await showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('Image Could Not Be Attached'),
+          content: const Text(
+              'The selected image could not be processed. Please try a different image.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),

@@ -135,6 +135,9 @@ class _SearchCardState extends State<SearchCard>
             // Header
             InkWell(
               onTap: () {
+                // A skipped search has nothing to show — no sources, no
+                // extracted content — so it never opens the detail dialog.
+                if (widget.segment.skipReason != null) return;
                 if (widget.segment.isComplete) {
                   SearchDetailDialog.show(context, widget.segment);
                 } else if (widget.segment.urls.isNotEmpty) {
@@ -147,7 +150,8 @@ class _SearchCardState extends State<SearchCard>
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Row(
                   children: [
-                    _buildIcon(theme, hasError, segment.isComplete),
+                    _buildIcon(theme, hasError, segment.isComplete,
+                        segment.skipReason != null),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -190,26 +194,42 @@ class _SearchCardState extends State<SearchCard>
                 ),
               ),
             ),
-            // URL list
-            SizeTransition(
-              sizeFactor: _expandAnimation,
-              child: segment.urls.isNotEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.only(
-                          left: 36, right: 12, bottom: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (final url in segment.urls)
-                            _UrlRow(
-                              key: ValueKey(url.url),
-                              url: url,
-                            ),
-                        ],
-                      ),
-                    )
-                  : const SizedBox.shrink(),
-            ),
+            // A skipped search has no URLs to show — a compact one-line
+            // reason takes the place of the URL list, always visible (no
+            // expand/collapse: there's nothing further to disclose).
+            if (segment.skipReason != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 36, right: 12, bottom: 8),
+                child: Text(
+                  segment.skipReason!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant
+                        .withValues(alpha: 0.75),
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              )
+            else
+              // URL list
+              SizeTransition(
+                sizeFactor: _expandAnimation,
+                child: segment.urls.isNotEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.only(
+                            left: 36, right: 12, bottom: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final url in segment.urls)
+                              _UrlRow(
+                                key: ValueKey(url.url),
+                                url: url,
+                              ),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
           ],
         ),
       ),
@@ -218,7 +238,13 @@ class _SearchCardState extends State<SearchCard>
     );
   }
 
-  Widget _buildIcon(ThemeData theme, bool hasError, bool isComplete) {
+  Widget _buildIcon(
+      ThemeData theme, bool hasError, bool isComplete, bool isSkipped) {
+    if (isSkipped) {
+      return Icon(Icons.skip_next_rounded,
+          size: 16,
+          color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6));
+    }
     if (hasError) {
       return Icon(Icons.warning_amber_rounded,
           size: 16, color: theme.colorScheme.error);
@@ -244,10 +270,21 @@ class _SearchCardState extends State<SearchCard>
     );
   }
 
+  /// [SearchCardSegment.round] (when present — null for messages persisted
+  /// before the field existed) renders as a leading "Search N ·" ordinal so
+  /// a sequence of many cards, real and skipped alike, reads as one
+  /// narrative instead of N identical-looking entries.
   String _labelText(bool hasError, SearchCardSegment segment) {
-    if (hasError) return segment.error!;
-    if (segment.isComplete) return 'Searched: "${segment.query}"';
-    return 'Searching: "${segment.query}"';
+    final prefix =
+        segment.round != null ? 'Search ${segment.round} · ' : '';
+    if (segment.skipReason != null) {
+      return segment.query.isEmpty
+          ? '${prefix}Skipped'
+          : '${prefix}Skipped: "${segment.query}"';
+    }
+    if (hasError) return '$prefix${segment.error!}';
+    if (segment.isComplete) return '${prefix}Searched: "${segment.query}"';
+    return '${prefix}Searching: "${segment.query}"';
   }
 
 }

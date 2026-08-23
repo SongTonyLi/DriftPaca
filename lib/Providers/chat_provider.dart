@@ -12,6 +12,7 @@ import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
@@ -38,7 +39,9 @@ String _toolPolicyInstruction() {
   final today = DateTime.now().toIso8601String().substring(0, 10);
   return '''You have a web_search tool. Use it for current facts, numbers, news, people, companies, prices, dates, and anything that may have changed.
 
-You may call web_search multiple times with refined or additional queries if results are insufficient.
+Answer as soon as the evidence you have is sufficient; search again only to close a specific, still-open gap — not to double-check something you already found.
+
+Tool results may include a "Research ledger" section listing what's already been searched (with source ids) and what's still open. Check it before searching again: re-searching something already covered wastes a round, so prefer a query aimed at something still open, or a corroborating follow-up on a specific gap.
 
 When you have enough information, answer the user and cite sources inline using exactly [N], where N is the source id.
 
@@ -72,6 +75,9 @@ class ChatProvider extends ChangeNotifier {
   void Function(String url, bool success)? _webSearchUrlFetchedCallback;
   void Function()? _webSearchAnswerStartCallback;
   List<MessageSegment> Function()? _webSearchSegmentsProvider;
+  void Function(String objective, List<SubGoal> snapshot)? _webSearchLedgerUpdateCallback;
+  void Function(String query, String reason)? _webSearchSkippedCallback;
+  void Function(SearchTerminationReason reason)? _webSearchResearchDoneCallback;
 
   void setWebSearchCallbacks({
     required void Function(String thinking) onSearchThinking,
@@ -82,6 +88,9 @@ class ChatProvider extends ChangeNotifier {
     void Function(List<WebSearchResult> urls)? onUrlsKnown,
     void Function(String url, bool success)? onUrlFetched,
     void Function()? onAnswerStart,
+    void Function(String objective, List<SubGoal> snapshot)? onLedgerUpdate,
+    void Function(String query, String reason)? onSearchSkipped,
+    void Function(SearchTerminationReason reason)? onResearchDone,
   }) {
     _webSearchThinkingCallback = onSearchThinking;
     _webSearchCallback = onSearchStart;
@@ -91,6 +100,9 @@ class ChatProvider extends ChangeNotifier {
     _webSearchUrlFetchedCallback = onUrlFetched;
     _webSearchAnswerStartCallback = onAnswerStart;
     _webSearchSegmentsProvider = segmentsProvider;
+    _webSearchLedgerUpdateCallback = onLedgerUpdate;
+    _webSearchSkippedCallback = onSearchSkipped;
+    _webSearchResearchDoneCallback = onResearchDone;
   }
 
   void clearWebSearchCallbacks() {
@@ -102,6 +114,9 @@ class ChatProvider extends ChangeNotifier {
     _webSearchUrlFetchedCallback = null;
     _webSearchAnswerStartCallback = null;
     _webSearchSegmentsProvider = null;
+    _webSearchLedgerUpdateCallback = null;
+    _webSearchSkippedCallback = null;
+    _webSearchResearchDoneCallback = null;
   }
 
   /// Source URLs intercepted during WEBSEARCH stream interception.
@@ -430,10 +445,7 @@ class ChatProvider extends ChangeNotifier {
         reuseMessage == null) {
       final caps = await _ollamaService.getCapabilities(associatedChat.model);
       if (caps?.tools != false) {
-        return _streamWithNativeTools(
-          associatedChat,
-          maxSearches: searchAttemptsRemaining,
-        );
+        return _streamWithNativeTools(associatedChat);
       }
     }
 
@@ -756,7 +768,7 @@ class ChatProvider extends ChangeNotifier {
 
   Future<OllamaMessage?> _streamWithNativeTools(
     OllamaChat associatedChat, {
-    required int maxSearches,
+    int maxSearches = SearchAgent.defaultMaxSearches,
   }) async {
     if (_messages.isEmpty) return null;
 
@@ -780,7 +792,6 @@ class ChatProvider extends ChangeNotifier {
 
     OllamaMessage? streamingMessage;
     final notifyThrottle = Stopwatch()..start();
-    var sourceIdOffset = 0;
     final liveSourceUrls = <int, String>{};
     var seenSearch = false;
     var lastSearchThinking = '';
@@ -809,8 +820,15 @@ class ChatProvider extends ChangeNotifier {
 
     bool cancelled() => !_activeChatStreams.containsKey(associatedChat.id);
 
+    // The compaction budget means nothing unless it's tied to what this
+    // chat's model can actually see — see SearchAgent.transcriptLimitsFor.
+    final transcriptLimits =
+        SearchAgent.transcriptLimitsFor(associatedChat.options.contextSize);
+
     final agent = SearchAgent(
       maxSearches: maxSearches,
+      transcriptBudgetChars: transcriptLimits.transcriptBudgetChars,
+      minRawRounds: transcriptLimits.minRawRounds,
       streamTurn: (request) async* {
         String relevantContext = '';
         if (request.includeMemory && !associatedChat.isIncognito) {
@@ -834,6 +852,7 @@ class ChatProvider extends ChangeNotifier {
       search: (req) {
         return WebSearchService().searchAndExtract(
           req.query,
+          excludeUrls: req.excludeUrls,
           onUrlsKnown: (urls) {
             req.onUrlsKnown?.call(urls);
             _webSearchUrlsKnownCallback?.call(urls);
@@ -878,12 +897,12 @@ class ChatProvider extends ChangeNotifier {
           _webSearchQueryUpdateCallback?.call(query);
           touch(force: true);
         },
-        onSearchComplete: (results) {
-          liveSourceUrls.addAll(WebSearchService.sourceUrlsFromResults(
-            results,
-            idOffset: sourceIdOffset,
-          ));
-          sourceIdOffset += results.length;
+        onSearchComplete: (results, sourceUrls) {
+          // sourceUrls is the exact id->URL map SearchAgent computed for
+          // this call — consuming it directly retires the id-offset
+          // counter this file used to track in parallel (see the audited
+          // double-tracked citation-offset bug).
+          liveSourceUrls.addAll(sourceUrls);
           _webSearchCompleteCallback?.call(results);
           touch(force: true);
         },
@@ -906,6 +925,18 @@ class ChatProvider extends ChangeNotifier {
             streamingMessage!.content = '';
             touch(force: true);
           }
+        },
+        onSearchSkipped: (query, reason) {
+          _webSearchSkippedCallback?.call(query, reason);
+          touch(force: true);
+        },
+        onLedgerUpdate: (objective, snapshot) {
+          _webSearchLedgerUpdateCallback?.call(objective, snapshot);
+          touch(force: true);
+        },
+        onResearchDone: (reason) {
+          _webSearchResearchDoneCallback?.call(reason);
+          touch(force: true);
         },
       ),
     );

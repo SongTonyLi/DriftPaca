@@ -12,6 +12,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
@@ -464,7 +465,10 @@ class ChatPageViewModel extends ChangeNotifier {
       },
       segmentsProvider: () => _searchSegments,
       onSearchStart: (query) {
-        _searchSegments.add(SearchCardSegment(query: query));
+        _searchSegments.add(SearchCardSegment(
+          query: query,
+          round: _searchCardOrdinal(),
+        ));
         notifyListeners();
       },
       onSearchQueryUpdate: (query) {
@@ -523,7 +527,6 @@ class ChatPageViewModel extends ChangeNotifier {
                     ))
                 .toList();
             card.resultCount = results.length;
-            final contentParts = <String>[];
             final sources = <SearchSource>[];
             for (final r in results) {
               final content = r.chunks != null && r.chunks!.isNotEmpty
@@ -531,15 +534,20 @@ class ChatPageViewModel extends ChangeNotifier {
                   : (r.pageContent ?? r.snippet);
               if (content.isEmpty) continue;
               final domain = Uri.tryParse(r.url)?.host ?? r.url;
-              contentParts.add('$domain:\n$content');
               sources.add(SearchSource(
                 url: r.url,
                 domain: domain,
                 title: r.title,
-                content: content,
+                content: _truncateForPersistence(content),
               ));
             }
-            card.extractedContent = contentParts.join('\n\n');
+            // extractedContent is deliberately left unset: sources[].content
+            // above already carries this text, and SearchDetailDialog
+            // prefers sources — persisting it a second time (verbatim,
+            // untruncated) just doubles the size of the `thinking` blob
+            // every card gets base64-JSON'd into (see search_thinking_utils
+            // .dart). Still decoded for messages persisted before this
+            // field existed.
             card.sources = sources;
             // Preload favicons so inline citations and source cards
             // render instantly from cache instead of triggering a
@@ -556,10 +564,76 @@ class ChatPageViewModel extends ChangeNotifier {
         _searchSegments.add(AnswerSegment());
         notifyListeners();
       },
+      // A search the harness declined to run (duplicate, empty query, over
+      // budget, ...). ALWAYS appends a fresh card rather than touching the
+      // most recent one — that card may belong to an already-completed
+      // search, and mutating it would silently discard its URL list (see
+      // onSearchComplete above) the moment skipReason took over its render.
+      onSearchSkipped: (query, reason) {
+        _searchSegments.add(SearchCardSegment(
+          query: query,
+          skipReason: reason,
+          isComplete: true,
+          round: _searchCardOrdinal(),
+        ));
+        notifyListeners();
+      },
+      // Fired once per round with the ledger's full current state — always
+      // overwrites the single ResearchLedgerSegment in place (mirrors how
+      // onSearchComplete replaces card.urls wholesale) so the bubble shows
+      // one growing panel, not a stack of stale snapshots.
+      onLedgerUpdate: (objective, snapshot) {
+        final entries = [
+          for (final goal in snapshot)
+            LedgerEntryView(
+              query: goal.query,
+              searched: goal.status == SubGoalStatus.searched,
+              sourceIdStart: goal.sourceIdStart,
+              sourceIdEnd: goal.sourceIdEnd,
+              excerpt: goal.excerpt,
+            ),
+        ];
+        final ledger =
+            _searchSegments.whereType<ResearchLedgerSegment>().lastOrNull;
+        if (ledger != null) {
+          ledger.objective = objective;
+          ledger.entries = entries;
+        } else {
+          _searchSegments
+              .add(ResearchLedgerSegment(objective: objective, entries: entries));
+        }
+        notifyListeners();
+      },
+      onResearchDone: (reason) {
+        final ledger =
+            _searchSegments.whereType<ResearchLedgerSegment>().lastOrNull;
+        if (ledger == null) return;
+        ledger.terminationReason = reason.name;
+        notifyListeners();
+      },
     );
 
     return token;
   }
+
+  /// Cap on how much of one source's extracted text gets persisted per
+  /// search card. SearchAgent's search budget went from 3 to well past it
+  /// (see SearchAgent.defaultMaxSearches), so an uncapped run can now
+  /// accumulate many more cards than before; this keeps each one bounded so
+  /// the base64-JSON `thinking` blob doesn't grow unbounded with it.
+  static const _maxPersistedSourceChars = 2000;
+
+  static String _truncateForPersistence(String content) =>
+      content.length > _maxPersistedSourceChars
+          ? content.substring(0, _maxPersistedSourceChars)
+          : content;
+
+  /// Ordinal position (1-indexed) the NEXT SearchCardSegment would occupy —
+  /// real and skipped searches both counted, so "Search N" reads as one
+  /// sequential narrative rather than claiming to be SearchAgent's internal
+  /// batching round (several searches can share one of those).
+  int _searchCardOrdinal() =>
+      _searchSegments.whereType<SearchCardSegment>().length + 1;
 
   /// Identifies the request that currently owns the web-search machinery.
   Object? _webSearchToken;

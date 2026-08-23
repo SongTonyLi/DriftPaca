@@ -117,6 +117,7 @@ void main() {
   test('OllamaToolDefinition.webSearch schema', () {
     const tool = OllamaToolDefinition.webSearch;
     expect(tool.name, 'web_search');
+    expect(tool.description, contains('ledger'));
     expect(tool.parameters['required'], ['query']);
     expect(
       (tool.parameters['properties'] as Map)['query']['type'],

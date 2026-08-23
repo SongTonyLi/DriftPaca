@@ -613,6 +613,8 @@ class _AssistantBubbleState extends State<_AssistantBubble>
           ));
         case SearchCardSegment():
           widgets.add(SearchCard(segment: segment));
+        case ResearchLedgerSegment():
+          widgets.add(_ResearchLedgerPanel(segment: segment));
         case AnswerSegment():
           break;
       }
@@ -697,6 +699,331 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         if (content.isNotEmpty) widget.buildMarkdown(context, content),
       ],
     );
+  }
+}
+
+/// Collapsible panel rendering a [ResearchLedgerSegment]: the run's
+/// objective, which sub-goals have been searched vs are still open (each
+/// with its source-id chip, when searched), and — once the run has
+/// stopped — why. Mirrors [SearchCard]'s header/expand idiom (an InkWell
+/// header, `AnimatedRotation` chevron) rather than a new visual language;
+/// uses `AnimatedSize` for the body instead of SearchCard's dedicated
+/// AnimationController since there's no entrance-animation need here (the
+/// segment is overwritten in place, never freshly appended mid-stream the
+/// way a search card is).
+class _ResearchLedgerPanel extends StatefulWidget {
+  final ResearchLedgerSegment segment;
+
+  const _ResearchLedgerPanel({required this.segment});
+
+  @override
+  State<_ResearchLedgerPanel> createState() => _ResearchLedgerPanelState();
+}
+
+class _ResearchLedgerPanelState extends State<_ResearchLedgerPanel> {
+  bool _expanded = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final segment = widget.segment;
+    final searched = segment.entries.where((e) => e.searched).toList();
+    final open = segment.entries.where((e) => !e.searched).toList();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.flag_outlined,
+                        size: 16, color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Research goal',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    AnimatedRotation(
+                      turns: _expanded ? 0.0 : -0.25,
+                      duration: motionDuration(
+                        context,
+                        const Duration(milliseconds: 200),
+                      ),
+                      child: Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: motionDuration(context, const Duration(milliseconds: 200)),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topLeft,
+              child: _expanded
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
+                      child: _LedgerBody(
+                        segment: segment,
+                        searched: searched,
+                        open: open,
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity, height: 0),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LedgerBody extends StatelessWidget {
+  final ResearchLedgerSegment segment;
+  final List<LedgerEntryView> searched;
+  final List<LedgerEntryView> open;
+
+  const _LedgerBody({
+    required this.segment,
+    required this.searched,
+    required this.open,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (segment.objective.isNotEmpty)
+          Text(
+            segment.objective,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.4,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        if (searched.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _SectionLabel('Findings'),
+          for (final entry in searched)
+            _LedgerEntryRow(entry: entry, searched: true),
+        ],
+        if (open.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _SectionLabel('Still open'),
+          for (final entry in open)
+            _LedgerEntryRow(entry: entry, searched: false),
+        ],
+        if (segment.terminationReason != null) ...[
+          const SizedBox(height: 10),
+          _TerminationBanner(
+            reason: segment.terminationReason!,
+            searchedCount: searched.length,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.3,
+          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+        ),
+      ),
+    );
+  }
+}
+
+/// One sub-goal row: a source-id chip (searched entries) or a plain bullet
+/// (still-open entries) plus the query text.
+class _LedgerEntryRow extends StatelessWidget {
+  final LedgerEntryView entry;
+  final bool searched;
+
+  const _LedgerEntryRow({required this.entry, required this.searched});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (searched && entry.sourceIdStart != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 1, right: 6),
+              child: _SourceIdChip(
+                start: entry.sourceIdStart!,
+                end: entry.sourceIdEnd ?? entry.sourceIdStart!,
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: 6, right: 8),
+              child: Icon(Icons.circle,
+                  size: 5,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+            ),
+          Expanded(
+            child: Text(
+              entry.query,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: colorScheme.onSurfaceVariant),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small pill showing the source id (or range) backing a searched entry —
+/// e.g. "3" or "3–5". Never renders the "[a]-[b]" bracket form: that
+/// syntax is reserved for citation markers the model reads and the
+/// citation parser scans for (see SearchAgent's compaction/ledger text).
+class _SourceIdChip extends StatelessWidget {
+  final int start;
+  final int end;
+
+  const _SourceIdChip({required this.start, required this.end});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final label = start == end ? '$start' : '$start–$end';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: colorScheme.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: colorScheme.primary,
+        ),
+      ),
+    );
+  }
+}
+
+/// Banner shown once a research run has stopped, keyed off
+/// [SearchTerminationReason.name] (see ResearchLedgerSegment.terminationReason)
+/// so the user can tell a converged answer from one cut off by a safety cap.
+class _TerminationBanner extends StatelessWidget {
+  final String reason;
+  final int searchedCount;
+
+  const _TerminationBanner({
+    required this.reason,
+    required this.searchedCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final presentation = _presentation();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(presentation.icon,
+            size: 14,
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            presentation.text,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontStyle: FontStyle.italic,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  ({IconData icon, String text}) _presentation() {
+    switch (reason) {
+      case 'converged':
+        final plural = searchedCount == 1 ? '' : 'es';
+        return (
+          icon: Icons.check_circle_outline,
+          text: 'Research complete — findings gathered across '
+              '$searchedCount search$plural',
+        );
+      case 'hardCapReached':
+        return (
+          icon: Icons.hourglass_disabled_outlined,
+          text: 'Stopped at the search limit',
+        );
+      case 'roundCapReached':
+        return (
+          icon: Icons.hourglass_disabled_outlined,
+          text: 'Stopped at the round limit',
+        );
+      case 'unproductiveRounds':
+        return (
+          icon: Icons.info_outline,
+          text: 'Stopped early — no new information in recent searches',
+        );
+      case 'cancelled':
+        return (icon: Icons.cancel_outlined, text: 'Cancelled');
+      default:
+        return (icon: Icons.info_outline, text: 'Stopped');
+    }
   }
 }
 

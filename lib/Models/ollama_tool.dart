@@ -65,7 +65,9 @@ class OllamaToolDefinition {
     description:
         'Search the web for current facts, numbers, news, or anything that '
         'may have changed. Use a concise query. You may call this again with '
-        'a refined query if the first results are insufficient.',
+        'a refined query if the first results are insufficient. Tool results '
+        'may include a research ledger showing what has already been '
+        'searched and what remains open — check it before searching again.',
     parameters: {
       'type': 'object',
       'properties': {

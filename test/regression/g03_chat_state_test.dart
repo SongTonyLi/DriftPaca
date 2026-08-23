@@ -13,6 +13,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
@@ -252,6 +253,9 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     void Function(List<WebSearchResult> urls)? onUrlsKnown,
     void Function(String url, bool success)? onUrlFetched,
     void Function()? onAnswerStart,
+    void Function(String objective, List<SubGoal> snapshot)? onLedgerUpdate,
+    void Function(String query, String reason)? onSearchSkipped,
+    void Function(SearchTerminationReason reason)? onResearchDone,
   }) {
     activeCallbacks = WebSearchCallbackSet(onSearchStart);
   }

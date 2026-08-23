@@ -316,6 +316,7 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Handles image picking and compression
   Future<void> pickImages({
     VoidCallback? onPermissionDenied,
+    VoidCallback? onCompressionFailed,
     int quality = 10,
   }) async {
     // Check permissions
@@ -339,12 +340,13 @@ class ChatPageViewModel extends ChangeNotifier {
       quality: quality,
     );
 
-    // Add an empty path if the image could not be compressed to show error
-    if (compressedFile != null) {
-      _imageFiles.add(compressedFile);
-    } else {
-      _imageFiles.add(File(''));
+    // Report the failure to the caller instead of attaching the image
+    if (compressedFile == null) {
+      onCompressionFailed?.call();
+      return;
     }
+
+    _imageFiles.add(compressedFile);
 
     notifyListeners();
   }

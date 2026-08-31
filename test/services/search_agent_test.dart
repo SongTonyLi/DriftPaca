@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
 
@@ -367,6 +368,108 @@ void main() {
     expect(outcome.searchCount, 1);
   });
 
+  test('the same statistic for three different years is three questions, not one near-duplicate', () async {
+    // Trigram similarity is a string-shape measure, and a one-token
+    // instance swap barely changes the shape: these three score 0.905
+    // against each other — far above the 0.75 near-duplicate bar, which
+    // was calibrated on real paraphrase pairs that topped out at 0.69. So
+    // a question keyed by a year (or a version, or a quarter) had two
+    // thirds of itself refused before it ever reached a search engine,
+    // and the refusals then fed the stall counters that ended the run.
+    const queries = [
+      'US inflation rate 2023',
+      'US inflation rate 2024',
+      'US inflation rate 2025',
+    ];
+    // The user names all three years, which is what licenses splitting
+    // them — see ResearchLedger._isDifferentRequestedInstance.
+    final asked = [
+      OllamaMessage('US inflation rate in 2023, 2024 and 2025?',
+          role: OllamaMessageRole.user),
+    ];
+    final executed = <String>[];
+    final skipped = <String>[];
+    var turn = 0;
+    await agent(
+      // Generous on purpose: at the helper's default of 3 this could pass
+      // off the global cap instead of proving the block was lifted.
+      maxSearches: 15,
+      streamTurn: (req) {
+        turn++;
+        if (turn <= queries.length) {
+          return Stream.fromIterable([searchChunk(queries[turn - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async =>
+          [hit('https://example.com/${Uri.encodeComponent(req.query)}')],
+    ).run(
+      history: asked,
+      listener: SearchAgentListener(
+        onSearchStart: executed.add,
+        onSearchSkipped: (query, reason) => skipped.add(query),
+      ),
+    );
+
+    expect(executed, queries);
+    expect(skipped, isEmpty);
+  });
+
+  test('four instances of one question are four sub-goals, so none is left unsearched', () async {
+    // Lifting the near-duplicate refusal is not enough on its own: the
+    // ledger still GROUPED every year onto a single sub-goal at its 0.40
+    // threshold, and two independent bounds then capped the question at
+    // three instances — perSubGoalBudget (3 searches against one sub-goal)
+    // and stallLimit on roundsSinceNewSubGoal (no NEW sub-goal opened
+    // after round 1, so the run reads as stalled and ends). A four-part
+    // question came back missing its fourth part either way.
+    const queries = [
+      'US inflation rate 2021',
+      'US inflation rate 2022',
+      'US inflation rate 2023',
+      'US inflation rate 2024',
+    ];
+    final asked = [
+      OllamaMessage('What was the US inflation rate in 2021, 2022, 2023 '
+          'and 2024?', role: OllamaMessageRole.user),
+    ];
+    final executed = <String>[];
+    final skipped = <String>[];
+    var snapshot = <SubGoal>[];
+    var turn = 0;
+    await agent(
+      maxSearches: 15,
+      streamTurn: (req) {
+        turn++;
+        if (turn <= queries.length) {
+          return Stream.fromIterable([searchChunk(queries[turn - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async =>
+          [hit('https://example.com/${Uri.encodeComponent(req.query)}')],
+    ).run(
+      history: asked,
+      listener: SearchAgentListener(
+        onSearchStart: executed.add,
+        onSearchSkipped: (query, reason) => skipped.add(query),
+        onLedgerUpdate: (objective, goals) => snapshot = goals,
+      ),
+    );
+
+    expect(executed, queries);
+    expect(skipped, isEmpty);
+    // The outcome above is downstream of this: each year has to be its own
+    // sub-goal, or it shares one budget, opens no new sub-goal, and — since
+    // markSearched keeps the FIRST evidence it saw — leaves the ledger
+    // advertising 2021's sources as though they covered all four years.
+    expect(snapshot.length, 4);
+    expect(snapshot.map((g) => g.status),
+        everyElement(SubGoalStatus.searched));
+    expect(snapshot.map((g) => g.sourceIdStart).toSet().length, 4,
+        reason: 'each year must carry its own evidence, not share 2021\'s');
+  });
+
   test('a cross-round exact-duplicate query gets a non-empty tool message', () async {
     final requests = <SearchAgentRequest>[];
     var turn = 0;
@@ -562,6 +665,12 @@ void main() {
     // can, isolating it from roundsSinceProgress (which every other
     // "unproductive" test above leaves conflated — see this fix's second
     // reviewed issue).
+    //
+    // The 2025/2026 wobble is the model's own invention — `history` asks
+    // about Vietnam's GDP and names no year at all — so the ledger still
+    // groups these, which is exactly the point: instance-splitting is
+    // gated on years the USER asked for. See ResearchLedger.
+    // _isDifferentRequestedInstance.
     const phrasings = [
       'Washington D.C. population 2026 estimate',
       'Washington, D.C. population 2025',
@@ -892,6 +1001,19 @@ void main() {
       expect(large.minRawRounds, SearchAgent.defaultMinRawRounds);
     });
 
+    test('a cloud chat keeps the generous defaults, because its num_ctx is never sent', () {
+      // In cloud mode _buildOptions deliberately omits num_ctx, so the
+      // configured contextSize describes nothing the model actually has.
+      // Deriving from it shredded every round but the newest down to a
+      // citation line and threw away the evidence the answer needed.
+      final cloud =
+          SearchAgent.transcriptLimitsFor(2048, contextSizeApplies: false);
+
+      expect(cloud.transcriptBudgetChars,
+          SearchAgent.defaultTranscriptBudgetChars);
+      expect(cloud.minRawRounds, SearchAgent.defaultMinRawRounds);
+    });
+
     test('clamps a pathologically tiny or huge context window to a workable budget', () {
       expect(SearchAgent.transcriptLimitsFor(0).transcriptBudgetChars, 4000);
       expect(SearchAgent.transcriptLimitsFor(1000000).transcriptBudgetChars,
@@ -1082,6 +1204,69 @@ void main() {
 
       expect(outcome.content, 'Knicks won, Brunson MVP, Villanova');
       expect(outcome.searchCount, 2);
+    });
+
+    test('the corrective round can see the draft it was told to keep',
+        () async {
+      // The gap notice says "Keep everything you already established", and
+      // `history` was snapshotted before the run, so unless the rejected
+      // draft is put in the transcript that instruction points at text
+      // present nowhere in the request — and the corrective turn
+      // legitimately answers only the gap.
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+
+      await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk('2026 NBA Finals winner')]);
+          }
+          if (turn == 2) {
+            return Stream.fromIterable([answerChunk('Knicks won, Brunson MVP')]);
+          }
+          if (turn == 3) {
+            return Stream.fromIterable([searchChunk('Jalen Brunson college')]);
+          }
+          return Stream.fromIterable(
+              [answerChunk('Knicks won, Brunson MVP, Villanova')]);
+        },
+        assessCoverage: (req) async => ['which college the Finals MVP attended'],
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(
+        requests[2].transcript.any((m) =>
+            m.role == OllamaMessageRole.assistant &&
+            m.content == 'Knicks won, Brunson MVP'),
+        isTrue,
+        reason: 'the draft the model is told to keep must be in its context',
+      );
+      // The gap notice still has to be the last thing the model reads.
+      expect(requests[2].transcript.last.role, OllamaMessageRole.user);
+    });
+
+    test('a corrective turn that produces no prose falls back to the rejected draft',
+        () async {
+      var turn = 0;
+      final outcome = await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          if (turn == 2) {
+            return Stream.fromIterable([answerChunk('partial but real')]);
+          }
+          // Thinks and then says nothing at all — no content, no tool call.
+          return Stream.fromIterable([answerChunk('', thinking: 'hmm')]);
+        },
+        assessCoverage: (req) async => ['a missing part'],
+      ).run(history: history, listener: const SearchAgentListener());
+
+      // The same "take what we have" rule the cancelled returns already
+      // apply: a draft the gate rejected still beats a blank bubble.
+      expect(outcome.content, 'partial but real');
     });
 
     test('does not block the corrective search it just asked for', () async {

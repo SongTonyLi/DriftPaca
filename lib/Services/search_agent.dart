@@ -212,8 +212,32 @@ class SearchAgent {
   /// hard floor rather than 2 — still enough for a synthesized answer to
   /// cite its freshest evidence. Clamped so a pathologically tiny or huge
   /// configured window still produces a workable budget.
+  ///
+  /// [contextSizeApplies] is false when [contextSize] is never actually
+  /// sent to the model — cloud chats, where OllamaService._buildOptions
+  /// omits the whole options map (and with it num_ctx) by design. This
+  /// function's entire justification is that the budget should mean
+  /// something relative to what the model can really see; where the
+  /// configured window describes nothing, deriving from it is worse than
+  /// not deriving at all. On this app's 2048-token local default it yields
+  /// a 4,000-char budget and a 1-round raw floor, stripping every round
+  /// but the newest to a text-free citation line and discarding roughly
+  /// 200k chars of evidence the real cloud window could have held — which
+  /// is exactly the retrieved-but-unmentioned facts users report missing
+  /// from long runs. So the derivation is skipped and the constants those
+  /// thresholds were sized for are used as-is. This does NOT change local
+  /// chats: those still derive from the num_ctx they genuinely send, and
+  /// compaction still runs either way — just against
+  /// [defaultTranscriptBudgetChars]/[defaultMinRawRounds].
   static ({int transcriptBudgetChars, int minRawRounds}) transcriptLimitsFor(
-      int contextSize) {
+      int contextSize,
+      {bool contextSizeApplies = true}) {
+    if (!contextSizeApplies) {
+      return (
+        transcriptBudgetChars: defaultTranscriptBudgetChars,
+        minRawRounds: defaultMinRawRounds,
+      );
+    }
     const charsPerToken = 3.5;
     const budgetFraction = 0.5;
     final rawBudget = (contextSize * budgetFraction * charsPerToken).round();
@@ -380,6 +404,24 @@ class SearchAgent {
             // than the blank message dd4ed25 exists to prevent; we rejected
             // it hoping to improve on it, not because it was worthless.
             listener.onResetContent?.call();
+            // Not cosmetic: _gapNotice tells the model "Keep everything you
+            // already established — add to it rather than starting over",
+            // and `history` was snapshotted before the run began, so the
+            // in-flight bubble isn't there either. Without this line that
+            // instruction refers to text present nowhere in the request,
+            // and the corrective turn legitimately answers only the gap —
+            // which is how the user ends up delivered the delta instead of
+            // draft-plus-delta.
+            //
+            // Content only. No thinking (re-feeding the reasoning that
+            // produced the omission argues for repeating it) and no
+            // toolCalls — safe because `hasTools` is false here and
+            // _ingestChunk guarantees a turn with tool calls has empty
+            // content, so nothing dangling can be introduced.
+            transcript.add(OllamaMessage(
+              turn.content,
+              role: OllamaMessageRole.assistant,
+            ));
             transcript.add(OllamaMessage(
               _gapNotice(gaps),
               role: OllamaMessageRole.user,
@@ -394,8 +436,20 @@ class SearchAgent {
             listener.onContent?.call(turn.content);
           }
         }
+        // Never return less than we already had. This is the same "take
+        // what we have" rule the three cancelled returns apply, and the
+        // one the comment on lastContent above already claims to
+        // implement. Bounded: lastContent only survives a `continue` via
+        // the gate rejection just above (the preamble path clears it), so
+        // the fallback can only ever restore a draft the gate itself
+        // rejected — which beats the blank bubble dd4ed25 exists to
+        // prevent.
         return _outcome(
-          turn.content, allThinking, sourceUrls, searchCount, false,
+          turn.content.isNotEmpty ? turn.content : lastContent,
+          allThinking,
+          sourceUrls,
+          searchCount,
+          false,
           reason: _terminationReason(
               canSearch: canSearch,
               searchUnavailable: searchUnavailable,
@@ -907,6 +961,16 @@ class SearchAgent {
     // that never happened. Requiring a prior search closes both.
     if (matched.searchCount == 0) return false;
     if (matched.normalizedQuery == _normalizeQuery(query)) return true;
+    // Nothing here needs to know about years, versions or quarters. A
+    // query naming a different instance never reaches this function,
+    // because ResearchLedger.findMatch refuses to call it the same
+    // sub-goal in the first place (see namesADifferentInstance) — so
+    // `matched` is always the same instance as [query], and comparing
+    // their string shape means what it says again. Discriminating here
+    // instead would have let the search run while still filing its
+    // evidence under the first instance's sub-goal, which is where the
+    // per-sub-goal budget and the stall counter then truncated a
+    // four-part question to three.
     if (trigramJaccard(query, matched.query) >=
         _ledgerDupeSimilarityThreshold) {
       return true;

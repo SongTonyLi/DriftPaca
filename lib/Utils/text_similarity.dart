@@ -52,6 +52,20 @@ double trigramJaccard(String a, String b) {
   return ta.intersection(tb).length / union.length;
 }
 
+/// The distinct digit-runs in [text] — the years, versions and quarters
+/// that pick out WHICH instance of a question is being asked ("2024",
+/// "18", "1" in "Q1"). Used by ResearchLedger to tell "the same question
+/// about a different year" apart from a rewording of one question, which
+/// [trigramJaccard] alone cannot do: it measures string SHAPE, and
+/// swapping one token changes almost no trigrams, so "US inflation rate
+/// 2023" scores 0.905 against "...2024" — higher than any real paraphrase
+/// pair the near-duplicate threshold was calibrated on, which topped out
+/// at 0.69.
+Set<String> numericTokens(String text) =>
+    {for (final m in _digitRun.allMatches(text)) m[0]!};
+
+final _digitRun = RegExp(r'\d+');
+
 /// Asymmetric containment in [0, 1]: how much of [query]'s trigrams appear
 /// in [text]. Unlike [trigramJaccard], a long [text] doesn't dilute the
 /// score just because it has many trigrams of its own — only [query]'s own

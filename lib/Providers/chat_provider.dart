@@ -36,11 +36,32 @@ You MUST search for: numbers, statistics, prices, dates, current events, news, r
 Today's date: $today.''';
 }
 
-String _toolPolicyInstruction() {
+/// System prompt appended for a tool-enabled (research) chat.
+///
+/// The coverage paragraph is here rather than anywhere else because this
+/// string is live on every answering turn including the final one, so it
+/// is the only place completeness pressure can actually reach the model
+/// that writes the answer — the completeness gate's own "every part"
+/// wording lives in an isolated, tool-less call this model never sees,
+/// while three to five surfaces (one repeated per search round) tell it to
+/// stop and answer now.
+///
+/// "Say so plainly ... rather than searching again" is deliberate, not
+/// hedging: a completeness instruction reads very easily as "go find the
+/// missing part", which is how the 8-round over-searching `8e0b64b` fixed
+/// gets re-created. Phrased as an answer-SHAPE requirement, a discovered
+/// gap turns into a disclosure instead of another round.
+///
+/// Public only so a test can pin those two clauses; nothing outside this
+/// file calls it.
+@visibleForTesting
+String toolPolicyInstruction() {
   final today = DateTime.now().toIso8601String().substring(0, 10);
   return '''You have a web_search tool. Use it for current facts, numbers, news, people, companies, prices, dates, and anything that may have changed.
 
 Answer as soon as the evidence you have is sufficient; search again only to close a specific, still-open gap — not to double-check something you already found.
+
+Before you finish, check your answer against the question: if it asked about several things, several time periods, or several entities, address each one explicitly. If one of them could not be established from the sources you have, say so plainly in the answer rather than searching again or leaving it out silently.
 
 Tool results may include a "Research ledger" section listing what's already been searched (with source ids) and what's still open. Check it before searching again: re-searching something already covered wastes a round, so prefer a query aimed at something still open, or a corroborating follow-up on a specific gap.
 
@@ -800,7 +821,7 @@ class ChatProvider extends ChangeNotifier {
         : await _memoryService.getAgentMemory();
 
     final origPrompt = associatedChat.systemPrompt ?? '';
-    final policy = _toolPolicyInstruction();
+    final policy = toolPolicyInstruction();
     final streamChat = OllamaChat(
       id: associatedChat.id,
       model: associatedChat.model,
@@ -842,8 +863,13 @@ class ChatProvider extends ChangeNotifier {
 
     // The compaction budget means nothing unless it's tied to what this
     // chat's model can actually see — see SearchAgent.transcriptLimitsFor.
-    final transcriptLimits =
-        SearchAgent.transcriptLimitsFor(associatedChat.options.contextSize);
+    // In cloud mode num_ctx is deliberately never sent (_buildOptions
+    // returns null), so contextSize describes nothing there and deriving
+    // from it would compact against a window the model does not have.
+    final transcriptLimits = SearchAgent.transcriptLimitsFor(
+      associatedChat.options.contextSize,
+      contextSizeApplies: !_ollamaService.isCloudMode,
+    );
 
     final agent = SearchAgent(
       maxSearches: maxSearches,

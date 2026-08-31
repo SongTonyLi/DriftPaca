@@ -62,6 +62,18 @@ class ResearchLedger {
   /// are clearly about the same underlying question (even if not close
   /// enough to call a literal duplicate) land on one sub-goal instead of
   /// spawning a lookalike one. Returns null for a genuinely new question.
+  ///
+  /// A query naming a different one of the instances the OBJECTIVE asked
+  /// about never groups, however similar it looks — see
+  /// [_isDifferentRequestedInstance]. Four years the user actually listed
+  /// are four questions, and collapsing them onto one sub-goal is what
+  /// silently truncated such a question to three parts: they shared a
+  /// single per-sub-goal search budget, and after the first round none of
+  /// them opened a NEW sub-goal, so the run read as stalled and stopped
+  /// before the last one was ever searched. Keeping them separate also
+  /// keeps their evidence separate — [markSearched] records only the first
+  /// result set per sub-goal, so grouped instances would leave the ledger
+  /// citing 2021's sources for all four years.
   SubGoal? findMatch(String query) {
     final normalized = _normalize(query);
     for (final goal in subGoals) {
@@ -70,6 +82,7 @@ class ResearchLedger {
     SubGoal? best;
     var bestScore = 0.0;
     for (final goal in subGoals) {
+      if (_isDifferentRequestedInstance(query, goal)) continue;
       final score = trigramJaccard(query, goal.query);
       if (score >= _groupingThreshold && score > bestScore) {
         best = goal;
@@ -77,6 +90,38 @@ class ResearchLedger {
       }
     }
     return best;
+  }
+
+  /// Digit-runs appearing in the user's own question — the instances they
+  /// actually asked about. Computed once: [objective] is final.
+  late final Set<String> _requestedInstances = numericTokens(objective);
+
+  /// Whether [query] pins a different one of the user's requested
+  /// instances than [goal] does.
+  ///
+  /// Gated on the objective on purpose, and this is the whole safety
+  /// argument. A model that invents its own year variations is thrashing,
+  /// and grouping those is what stops it: in a real gpt-oss:120b trace the
+  /// user asked for one city's population and the model re-asked it as
+  /// "...2026 estimate", "...2025", "...2026" — three sub-goals' worth of
+  /// budget for one question. Because none of those years is in the
+  /// objective, they still group, roundsSinceNewSubGoal still fires, and
+  /// that run still ends after three searches exactly as before.
+  ///
+  /// What changes is only the case where the user themselves named the
+  /// instances ("US inflation in 2021, 2022, 2023 and 2024"). There the
+  /// years are not the model's invention, and refusing them cost the user
+  /// the parts of their own question.
+  ///
+  /// Deliberately one-directional: a query that DROPS a year the goal has
+  /// is a broadening re-ask, not a new instance, and still groups.
+  bool _isDifferentRequestedInstance(String query, SubGoal goal) {
+    if (_requestedInstances.isEmpty) return false;
+    final theirs = numericTokens(goal.query);
+    for (final n in numericTokens(query)) {
+      if (_requestedInstances.contains(n) && !theirs.contains(n)) return true;
+    }
+    return false;
   }
 
   /// Records a search attempt against [query]'s sub-goal: reuses a

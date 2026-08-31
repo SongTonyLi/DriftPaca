@@ -17,6 +17,42 @@ void main() {
       );
       expect(ledger.findMatch('a totally unrelated query about pasta'), isNull);
     });
+
+    test('splits a year the user asked about, but not one the model invented', () {
+      // Both ledgers see the identical pair of queries. The only thing
+      // that differs is whether the user's own question named the years —
+      // which is exactly the line the instance split is drawn on, because
+      // it is the one signal that separates "the user wants both years"
+      // from "the model is wobbling between years on its own".
+      const first = 'US inflation rate 2023';
+      const second = 'US inflation rate 2024';
+
+      final asked = ResearchLedger(
+          objective: 'US inflation rate in 2023 and 2024?');
+      asked.upsert(first);
+      expect(asked.findMatch(second), isNull);
+      asked.upsert(second);
+      expect(asked.subGoals, hasLength(2),
+          reason: 'a year the user listed is a question of its own');
+
+      final invented = ResearchLedger(objective: 'US inflation rate lately?');
+      final goal = invented.upsert(first);
+      // 0.905 similarity, no year in the objective: still one sub-goal, so
+      // the per-sub-goal budget and roundsSinceNewSubGoal still catch a
+      // model that keeps re-asking one question with a different year.
+      expect(invented.findMatch(second), same(goal));
+      invented.upsert(second);
+      expect(invented.subGoals, hasLength(1));
+    });
+
+    test('a broadening re-ask that drops a year still groups', () {
+      // One-directional on purpose: dropping "2024" from a query is a
+      // wider version of the same question, not a new instance.
+      final ledger = ResearchLedger(objective: 'Vietnam GDP in 2024?');
+      final goal = ledger.upsert('Vietnam GDP 2024');
+
+      expect(ledger.findMatch('Vietnam GDP'), same(goal));
+    });
   });
 
   group('ResearchLedger.upsert', () {

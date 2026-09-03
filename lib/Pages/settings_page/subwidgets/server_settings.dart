@@ -110,38 +110,9 @@ class _ServerSettingsState extends State<ServerSettings> {
               ),
         ),
         const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: SegmentedButton<String>(
-            showSelectedIcon: false,
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            segments: const [
-              ButtonSegment(
-                value: 'local',
-                label: Text('Local'),
-                icon: Icon(Icons.dns_outlined),
-              ),
-              ButtonSegment(
-                value: 'cloud',
-                label: Text('Cloud'),
-                icon: Icon(Icons.cloud_outlined),
-              ),
-              ButtonSegment(
-                value: 'openrouter',
-                label: Text('OpenRouter'),
-                icon: Icon(Icons.hub_outlined),
-              ),
-            ],
-            selected: {
-              _serverMode == 'openwebui' ? 'local' : _serverMode,
-            },
-            onSelectionChanged: (selection) {
-              _setServerMode(selection.first);
-            },
-          ),
+        _ServerModeControl(
+          mode: _serverMode == 'openwebui' ? 'local' : _serverMode,
+          onChanged: _setServerMode,
         ),
         const SizedBox(height: 16),
         if (_serverMode == 'cloud')
@@ -244,180 +215,49 @@ class _ServerSettingsState extends State<ServerSettings> {
   }
 
   Widget _buildCloudSettings(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _apiKeyController,
-          obscureText: _obscureApiKey,
-          onChanged: (_) {
-            setState(() {
-              _cloudErrorText = null;
-              _cloudRequestState = OllamaRequestState.uninitialized;
-              _settingsBox.put('cloudDataConsented', false);
-            });
-          },
-          decoration: InputDecoration(
-            labelText: 'API Key',
-            hintText: 'Enter your Ollama Cloud API key',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            errorText: _cloudErrorText,
-            suffixIcon: IconButton(
-              icon: Icon(
-                _obscureApiKey ? Icons.visibility_off : Icons.visibility,
-              ),
-              onPressed: () {
-                setState(() {
-                  _obscureApiKey = !_obscureApiKey;
-                });
-              },
-            ),
-          ),
-          onTapOutside: (PointerDownEvent event) {
-            FocusManager.instance.primaryFocus?.unfocus();
-          },
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Get your API key from ollama.com/settings',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 16,
-                color: Theme.of(context).colorScheme.onSecondaryContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Your conversations will be sent to Ollama Cloud (ollama.com) for AI processing. Only data you enter in chats is transmitted. No data is collected by DriftPaca.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSecondaryContainer,
-                        height: 1.4,
-                      ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed:
-                _isCloudLoading || _apiKeyController.text.isEmpty ? null : () => _handleCloudConnectWithConsent(context),
-            child: _ConnectionStatusIndicator(
-              color: _cloudConnectionStatusColor,
-            ),
-          ),
-        ),
-      ],
+    return _RemoteApiKeyPanel(
+      controller: _apiKeyController,
+      obscure: _obscureApiKey,
+      onToggleObscure: () => setState(() => _obscureApiKey = !_obscureApiKey),
+      onChanged: (_) {
+        setState(() {
+          _cloudErrorText = null;
+          _cloudRequestState = OllamaRequestState.uninitialized;
+          _settingsBox.put('cloudDataConsented', false);
+        });
+      },
+      errorText: _cloudErrorText,
+      hintText: 'Enter your Ollama Cloud API key',
+      helpText: 'Get your API key from ollama.com/settings',
+      privacyText:
+          'Your conversations will be sent to Ollama Cloud (ollama.com) for AI processing. Only data you enter in chats is transmitted. No data is collected by DriftPaca.',
+      isLoading: _isCloudLoading,
+      onConnect: () => _handleCloudConnectWithConsent(context),
+      statusColor: _cloudConnectionStatusColor,
     );
   }
 
   Widget _buildOpenRouterSettings(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _openRouterApiKeyController,
-          obscureText: _obscureOpenRouterApiKey,
-          onChanged: (_) {
-            setState(() {
-              _openRouterErrorText = null;
-              _openRouterRequestState = OllamaRequestState.uninitialized;
-              _settingsBox.put('openrouterDataConsented', false);
-            });
-          },
-          decoration: InputDecoration(
-            labelText: 'API Key',
-            hintText: 'Enter your OpenRouter API key',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            errorText: _openRouterErrorText,
-            suffixIcon: IconButton(
-              icon: Icon(
-                _obscureOpenRouterApiKey
-                    ? Icons.visibility_off
-                    : Icons.visibility,
-              ),
-              onPressed: () {
-                setState(() {
-                  _obscureOpenRouterApiKey = !_obscureOpenRouterApiKey;
-                });
-              },
-            ),
-          ),
-          onTapOutside: (PointerDownEvent event) {
-            FocusManager.instance.primaryFocus?.unfocus();
-          },
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Get your API key from openrouter.ai/keys',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 16,
-                color: Theme.of(context).colorScheme.onSecondaryContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Your conversations will be sent to OpenRouter (openrouter.ai) for AI processing. Only data you enter in chats is transmitted. No data is collected by DriftPaca.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSecondaryContainer,
-                        height: 1.4,
-                      ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _isOpenRouterLoading ||
-                    _openRouterApiKeyController.text.isEmpty
-                ? null
-                : () => _handleOpenRouterConnectWithConsent(context),
-            child: _ConnectionStatusIndicator(
-              color: _openRouterConnectionStatusColor,
-            ),
-          ),
-        ),
-      ],
+    return _RemoteApiKeyPanel(
+      controller: _openRouterApiKeyController,
+      obscure: _obscureOpenRouterApiKey,
+      onToggleObscure: () =>
+          setState(() => _obscureOpenRouterApiKey = !_obscureOpenRouterApiKey),
+      onChanged: (_) {
+        setState(() {
+          _openRouterErrorText = null;
+          _openRouterRequestState = OllamaRequestState.uninitialized;
+          _settingsBox.put('openrouterDataConsented', false);
+        });
+      },
+      errorText: _openRouterErrorText,
+      hintText: 'Enter your OpenRouter API key',
+      helpText: 'Get your API key from openrouter.ai/keys',
+      privacyText:
+          'Your conversations will be sent to OpenRouter (openrouter.ai) for AI processing. Only data you enter in chats is transmitted. No data is collected by DriftPaca.',
+      isLoading: _isOpenRouterLoading,
+      onConnect: () => _handleOpenRouterConnectWithConsent(context),
+      statusColor: _openRouterConnectionStatusColor,
     );
   }
 
@@ -846,6 +686,174 @@ class _ServerSettingsState extends State<ServerSettings> {
     );
 
     return result;
+  }
+}
+
+/// Three-way Local / Cloud / OpenRouter control, matched to Themes'
+/// Light / Dark / Auto segmented button: 18px icons, compact density,
+/// full-width. Icons drop below 348pt so "OpenRouter" still fits an
+/// iPhone SE (320pt) with the settings page's 16px padding.
+class _ServerModeControl extends StatelessWidget {
+  final String mode;
+  final ValueChanged<String> onChanged;
+
+  const _ServerModeControl({required this.mode, required this.onChanged});
+
+  static const _iconBreakpoint = 348.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showIcons = constraints.maxWidth >= _iconBreakpoint;
+        return SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              iconSize: const WidgetStatePropertyAll(18),
+              textStyle: WidgetStatePropertyAll(
+                Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+            segments: [
+              ButtonSegment(
+                value: 'local',
+                tooltip: 'Local Ollama',
+                icon: showIcons
+                    ? const Icon(Icons.dns_outlined, size: 18)
+                    : null,
+                label: const Text('Local'),
+              ),
+              ButtonSegment(
+                value: 'cloud',
+                tooltip: 'Ollama Cloud',
+                icon: showIcons
+                    ? const Icon(Icons.cloud_outlined, size: 18)
+                    : null,
+                label: const Text('Cloud'),
+              ),
+              ButtonSegment(
+                value: 'openrouter',
+                tooltip: 'OpenRouter',
+                icon: showIcons
+                    ? const Icon(Icons.hub_outlined, size: 18)
+                    : null,
+                label: const Text('OpenRouter'),
+              ),
+            ],
+            selected: {mode},
+            onSelectionChanged: (selection) => onChanged(selection.first),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Shared Cloud / OpenRouter key form so both remote backends keep the same
+/// field, help line, privacy box, and Connect button geometry.
+class _RemoteApiKeyPanel extends StatelessWidget {
+  final TextEditingController controller;
+  final bool obscure;
+  final VoidCallback onToggleObscure;
+  final ValueChanged<String> onChanged;
+  final String? errorText;
+  final String hintText;
+  final String helpText;
+  final String privacyText;
+  final bool isLoading;
+  final VoidCallback onConnect;
+  final Color statusColor;
+
+  const _RemoteApiKeyPanel({
+    required this.controller,
+    required this.obscure,
+    required this.onToggleObscure,
+    required this.onChanged,
+    required this.errorText,
+    required this.hintText,
+    required this.helpText,
+    required this.privacyText,
+    required this.isLoading,
+    required this.onConnect,
+    required this.statusColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: controller,
+          obscureText: obscure,
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            labelText: 'API Key',
+            hintText: hintText,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            errorText: errorText,
+            suffixIcon: IconButton(
+              icon: Icon(obscure ? Icons.visibility_off : Icons.visibility),
+              onPressed: onToggleObscure,
+            ),
+          ),
+          onTapOutside: (PointerDownEvent event) {
+            FocusManager.instance.primaryFocus?.unfocus();
+          },
+        ),
+        const SizedBox(height: 8),
+        Text(
+          helpText,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.secondaryContainer.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: colorScheme.outline.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  privacyText,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSecondaryContainer,
+                        height: 1.4,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: isLoading || controller.text.isEmpty ? null : onConnect,
+            child: _ConnectionStatusIndicator(color: statusColor),
+          ),
+        ),
+      ],
+    );
   }
 }
 

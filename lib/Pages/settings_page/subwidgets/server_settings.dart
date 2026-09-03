@@ -28,15 +28,21 @@ class _ServerSettingsState extends State<ServerSettings> {
 
   final _serverAddressController = TextEditingController();
   final _apiKeyController = TextEditingController();
+  final _openRouterApiKeyController = TextEditingController();
 
   OllamaRequestState _requestState = OllamaRequestState.uninitialized;
   OllamaRequestState _cloudRequestState = OllamaRequestState.uninitialized;
+  OllamaRequestState _openRouterRequestState = OllamaRequestState.uninitialized;
   get _isLoading => _requestState == OllamaRequestState.loading;
   get _isCloudLoading => _cloudRequestState == OllamaRequestState.loading;
+  get _isOpenRouterLoading =>
+      _openRouterRequestState == OllamaRequestState.loading;
 
   String? _serverAddressErrorText;
   String? _cloudErrorText;
+  String? _openRouterErrorText;
   bool _obscureApiKey = true;
+  bool _obscureOpenRouterApiKey = true;
 
   String get _serverMode => _settingsBox.get('serverMode', defaultValue: 'local');
 
@@ -65,12 +71,20 @@ class _ServerSettingsState extends State<ServerSettings> {
       }
     }
 
+    final openRouterApiKey = _settingsBox.get('openrouterApiKey');
+    if (openRouterApiKey != null) {
+      _openRouterApiKeyController.text = openRouterApiKey;
+      if (_serverMode == 'openrouter') {
+        _handleOpenRouterConnectButton(silent: true);
+      }
+    }
   }
 
   @override
   void dispose() {
     _serverAddressController.dispose();
     _apiKeyController.dispose();
+    _openRouterApiKeyController.dispose();
 
     super.dispose();
   }
@@ -99,6 +113,11 @@ class _ServerSettingsState extends State<ServerSettings> {
         SizedBox(
           width: double.infinity,
           child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
             segments: const [
               ButtonSegment(
                 value: 'local',
@@ -110,8 +129,15 @@ class _ServerSettingsState extends State<ServerSettings> {
                 label: Text('Cloud'),
                 icon: Icon(Icons.cloud_outlined),
               ),
+              ButtonSegment(
+                value: 'openrouter',
+                label: Text('OpenRouter'),
+                icon: Icon(Icons.hub_outlined),
+              ),
             ],
-            selected: {_serverMode == 'openwebui' ? 'local' : _serverMode},
+            selected: {
+              _serverMode == 'openwebui' ? 'local' : _serverMode,
+            },
             onSelectionChanged: (selection) {
               _setServerMode(selection.first);
             },
@@ -120,6 +146,8 @@ class _ServerSettingsState extends State<ServerSettings> {
         const SizedBox(height: 16),
         if (_serverMode == 'cloud')
           _buildCloudSettings(context)
+        else if (_serverMode == 'openrouter')
+          _buildOpenRouterSettings(context)
         else
           _buildLocalSettings(context),
         const SizedBox(height: 16),
@@ -302,6 +330,97 @@ class _ServerSettingsState extends State<ServerSettings> {
     );
   }
 
+  Widget _buildOpenRouterSettings(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _openRouterApiKeyController,
+          obscureText: _obscureOpenRouterApiKey,
+          onChanged: (_) {
+            setState(() {
+              _openRouterErrorText = null;
+              _openRouterRequestState = OllamaRequestState.uninitialized;
+              _settingsBox.put('openrouterDataConsented', false);
+            });
+          },
+          decoration: InputDecoration(
+            labelText: 'API Key',
+            hintText: 'Enter your OpenRouter API key',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            errorText: _openRouterErrorText,
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscureOpenRouterApiKey
+                    ? Icons.visibility_off
+                    : Icons.visibility,
+              ),
+              onPressed: () {
+                setState(() {
+                  _obscureOpenRouterApiKey = !_obscureOpenRouterApiKey;
+                });
+              },
+            ),
+          ),
+          onTapOutside: (PointerDownEvent event) {
+            FocusManager.instance.primaryFocus?.unfocus();
+          },
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Get your API key from openrouter.ai/keys',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Your conversations will be sent to OpenRouter (openrouter.ai) for AI processing. Only data you enter in chats is transmitted. No data is collected by DriftPaca.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSecondaryContainer,
+                        height: 1.4,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _isOpenRouterLoading ||
+                    _openRouterApiKeyController.text.isEmpty
+                ? null
+                : () => _handleOpenRouterConnectWithConsent(context),
+            child: _ConnectionStatusIndicator(
+              color: _openRouterConnectionStatusColor,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Color get _connectionStatusColor {
     switch (_requestState) {
       case OllamaRequestState.error:
@@ -317,6 +436,19 @@ class _ServerSettingsState extends State<ServerSettings> {
 
   Color get _cloudConnectionStatusColor {
     switch (_cloudRequestState) {
+      case OllamaRequestState.error:
+        return Colors.red;
+      case OllamaRequestState.loading:
+        return Colors.orange;
+      case OllamaRequestState.success:
+        return Colors.green;
+      case OllamaRequestState.uninitialized:
+        return Colors.grey;
+    }
+  }
+
+  Color get _openRouterConnectionStatusColor {
+    switch (_openRouterRequestState) {
       case OllamaRequestState.error:
         return Colors.red;
       case OllamaRequestState.loading:
@@ -363,6 +495,88 @@ class _ServerSettingsState extends State<ServerSettings> {
         ],
       ),
     );
+  }
+
+  void _handleOpenRouterConnectWithConsent(BuildContext context) {
+    final consented =
+        _settingsBox.get('openrouterDataConsented', defaultValue: false);
+    if (consented) {
+      _handleOpenRouterConnectButton();
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Data Sharing'),
+        content: const Text(
+          'By connecting to OpenRouter, the following data will be sent to openrouter.ai for AI processing:\n\n'
+          '• Your chat messages and conversation history\n'
+          '• System prompts you configure\n'
+          '• Images you attach to messages\n\n'
+          'OpenRouter may then route the request to the model provider you select. Your API key is stored only on your device and is never shared with DriftPaca or any other party. No data is collected by this app. DriftPaca is fully open source, and you can verify the implementation in the source code.\n\n'
+          'If you have questions, reach out at:\nhttps://github.com/SongTonyLi/DriftPaca/issues',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              _settingsBox.put('openrouterDataConsented', true);
+              Navigator.pop(ctx);
+              _handleOpenRouterConnectButton();
+            },
+            child: const Text('Agree & Connect'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  _handleOpenRouterConnectButton({bool silent = false}) async {
+    setState(() {
+      _openRouterErrorText = null;
+      if (!silent) {
+        _openRouterRequestState = OllamaRequestState.loading;
+      }
+    });
+
+    try {
+      final apiKey = _openRouterApiKeyController.text.trim();
+      if (apiKey.isEmpty) {
+        throw OllamaException('Please enter an API key.');
+      }
+
+      final url = Uri.parse('https://openrouter.ai/api/v1/key');
+      final response = await http.get(url, headers: {
+        'Authorization': 'Bearer $apiKey',
+        'HTTP-Referer': 'https://github.com/SongTonyLi/DriftPaca',
+        'X-Title': 'DriftPaca',
+      }).timeout(const Duration(seconds: 8));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        _openRouterErrorText = 'Invalid API key.';
+        _openRouterRequestState = OllamaRequestState.error;
+      } else if (response.statusCode >= 200 && response.statusCode < 300) {
+        _openRouterRequestState = OllamaRequestState.success;
+        _settingsBox.put('openrouterApiKey', apiKey);
+      } else {
+        _openRouterErrorText = 'Could not connect to OpenRouter.';
+        _openRouterRequestState = OllamaRequestState.error;
+      }
+    } on OllamaException catch (error) {
+      _openRouterErrorText = error.message;
+      _openRouterRequestState = OllamaRequestState.error;
+    } catch (_) {
+      _openRouterErrorText = 'Could not connect to OpenRouter.';
+      _openRouterRequestState = OllamaRequestState.error;
+    } finally {
+      if (mounted) setState(() {});
+    }
   }
 
   _handleCloudConnectButton({bool silent = false}) async {
@@ -530,7 +744,9 @@ class _ServerSettingsState extends State<ServerSettings> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'Used for memory summarization via Ollama Cloud',
+                    _serverMode == 'openrouter'
+                        ? 'Used for memory summarization via OpenRouter'
+                        : 'Used for memory summarization via Ollama Cloud',
                     style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
                   ),
                 ],

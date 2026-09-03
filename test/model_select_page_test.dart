@@ -36,6 +36,12 @@ final _models = [
   _mk('llama3.2:3b', 'llama', vision: true),
 ];
 
+final _openRouterModels = [
+  _mk('openai/gpt-4o', 'openai', vision: true, tools: true),
+  _mk('anthropic/claude-sonnet-4', 'anthropic', think: true, tools: true),
+  _mk('x-ai/grok-4', 'x-ai', think: true, tools: true),
+];
+
 void _phoneSurface(WidgetTester tester) {
   tester.view.physicalSize = const Size(440, 940);
   tester.view.devicePixelRatio = 1.0;
@@ -212,5 +218,28 @@ void main() {
       find.byType(AnimatedSwitcher),
     );
     expect(switcher.duration, Duration.zero);
+  });
+
+  testWidgets('OpenRouter catalog names search and dock on the wheel',
+      (tester) async {
+    _phoneSurface(tester);
+    await tester.pumpWidget(MaterialApp(
+      home: ModelSelectPage(
+        models: _openRouterModels,
+        currentModelName: 'openai/gpt-4o',
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('openai/gpt-4o'), findsWidgets);
+    expect(find.text('Use this model'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'claude');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('anthropic/claude-sonnet-4'), findsWidgets);
+
+    await tester.enterText(find.byType(TextField), 'grok');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('x-ai/grok-4'), findsWidgets);
   });
 }

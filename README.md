@@ -16,7 +16,7 @@ A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a 
 - **Floating prompt bar** -- translucent, always-accessible input with backdrop blur
 - **Compact chat layout** -- clean message bubbles with inline Copy and Regenerate actions
 - **Sidebar with context menu** -- long-press any chat to rename or delete with an animated glass popup
-- **Multi-model support** -- local Ollama or Ollama Cloud, switch models per conversation
+- **Multi-model support** -- local Ollama, Ollama Cloud, or OpenRouter, switch models per conversation
 - **Per-chat configuration** -- system prompts, temperature, and advanced options per conversation
 - **Encrypted cloud traffic** -- TLS/HTTPS for every Ollama Cloud and web search request, with the TLS session reused across calls for low latency
 - **Cross-platform** -- iOS, Android, macOS, Linux, Windows
@@ -26,7 +26,7 @@ A beautiful, open-source AI chat client for [Ollama](https://ollama.com) with a 
 ### Prerequisites
 
 - [Flutter](https://flutter.dev/docs/get-started/install) 3.x+
-- [Ollama](https://ollama.com) Ollama Cloud API key
+- [Ollama](https://ollama.com) locally or an Ollama Cloud / [OpenRouter](https://openrouter.ai) API key
 
 ### Run
 
@@ -136,7 +136,7 @@ lib/
 
 - **Flutter** + **Provider** for state management
 - **SQLite** for local chat persistence
-- **Ollama API** for model inference
+- **Ollama API** or **OpenRouter** for model inference
 - **flutter_markdown** + **LaTeX** for rich content rendering
 
 ## License

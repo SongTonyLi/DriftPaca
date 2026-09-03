@@ -53,14 +53,21 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
                         borderRadius: BorderRadius.circular(12.0),
                       ),
                       child: ValueListenableBuilder(
-                        valueListenable: Hive.box('settings').listenable(keys: ['isCloudMode']),
+                        valueListenable: Hive.box('settings').listenable(keys: ['isCloudMode', 'serverMode']),
                         builder: (context, box, _) {
-                          final isCloud = box.get('isCloudMode', defaultValue: false);
+                          final serverMode = box.get('serverMode', defaultValue: 'local');
+                          final isCloud = serverMode == 'cloud' ||
+                              box.get('isCloudMode', defaultValue: false);
+                          final isOpenRouter = serverMode == 'openrouter';
                           return Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                isCloud ? Icons.cloud_outlined : Icons.dns_outlined,
+                                isOpenRouter
+                                    ? Icons.hub_outlined
+                                    : isCloud
+                                        ? Icons.cloud_outlined
+                                        : Icons.dns_outlined,
                                 size: 12,
                                 color: Theme.of(context).colorScheme.onSecondaryContainer,
                               ),

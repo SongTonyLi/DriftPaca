@@ -66,21 +66,35 @@ class MemoryService extends ChangeNotifier {
   // Configuration
   // ============================================================
 
+  bool get _isOpenRouter =>
+      Hive.box('settings').get('serverMode', defaultValue: 'local') ==
+      'openrouter';
+
   /// Model for async memory generation/summarisation (off the critical path).
   String get _generationModel {
     final box = Hive.box('settings');
-    return box.get('memoryModel', defaultValue: MemoryConstants.defaultModel);
+    final stored = box.get('memoryModel') as String?;
+    if (_isOpenRouter) {
+      if (stored != null && stored.contains('/')) return stored;
+      return MemoryConstants.defaultOpenRouterModel;
+    }
+    return stored ?? MemoryConstants.defaultModel;
   }
 
   /// Model for the pre-message topic-retrieval call (on the critical path).
   String get _retrievalModel {
     final box = Hive.box('settings');
-    return box.get('memoryRetrievalModel',
-        defaultValue: MemoryConstants.defaultRetrievalModel);
+    final stored = box.get('memoryRetrievalModel') as String?;
+    if (_isOpenRouter) {
+      if (stored != null && stored.contains('/')) return stored;
+      return MemoryConstants.defaultOpenRouterRetrievalModel;
+    }
+    return stored ?? MemoryConstants.defaultRetrievalModel;
   }
 
   String? get _apiKey {
     final box = Hive.box('settings');
+    if (_isOpenRouter) return box.get('openrouterApiKey');
     return box.get('cloudApiKey');
   }
 
@@ -295,6 +309,10 @@ class MemoryService extends ChangeNotifier {
   }
 
   Future<String?> _callCloudModel(String prompt, {required String model}) async {
+    if (_isOpenRouter) {
+      return _callOpenRouterModel(prompt, model: model);
+    }
+
     final url = Uri.parse('$_cloudBaseUrl/api/chat');
 
     try {
@@ -317,6 +335,48 @@ class MemoryService extends ChangeNotifier {
         final responseBody = utf8.decode(response.bodyBytes);
         final json = jsonDecode(responseBody);
         return json['message']?['content'] as String?;
+      } else if (response.statusCode == 404) {
+        _lastError = 'Model "$model" not found. Change it in Settings → Memory Model.';
+        return null;
+      } else {
+        _lastError = 'API error ${response.statusCode}';
+        return null;
+      }
+    } catch (e) {
+      _lastError = 'Network error: $e';
+      return null;
+    }
+  }
+
+  Future<String?> _callOpenRouterModel(String prompt, {required String model}) async {
+    final url = Uri.parse('https://openrouter.ai/api/v1/chat/completions');
+
+    try {
+      final response = await _client.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_apiKey',
+          'HTTP-Referer': 'https://github.com/SongTonyLi/DriftPaca',
+          'X-Title': 'DriftPaca',
+        },
+        body: jsonEncode({
+          'model': model,
+          'messages': [
+            {'role': 'user', 'content': prompt},
+          ],
+          'stream': false,
+        }),
+      ).timeout(const Duration(seconds: 60));
+
+      if (response.statusCode == 200) {
+        final responseBody = utf8.decode(response.bodyBytes);
+        final json = jsonDecode(responseBody);
+        final choices = json['choices'];
+        if (choices is List && choices.isNotEmpty) {
+          return choices.first['message']?['content'] as String?;
+        }
+        return null;
       } else if (response.statusCode == 404) {
         _lastError = 'Model "$model" not found. Change it in Settings → Memory Model.';
         return null;

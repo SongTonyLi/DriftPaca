@@ -64,4 +64,35 @@ void main() {
 
     expect(captured, 'gpt-oss:120b-cloud');
   });
+
+  test('OpenRouter mode calls chat completions with the OpenRouter default model',
+      () async {
+    late Uri capturedUrl;
+    String? capturedModel;
+    Hive.box('settings')
+      ..put('serverMode', 'openrouter')
+      ..put('openrouterApiKey', 'or-key')
+      ..delete('memoryModel');
+
+    final mock = MockClient((req) async {
+      capturedUrl = req.url;
+      capturedModel = (jsonDecode(req.body) as Map)['model'] as String;
+      return http.Response(
+          jsonEncode({
+            'choices': [
+              {
+                'message': {'content': 'condensed'},
+              }
+            ]
+          }),
+          200);
+    });
+    final mem = MemoryService(db: _FakeDb(), client: mock);
+
+    await mem.resummarize('a long block of memory content to condense', 1000);
+
+    expect(capturedUrl.toString(),
+        'https://openrouter.ai/api/v1/chat/completions');
+    expect(capturedModel, 'openai/gpt-4o-mini');
+  });
 }

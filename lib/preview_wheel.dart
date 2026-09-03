@@ -61,7 +61,10 @@ final List<OllamaModel> _mocks = [
   _mk('glm-4.6', 'glm', '', think: true, tools: true),
   _mk('gemini-2.5-flash', 'gemini', '', vision: true, tools: true),
   _mk('essential-web:8b', 'essential', '8B'),
-  _mk('llama3.2-vision:11b', 'llama', '11B', vision: true), // → Ollama fallback
+  _mk('llama3.2-vision:11b', 'llama', '11B', vision: true),
+  _mk('openai/gpt-4o', 'openai', '', vision: true, tools: true),
+  _mk('anthropic/claude-sonnet-4', 'anthropic', '', think: true, tools: true),
+  _mk('x-ai/grok-4', 'x-ai', '', think: true, tools: true),
   _mk('phi4:14b', 'phi', '14B', tools: true), // → Ollama fallback
 ];
 

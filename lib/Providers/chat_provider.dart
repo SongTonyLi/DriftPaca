@@ -868,7 +868,7 @@ class ChatProvider extends ChangeNotifier {
     // from it would compact against a window the model does not have.
     final transcriptLimits = SearchAgent.transcriptLimitsFor(
       associatedChat.options.contextSize,
-      contextSizeApplies: !_ollamaService.isCloudMode,
+      contextSizeApplies: !_ollamaService.isRemoteMode,
     );
 
     final agent = SearchAgent(
@@ -1364,7 +1364,13 @@ class ChatProvider extends ChangeNotifier {
 
     _applyServerSettings(settingsBox);
 
-    _settingsListenable = settingsBox.listenable(keys: ["serverAddress", "isCloudMode", "cloudApiKey"]);
+    _settingsListenable = settingsBox.listenable(keys: [
+      "serverAddress",
+      "serverMode",
+      "isCloudMode",
+      "cloudApiKey",
+      "openrouterApiKey",
+    ]);
     _settingsCallback = () {
       _applyServerSettings(settingsBox);
 
@@ -1375,8 +1381,18 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void _applyServerSettings(Box settingsBox) {
-    final isCloudMode = settingsBox.get('isCloudMode', defaultValue: false);
+    final serverMode = settingsBox.get('serverMode', defaultValue: 'local');
+
+    if (serverMode == 'openrouter') {
+      _ollamaService.isOpenRouterMode = true;
+      _ollamaService.apiKey = settingsBox.get('openrouterApiKey');
+      return;
+    }
+
+    final isCloudMode = serverMode == 'cloud' ||
+        settingsBox.get('isCloudMode', defaultValue: false) == true;
     _ollamaService.isCloudMode = isCloudMode;
+    _ollamaService.isOpenRouterMode = false;
 
     if (isCloudMode) {
       _ollamaService.apiKey = settingsBox.get('cloudApiKey');

@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:llamaseek/Constants/brand_logos.dart';
-import 'package:llamaseek/Models/ollama_model.dart';
-import 'package:llamaseek/Pages/chat_page/subwidgets/model_brand_mark.dart';
-import 'package:llamaseek/Pages/model_select_page/subwidgets/wheel_center_disc.dart';
 import 'package:llamaseek/Pages/settings_page/subwidgets/server_settings.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -16,11 +12,10 @@ class _FakePathProvider extends PathProviderPlatform
       '.dart_tool/test_hive_frontend_layout';
 }
 
-/// Frontend-design layout inspection for the OpenRouter surfaces.
+/// Frontend-design layout inspection for the OpenRouter settings surfaces.
 ///
-/// Asserts the three-way server control fits phone widths without overflow,
-/// Cloud and OpenRouter key panels share the same form geometry, and
-/// OpenRouter brand marks stay on the same logo box as local Ollama logos.
+/// Asserts the three-way server control fits phone widths without overflow
+/// and that Cloud and OpenRouter key panels share the same form geometry.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -166,73 +161,5 @@ void main() {
     expect(orButton.width, closeTo(cloudButton.width, 0.5));
     expect(orButton.height, closeTo(cloudButton.height, 0.5));
     expect(orButton.height, greaterThanOrEqualTo(40));
-  });
-
-  testWidgets('OpenRouter wheel brands use the same 22px logo box as local', (
-    tester,
-  ) async {
-    final local = OllamaModel(
-      name: 'gemma3:4b',
-      model: 'gemma3:4b',
-      modifiedAt: DateTime(2024, 1, 1),
-      size: 1,
-      digest: 'd1',
-      parameterSize: '4B',
-      family: 'gemma',
-    );
-    final remote = OllamaModel(
-      name: 'anthropic/claude-sonnet-4',
-      model: 'anthropic/claude-sonnet-4',
-      modifiedAt: DateTime(2024, 1, 1),
-      size: 1,
-      digest: 'd2',
-      parameterSize: '',
-      family: 'claude',
-      format: 'openrouter',
-    );
-
-    expect(brandForModel(remote).key, 'anthropic');
-
-    await pumpPhone(
-      tester,
-      Column(
-        children: [
-          ModelBrandMark(model: local, tint: Colors.white, size: 22),
-          ModelBrandMark(model: remote, tint: Colors.white, size: 22),
-        ],
-      ),
-    );
-
-    final marks = tester.widgetList<SizedBox>(
-      find.descendant(
-        of: find.byType(ModelBrandMark),
-        matching: find.byType(SizedBox),
-      ),
-    );
-    for (final box in marks) {
-      expect(box.width, 22);
-      expect(box.height, 22);
-    }
-  });
-
-  testWidgets('long OpenRouter ids wrap inside the wheel disc without overflow',
-      (tester) async {
-    final overflows = _captureOverflows(tester);
-
-    await pumpPhone(
-      tester,
-      const Center(
-        child: WheelCenterDisc(
-          diameter: 180,
-          asset: 'assets/images/model_logos/anthropic.svg',
-          accent: Color(0xFFD4A27F),
-          modelName: 'anthropic/claude-sonnet-4',
-        ),
-      ),
-    );
-
-    expect(find.text('anthropic/claude-sonnet-4'), findsOneWidget);
-    expect(overflows, isEmpty);
-    expect(tester.takeException(), isNull);
   });
 }

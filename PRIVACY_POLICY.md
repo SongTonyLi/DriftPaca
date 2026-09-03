@@ -62,10 +62,11 @@ When you configure a local Ollama server or enter an Ollama Cloud API key, your 
 
 - **Local mode**: Data is sent to the server address you provide (e.g., your own machine).
 - **Cloud mode**: Data is sent to Ollama Cloud (ollama.com) using your API key.
+- **OpenRouter mode**: Data is sent to OpenRouter (openrouter.ai) using your API key. OpenRouter may then route the request to the model provider you selected.
 
 ### Memory Feature
 
-If you enable the memory feature, **conversation summaries and profile data** (such as name, language, and communication preferences) are sent to Ollama Cloud for summarization. This data is used to personalize your conversations. Memory data is stored locally on your device and only transmitted when summarization is needed.
+If you enable the memory feature, **conversation summaries and profile data** (such as name, language, and communication preferences) are sent to the backend you configured (Ollama Cloud or OpenRouter) for summarization. This data is used to personalize your conversations. Memory data is stored locally on your device and only transmitted when summarization is needed.
 
 ### Web Search (DuckDuckGo)
 
@@ -76,6 +77,7 @@ When you enable web search for a conversation, your **search queries** are sent 
 All connections from DriftPaca to remote services are encrypted with **TLS (HTTPS)**:
 
 - **Ollama Cloud** (`https://ollama.com`) — chat, model listing, and memory summarization traffic
+- **OpenRouter** (`https://openrouter.ai`) — chat, model listing, and memory summarization traffic when you choose OpenRouter
 - **DuckDuckGo** (`https://html.duckduckgo.com`) — web search queries
 - **Fetched web pages** — TLS is used whenever the source page is served over HTTPS
 
@@ -88,6 +90,7 @@ A **local Ollama** server is reached over plain HTTP at `http://localhost:11434`
 DriftPaca does not integrate any analytics, advertising, or tracking services. The only third-party services used are:
 
 - **Ollama** (ollama.com) — for AI model inference, only when you configure it
+- **OpenRouter** (openrouter.ai) — for AI model inference, only when you configure an OpenRouter API key
 - **DuckDuckGo** (duckduckgo.com) — for web search, only when you enable it
 
 ## Open Source

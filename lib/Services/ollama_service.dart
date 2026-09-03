@@ -16,10 +16,12 @@ import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/api/create_request.dart';
+import 'package:llamaseek/Services/openrouter_codec.dart';
 
 class OllamaService {
   static const String defaultLocalUrl = "http://localhost:11434";
   static const String cloudBaseUrl = "https://ollama.com";
+  static const String openRouterBaseUrl = "https://openrouter.ai/api/v1";
 
   /// The base URL for the Ollama service API.
   ///
@@ -32,17 +34,33 @@ class OllamaService {
   String get baseUrl => _baseUrl;
   set baseUrl(String? value) => _baseUrl = value ?? defaultLocalUrl;
 
-  /// Whether the service is in cloud mode.
+  /// Whether the service is in Ollama Cloud mode.
   bool _isCloudMode = false;
   bool get isCloudMode => _isCloudMode;
   set isCloudMode(bool value) {
     _isCloudMode = value;
     if (value) {
+      _isOpenRouterMode = false;
       _baseUrl = cloudBaseUrl;
     }
   }
 
-  /// The API key for Ollama Cloud authentication.
+  /// Whether the service is talking to OpenRouter (OpenAI-compatible).
+  bool _isOpenRouterMode = false;
+  bool get isOpenRouterMode => _isOpenRouterMode;
+  set isOpenRouterMode(bool value) {
+    _isOpenRouterMode = value;
+    if (value) {
+      _isCloudMode = false;
+      _baseUrl = openRouterBaseUrl;
+    }
+  }
+
+  /// Hosted backends (Cloud / OpenRouter) omit local-only Ollama options
+  /// and use longer timeouts.
+  bool get isRemoteMode => _isCloudMode || _isOpenRouterMode;
+
+  /// The API key for hosted-backend authentication.
   String? _apiKey;
   String? get apiKey => _apiKey;
   set apiKey(String? value) => _apiKey = value;
@@ -50,8 +68,12 @@ class OllamaService {
   /// The headers to include in all network requests.
   Map<String, String> get headers {
     final h = {'Content-Type': 'application/json'};
-    if (_isCloudMode && _apiKey != null && _apiKey!.isNotEmpty) {
+    if (isRemoteMode && _apiKey != null && _apiKey!.isNotEmpty) {
       h['Authorization'] = 'Bearer $_apiKey';
+    }
+    if (_isOpenRouterMode) {
+      h['HTTP-Referer'] = OpenRouterCodec.referer;
+      h['X-Title'] = OpenRouterCodec.title;
     }
     return h;
   }
@@ -94,7 +116,7 @@ class OllamaService {
   /// Returns options map for requests. Cloud mode omits advanced options
   /// that may cause errors with cloud-hosted models.
   Map<String, dynamic>? _buildOptions(OllamaChatOptions options) {
-    if (_isCloudMode) return null;
+    if (isRemoteMode) return null;
     return options.toMap();
   }
 
@@ -112,6 +134,9 @@ class OllamaService {
     String prompt, {
     required OllamaChat chat,
   }) async {
+    if (_isOpenRouterMode) {
+      return _openRouterGenerate(prompt, chat: chat);
+    }
     final url = constructUrl("/api/generate");
 
     final response = await _client.post(
@@ -140,6 +165,10 @@ class OllamaService {
     String prompt, {
     required OllamaChat chat,
   }) async* {
+    if (_isOpenRouterMode) {
+      yield* _openRouterGenerateStream(prompt, chat: chat);
+      return;
+    }
     final url = constructUrl('/api/generate');
 
     final request = http.Request("POST", url);
@@ -185,6 +214,17 @@ class OllamaService {
     List<OllamaToolDefinition>? tools,
     List<OllamaMessage> extraMessages = const [],
   }) async {
+    if (_isOpenRouterMode) {
+      return _openRouterChat(
+        messages,
+        chat: chat,
+        conversationMemory: conversationMemory,
+        profile: profile,
+        relevantContext: relevantContext,
+        tools: tools,
+        extraMessages: extraMessages,
+      );
+    }
     final url = constructUrl("/api/chat");
 
     final response = await _client.post(
@@ -226,6 +266,18 @@ class OllamaService {
     List<OllamaToolDefinition>? tools,
     List<OllamaMessage> extraMessages = const [],
   }) async* {
+    if (_isOpenRouterMode) {
+      yield* _openRouterChatStream(
+        messages,
+        chat: chat,
+        conversationMemory: conversationMemory,
+        profile: profile,
+        relevantContext: relevantContext,
+        tools: tools,
+        extraMessages: extraMessages,
+      );
+      return;
+    }
     // Determine vision support: only strip images when we are confident
     // the model lacks vision. Default to true (send images) when unknown.
     final hasImages = messages.any((m) => m.images != null && m.images!.isNotEmpty);
@@ -456,6 +508,9 @@ class OllamaService {
   /// Fetches models from /api/tags and enriches each with capabilities
   /// from /api/show. If /api/show fails for a model, capabilities will be null.
   Future<List<OllamaModel>> listModels() async {
+    if (_isOpenRouterMode) {
+      return _listOpenRouterModels();
+    }
     final tagsResponse = await _fetchTags();
 
     // Fetch capabilities for each model in parallel
@@ -479,7 +534,7 @@ class OllamaService {
     final url = constructUrl("/api/tags");
 
     final response = await _client.get(url, headers: headers).timeout(
-          Duration(seconds: _isCloudMode ? 10 : 2),
+          Duration(seconds: isRemoteMode ? 10 : 2),
         );
 
     if (response.statusCode == 200) {
@@ -506,7 +561,7 @@ class OllamaService {
             headers: headers,
             body: json.encode({"model": name}),
           )
-          .timeout(Duration(seconds: _isCloudMode ? 10 : 5));
+          .timeout(Duration(seconds: isRemoteMode ? 10 : 5));
 
       if (response.statusCode == 200) {
         final jsonBody = json.decode(response.body);
@@ -531,6 +586,277 @@ class OllamaService {
       return caps;
     }
     return null;
+  }
+
+  Future<List<OllamaModel>> _listOpenRouterModels() async {
+    final url = constructUrl('/models');
+    final response = await _client.get(url, headers: headers).timeout(
+          const Duration(seconds: 15),
+        );
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw OllamaException('Invalid API key. Check your key in Settings.');
+    }
+    if (response.statusCode != 200) {
+      throw OllamaException(HttpErrorFormatter.formatHttpError(
+        response.statusCode,
+        body: response.body,
+      ));
+    }
+
+    final jsonBody = json.decode(response.body);
+    if (jsonBody is! Map<String, dynamic>) {
+      throw OllamaException('Unexpected OpenRouter models response.');
+    }
+    final models = OpenRouterCodec.parseModels(jsonBody);
+    for (final model in models) {
+      if (model.capabilities != null) {
+        _capabilitiesCache[model.name] = model.capabilities!;
+      }
+    }
+    return models;
+  }
+
+  Future<List<Map<String, dynamic>>> _openRouterPreparedMessages(
+    List<OllamaMessage> messages, {
+    required OllamaChat chat,
+    ConversationMemory? conversationMemory,
+    AgentMemory? profile,
+    String relevantContext = '',
+    List<OllamaMessage> extraMessages = const [],
+    bool supportsVision = true,
+  }) async {
+    final prepared = await prepareMessagesWithSystemPrompt(
+      messages,
+      chat.systemPrompt,
+      conversationMemory: conversationMemory,
+      profile: profile,
+      relevantContext: relevantContext,
+      currentModel: chat.model,
+      supportsVision: supportsVision,
+      extraMessages: extraMessages,
+    );
+    return OpenRouterCodec.toOpenAiMessages(prepared);
+  }
+
+  Map<String, dynamic> _openRouterBody({
+    required OllamaChat chat,
+    required List<Map<String, dynamic>> messages,
+    required bool stream,
+    List<OllamaToolDefinition>? tools,
+  }) {
+    return OpenRouterCodec.chatBody(
+      model: chat.model,
+      messages: messages,
+      stream: stream,
+      temperature: chat.options.temperature,
+      tools: tools == null || tools.isEmpty
+          ? null
+          : [for (final t in tools) t.toJson()],
+    );
+  }
+
+  Future<OllamaMessage> _openRouterChat(
+    List<OllamaMessage> messages, {
+    required OllamaChat chat,
+    ConversationMemory? conversationMemory,
+    AgentMemory? profile,
+    String relevantContext = '',
+    List<OllamaToolDefinition>? tools,
+    List<OllamaMessage> extraMessages = const [],
+  }) async {
+    final prepared = await _openRouterPreparedMessages(
+      messages,
+      chat: chat,
+      conversationMemory: conversationMemory,
+      profile: profile,
+      relevantContext: relevantContext,
+      extraMessages: extraMessages,
+    );
+    final response = await _client.post(
+      constructUrl('/chat/completions'),
+      headers: headers,
+      body: json.encode(_openRouterBody(
+        chat: chat,
+        messages: prepared,
+        stream: false,
+        tools: tools,
+      )),
+    );
+    return _openRouterCompletionFromResponse(response, chat.model);
+  }
+
+  Stream<OllamaMessage> _openRouterChatStream(
+    List<OllamaMessage> messages, {
+    required OllamaChat chat,
+    ConversationMemory? conversationMemory,
+    AgentMemory? profile,
+    String relevantContext = '',
+    List<OllamaToolDefinition>? tools,
+    List<OllamaMessage> extraMessages = const [],
+  }) async* {
+    final hasImages =
+        messages.any((m) => m.images != null && m.images!.isNotEmpty);
+    bool supportsVision = true;
+    if (hasImages) {
+      if (!_capabilitiesCache.containsKey(chat.model)) {
+        await listModels();
+      }
+      supportsVision = _capabilitiesCache[chat.model]?.vision ?? true;
+    }
+
+    final prepared = await _openRouterPreparedMessages(
+      messages,
+      chat: chat,
+      conversationMemory: conversationMemory,
+      profile: profile,
+      relevantContext: relevantContext,
+      extraMessages: extraMessages,
+      supportsVision: supportsVision,
+    );
+
+    final request = http.Request('POST', constructUrl('/chat/completions'));
+    request.headers.addAll(headers);
+    request.body = json.encode(_openRouterBody(
+      chat: chat,
+      messages: prepared,
+      stream: true,
+      tools: tools,
+    ));
+
+    var response = await _client.send(request);
+    if (response.statusCode == 400 && supportsVision && hasImages) {
+      final body = await response.stream.bytesToString();
+      if (body.toLowerCase().contains('image')) {
+        _capabilitiesCache[chat.model] = const ModelCapabilities();
+        final retryMessages = await _openRouterPreparedMessages(
+          messages,
+          chat: chat,
+          conversationMemory: conversationMemory,
+          profile: profile,
+          relevantContext: relevantContext,
+          extraMessages: extraMessages,
+          supportsVision: false,
+        );
+        final retry = http.Request('POST', constructUrl('/chat/completions'));
+        retry.headers.addAll(headers);
+        retry.body = json.encode(_openRouterBody(
+          chat: chat,
+          messages: retryMessages,
+          stream: true,
+          tools: tools,
+        ));
+        response = await _client.send(retry);
+      }
+    }
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw OllamaException('Invalid API key. Check your key in Settings.');
+    }
+    if (response.statusCode == 404) {
+      throw OllamaException('${chat.model} not found on OpenRouter.');
+    }
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      throw OllamaException(
+        HttpErrorFormatter.formatHttpError(response.statusCode, body: body),
+      );
+    }
+
+    await for (final message in _processOpenRouterStream(response.stream)) {
+      yield message;
+    }
+  }
+
+  Future<OllamaMessage> _openRouterGenerate(
+    String prompt, {
+    required OllamaChat chat,
+  }) async {
+    final messages = <Map<String, dynamic>>[
+      if (chat.systemPrompt != null && chat.systemPrompt!.isNotEmpty)
+        {'role': 'system', 'content': chat.systemPrompt},
+      {'role': 'user', 'content': prompt},
+    ];
+    final response = await _client.post(
+      constructUrl('/chat/completions'),
+      headers: headers,
+      body: json.encode(_openRouterBody(
+        chat: chat,
+        messages: messages,
+        stream: false,
+      )),
+    );
+    return _openRouterCompletionFromResponse(response, chat.model);
+  }
+
+  Stream<OllamaMessage> _openRouterGenerateStream(
+    String prompt, {
+    required OllamaChat chat,
+  }) async* {
+    final messages = <Map<String, dynamic>>[
+      if (chat.systemPrompt != null && chat.systemPrompt!.isNotEmpty)
+        {'role': 'system', 'content': chat.systemPrompt},
+      {'role': 'user', 'content': prompt},
+    ];
+    final request = http.Request('POST', constructUrl('/chat/completions'));
+    request.headers.addAll(headers);
+    request.body = json.encode(_openRouterBody(
+      chat: chat,
+      messages: messages,
+      stream: true,
+    ));
+    final response = await _client.send(request);
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      throw OllamaException(
+        HttpErrorFormatter.formatHttpError(response.statusCode, body: body),
+      );
+    }
+    await for (final message in _processOpenRouterStream(response.stream)) {
+      yield message;
+    }
+  }
+
+  Future<OllamaMessage> _openRouterCompletionFromResponse(
+    http.Response response,
+    String model,
+  ) async {
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw OllamaException('Invalid API key. Check your key in Settings.');
+    }
+    if (response.statusCode == 404) {
+      throw OllamaException('$model not found on OpenRouter.');
+    }
+    if (response.statusCode != 200) {
+      throw OllamaException(HttpErrorFormatter.formatHttpError(
+        response.statusCode,
+        body: response.body,
+      ));
+    }
+    final jsonBody = json.decode(utf8.decode(response.bodyBytes));
+    if (jsonBody is! Map) {
+      throw OllamaException('Unexpected OpenRouter response.');
+    }
+    return OpenRouterCodec.parseCompletion(
+      Map<String, dynamic>.from(jsonBody),
+    );
+  }
+
+  Stream<OllamaMessage> _processOpenRouterStream(Stream<List<int>> stream) async* {
+    String buffer = '';
+    await for (final chunk in stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      final lines = buffer.split('\n');
+      buffer = lines.removeLast();
+      for (final line in lines) {
+        final message = OpenRouterCodec.parseSseLine(line);
+        if (message != null) yield message;
+      }
+    }
+    if (buffer.trim().isNotEmpty) {
+      final message = OpenRouterCodec.parseSseLine(buffer);
+      if (message != null) yield message;
+    }
   }
 
   Future<void> createModel(
@@ -604,6 +930,9 @@ class OllamaService {
     }
     final cached = box.get(modelName) as String?;
     if (cached != null) return cached;
+
+    // OpenRouter ids are `provider/model` and have no ollama.com library page.
+    if (modelName.contains('/')) return null;
 
     final baseName = modelName.contains(':')
         ? modelName.split(':').first

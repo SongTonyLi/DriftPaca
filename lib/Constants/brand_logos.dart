@@ -55,8 +55,19 @@ const BrandLogo kOllamaBrand = BrandLogo(
 
 /// Every known provider brand. Accent colours are sampled from each logo's own
 /// palette (see the `*-color.svg` sources).
+const BrandLogo kOpenRouterBrand = BrandLogo(
+  key: 'openrouter',
+  asset: '$_dir/openrouter.svg',
+  accent: Color(0xFF6566F1),
+  label: 'OpenRouter',
+);
+
 const List<BrandLogo> kBrands = [
   BrandLogo(key: 'openai', asset: '$_dir/openai.svg', accent: Color(0xFF10A37F), label: 'OpenAI', monochrome: true),
+  BrandLogo(key: 'anthropic', asset: '$_dir/anthropic.svg', accent: Color(0xFFD4A27F), label: 'Anthropic'),
+  BrandLogo(key: 'llama', asset: '$_dir/llama.svg', accent: Color(0xFF0668E1), label: 'Llama'),
+  BrandLogo(key: 'grok', asset: '$_dir/grok.svg', accent: Color(0xFF1D1D1F), label: 'Grok', monochrome: true),
+  kOpenRouterBrand,
   BrandLogo(key: 'qwen', asset: '$_dir/qwen.svg', accent: Color(0xFF6B57F0), label: 'Qwen'),
   BrandLogo(key: 'deepseek', asset: '$_dir/deepseek.svg', accent: Color(0xFF4D6BFE), label: 'DeepSeek'),
   BrandLogo(key: 'gemma', asset: '$_dir/gemma.svg', accent: Color(0xFF446EFF), label: 'Gemma'),
@@ -76,14 +87,23 @@ const List<(String, String)> _matchers = [
   ('gpt-oss', 'openai'),
   ('gpt', 'openai'),
   ('openai', 'openai'),
+  ('anthropic', 'anthropic'),
+  ('claude', 'anthropic'),
+  ('meta-llama', 'llama'),
+  ('llama', 'llama'),
+  ('grok', 'grok'),
+  ('x-ai', 'grok'),
+  ('xai', 'grok'),
   ('qwen', 'qwen'),
   ('deepseek', 'deepseek'),
   ('gemma', 'gemma'),
   ('gemini', 'gemini'),
+  ('google', 'gemini'),
   ('mixtral', 'mistral'),
   ('ministral', 'mistral'),
   ('codestral', 'mistral'),
   ('devstral', 'mistral'),
+  ('mistralai', 'mistral'),
   ('mistral', 'mistral'),
   ('chatglm', 'chatglm'),
   ('glm', 'chatglm'),
@@ -93,6 +113,7 @@ const List<(String, String)> _matchers = [
   ('nemotron', 'nvidia'),
   ('nvidia', 'nvidia'),
   ('essential', 'essentialai'),
+  ('openrouter', 'openrouter'),
 ];
 
 final Map<String, BrandLogo> _byKey = {for (final b in kBrands) b.key: b};
@@ -101,9 +122,16 @@ final Map<String, BrandLogo> _byKey = {for (final b in kBrands) b.key: b};
 BrandLogo brandByKey(String key) => _byKey[key] ?? kOllamaBrand;
 
 /// Resolve the brand for a model from its family + name. Unrecognised models get
-/// the Ollama fallback mark.
-BrandLogo brandForModel(OllamaModel model) =>
-    brandForFamilyName('${model.family} ${model.name}');
+/// the Ollama fallback mark — unless they look like an OpenRouter `provider/id`,
+/// in which case the OpenRouter mark is used so the wheel stays on-brand.
+BrandLogo brandForModel(OllamaModel model) {
+  final matched = brandForFamilyName('${model.family} ${model.name}');
+  if (!matched.isFallback) return matched;
+  if (model.format == 'openrouter' || model.name.contains('/')) {
+    return kOpenRouterBrand;
+  }
+  return kOllamaBrand;
+}
 
 /// Resolve a brand from an arbitrary `"family name"` string (exposed for tests
 /// and the preview harness).

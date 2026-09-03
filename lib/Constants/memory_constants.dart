@@ -10,6 +10,12 @@ class MemoryConstants {
   /// gpt-oss:120b (~1.7–2.9s) on topic selection.
   static const String defaultRetrievalModel = 'ministral-3:8b';
 
+  /// OpenRouter defaults used when the user has not picked a memory model
+  /// from the OpenRouter catalog yet.
+  static const String defaultOpenRouterModel = 'openai/gpt-4o-mini';
+  static const String defaultOpenRouterRetrievalModel =
+      'openai/gpt-4o-mini';
+
   static const int maxConversationMemoryTokens = 12000;
   static const int maxProfileTokens = 2000;
   static const int maxPerSectionTokens = 2000;

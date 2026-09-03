@@ -44,13 +44,22 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
 
   String get _cacheKey {
     final box = Hive.box('settings');
-    final isCloud = box.get('isCloudMode', defaultValue: false);
+    final serverMode = box.get('serverMode', defaultValue: 'local');
+    if (serverMode == 'openrouter') return 'openrouter';
+    final isCloud = serverMode == 'cloud' ||
+        box.get('isCloudMode', defaultValue: false);
     if (isCloud) return 'cloud';
     return box.get('serverAddress') ?? 'default';
   }
 
+  String get _serverMode =>
+      Hive.box('settings').get('serverMode', defaultValue: 'local');
+
   bool get _isCloudMode =>
+      _serverMode == 'cloud' ||
       Hive.box('settings').get('isCloudMode', defaultValue: false);
+
+  bool get _isOpenRouterMode => _serverMode == 'openrouter';
 
   @override
   void initState() {
@@ -109,8 +118,10 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
       if (mounted) {
         _modelsBucket.writeState(context, _models, identifier: _cacheKey);
       }
-      // Pre-fetch readmes in background for all models
-      _prefetchReadmes();
+      // Pre-fetch readmes in background for local/cloud Ollama models.
+      if (!_isOpenRouterMode) {
+        _prefetchReadmes();
+      }
     } catch (e) {
       _state = OllamaRequestState.error;
     }
@@ -164,7 +175,7 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
                   ),
                 ),
                 const Spacer(),
-                if (_isCloudMode)
+                if (_isCloudMode || _isOpenRouterMode)
                   Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -175,11 +186,14 @@ class _ModelSelectionBottomSheetState extends State<ModelSelectionBottomSheet> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.cloud_outlined,
+                        Icon(
+                            _isOpenRouterMode
+                                ? Icons.hub_outlined
+                                : Icons.cloud_outlined,
                             size: 13, color: colorScheme.primary),
                         const SizedBox(width: 4),
                         Text(
-                          'Cloud',
+                          _isOpenRouterMode ? 'OpenRouter' : 'Cloud',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,

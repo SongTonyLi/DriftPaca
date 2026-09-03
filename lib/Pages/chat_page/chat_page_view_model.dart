@@ -123,6 +123,9 @@ class ChatPageViewModel extends ChangeNotifier {
     if (serverMode == 'openwebui') {
       return box.get('openwebuiAddress') != null;
     }
+    if (serverMode == 'openrouter') {
+      return box.get('openrouterApiKey') != null;
+    }
     final isCloudMode = box.get('isCloudMode', defaultValue: false);
     if (isCloudMode) {
       return box.get('cloudApiKey') != null;
@@ -144,8 +147,10 @@ class ChatPageViewModel extends ChangeNotifier {
     // If server config changes, reset the selected model
     _settingsSubscription = Hive.box('settings').watch().listen((event) {
       if (event.key == 'serverAddress' ||
+          event.key == 'serverMode' ||
           event.key == 'isCloudMode' ||
-          event.key == 'cloudApiKey') {
+          event.key == 'cloudApiKey' ||
+          event.key == 'openrouterApiKey') {
         _selectedModel = null;
         notifyListeners();
       }

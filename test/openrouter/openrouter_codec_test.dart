@@ -161,4 +161,87 @@ void main() {
       expect(body['tools'], isNotEmpty);
     });
   });
+
+  group('OpenRouterToolCallAssembler', () {
+    test('assembles streamed tool-call argument fragments by index', () {
+      const full = '{"query":"current weather Bellevue WA"}';
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'id': 'call_1',
+          'function': {'name': 'web_search', 'arguments': ''},
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {'arguments': full.substring(0, 10)},
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {'arguments': full.substring(10)},
+        },
+      ]);
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1));
+      expect(calls.single.name, 'web_search');
+      expect(calls.single.arguments['query'], 'current weather Bellevue WA');
+    });
+
+    test('keeps two parallel tool calls on separate indexes', () {
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {'name': 'web_search', 'arguments': '{"query":"one"}'},
+        },
+        {
+          'index': 1,
+          'function': {'name': 'web_search', 'arguments': '{"query":"two"}'},
+        },
+      ]);
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['one', 'two'],
+      );
+    });
+
+    test('reads Gemini-style args.q as the search query', () {
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {
+            'name': 'web_search',
+            'args': {'q': 'Bellevue WA weather'},
+          },
+        },
+      ]);
+
+      expect(assembler.build().single.arguments['query'], 'Bellevue WA weather');
+    });
+
+    test('treats a bare argument string as the query', () {
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {
+            'name': 'web_search',
+            'arguments': 'current weather Bellevue WA',
+          },
+        },
+      ]);
+
+      expect(
+        assembler.build().single.arguments['query'],
+        'current weather Bellevue WA',
+      );
+    });
+  });
 }

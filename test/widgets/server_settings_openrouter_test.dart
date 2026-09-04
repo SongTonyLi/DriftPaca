@@ -35,12 +35,15 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('settings offers Local, Cloud, and OpenRouter and persists the mode',
+  testWidgets('settings offers Ollama and OpenRouter and persists the mode',
       (tester) async {
     await pumpSettings(tester);
 
-    expect(find.text('Local'), findsOneWidget);
-    expect(find.text('Cloud'), findsOneWidget);
+    expect(find.text('Local'), findsNothing);
+    expect(find.text('Ollama Server Address'), findsNothing);
+    expect(find.text('Search Local Network'), findsNothing);
+    expect(find.text('Cloud'), findsNothing);
+    expect(find.text('Ollama'), findsOneWidget);
     expect(find.text('OpenRouter'), findsOneWidget);
 
     await tester.tap(find.text('OpenRouter'));
@@ -51,5 +54,20 @@ void main() {
     expect(find.text('Enter your OpenRouter API key'), findsOneWidget);
     expect(find.textContaining('openrouter.ai'), findsWidgets);
     expect(find.textContaining('OpenRouter'), findsWidgets);
+  });
+
+  testWidgets('stored local mode is not shown and migrates to Cloud',
+      (tester) async {
+    Hive.box('settings').put('serverMode', 'local');
+    Hive.box('settings').put('serverAddress', 'http://localhost:11434');
+
+    await pumpSettings(tester);
+
+    expect(find.text('Local'), findsNothing);
+    expect(find.text('Ollama Server Address'), findsNothing);
+    expect(find.text('Search Local Network'), findsNothing);
+    expect(find.text('Enter your Ollama Cloud API key'), findsOneWidget);
+    expect(Hive.box('settings').get('serverMode'), 'cloud');
+    expect(Hive.box('settings').get('isCloudMode'), isTrue);
   });
 }

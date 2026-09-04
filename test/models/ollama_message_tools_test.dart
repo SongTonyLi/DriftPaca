@@ -128,4 +128,19 @@ void main() {
     expect(json['function']['name'], 'web_search');
     expect(json['function']['parameters']['required'], ['query']);
   });
+
+  test('lifts q onto query and accepts a bare argument string', () {
+    expect(
+      OllamaToolCall.parseArguments({'q': 'Bellevue WA weather'})['query'],
+      'Bellevue WA weather',
+    );
+    expect(
+      OllamaToolCall.parseArguments('current weather Bellevue WA')['query'],
+      'current weather Bellevue WA',
+    );
+    expect(
+      OllamaToolCall.searchQuery({'search_query': 'gdp vietnam'}),
+      'gdp vietnam',
+    );
+  });
 }

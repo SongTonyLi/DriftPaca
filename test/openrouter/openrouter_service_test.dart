@@ -116,4 +116,86 @@ void main() {
     expect(body['messages'], isA<List>());
     expect(message.content, 'A title');
   });
+
+  test('OpenRouter chatStream assembles streamed web_search arguments', () async {
+    const full = '{"query":"current weather Bellevue WA"}';
+    final firstArgs = full.substring(0, 12);
+    final restArgs = full.substring(12);
+
+    String sse(Map<String, dynamic> payload) =>
+        'data: ${jsonEncode(payload)}\n\n';
+
+    final client = MockClient((request) async {
+      return http.Response(
+        sse({
+          'choices': [
+            {
+              'delta': {
+                'tool_calls': [
+                  {
+                    'index': 0,
+                    'id': 'call_1',
+                    'function': {'name': 'web_search', 'arguments': ''},
+                  },
+                ],
+              },
+            },
+          ],
+        }) +
+            sse({
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {
+                        'index': 0,
+                        'function': {'arguments': firstArgs},
+                      },
+                    ],
+                  },
+                },
+              ],
+            }) +
+            sse({
+              'choices': [
+                {
+                  'delta': {
+                    'tool_calls': [
+                      {
+                        'index': 0,
+                        'function': {'arguments': restArgs},
+                      },
+                    ],
+                  },
+                  'finish_reason': 'tool_calls',
+                },
+              ],
+            }) +
+            'data: [DONE]\n\n',
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    });
+
+    final service = OllamaService(client: client)
+      ..isOpenRouterMode = true
+      ..apiKey = 'or-key';
+
+    final withTools = <OllamaMessage>[];
+    await for (final message in service.chatStream(
+      [OllamaMessage('Weather?', role: OllamaMessageRole.user)],
+      chat: OllamaChat(model: 'google/gemini-1.5-flash'),
+    )) {
+      if (message.toolCalls != null && message.toolCalls!.isNotEmpty) {
+        withTools.add(message);
+      }
+    }
+
+    expect(withTools, hasLength(1));
+    expect(withTools.single.toolCalls!.single.name, 'web_search');
+    expect(
+      withTools.single.toolCalls!.single.arguments['query'],
+      'current weather Bellevue WA',
+    );
+  });
 }

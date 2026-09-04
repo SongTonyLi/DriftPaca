@@ -7,6 +7,7 @@ import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/floating_gradient_background.dart';
 import 'subwidgets/logo_wheel.dart';
+import 'wheel_catalog.dart';
 import 'subwidgets/model_info_card.dart';
 import 'subwidgets/wheel_center_disc.dart';
 
@@ -160,9 +161,13 @@ class _ModelSelectPageState extends State<ModelSelectPage>
   }
 
   void _onWheelSelected(int i) {
-    final f = _filtered;
-    if (i < 0 || i >= f.length) return;
-    setState(() => _selectedName = f[i].name);
+    final catalog = WheelCatalog.fromModels(_filtered, selectedName: _selectedName);
+    if (i < 0 || i >= catalog.entries.length) return;
+    setState(() => _selectedName = catalog.nameForIndex(i));
+  }
+
+  void _onSiblingPicked(OllamaModel model) {
+    setState(() => _selectedName = model.name);
   }
 
   void _confirm() {
@@ -336,6 +341,10 @@ class _ModelSelectPageState extends State<ModelSelectPage>
     }
 
     final filtered = _filtered;
+    final catalog = WheelCatalog.fromModels(
+      filtered,
+      selectedName: _selectedName,
+    );
 
     return Column(
       children: [
@@ -362,8 +371,8 @@ class _ModelSelectPageState extends State<ModelSelectPage>
                       440.0,
                     ].reduce((a, b) => a < b ? a : b);
                     final holeD = wheelD * 0.52;
-                    final sel = _selectedIndexIn(filtered);
-                    final model = filtered[sel];
+                    final sel = catalog.selectedIndex;
+                    final model = catalog.dockedModel;
                     final brand = brandForModel(model);
                     final caps = model.capabilities;
 
@@ -376,13 +385,14 @@ class _ModelSelectPageState extends State<ModelSelectPage>
                           clipBehavior: Clip.none,
                           children: [
                             LogoWheel(
-                              // Re-key when the result set changes so the ring
-                              // re-lays-out and docks the current match.
+                              // Re-key when the brand set changes so the ring
+                              // re-lays-out. Sibling picks inside a brand must
+                              // not remount the wheel or it jumps back to 0.
                               key: ValueKey(
-                                  filtered.map((m) => m.name).join('|')),
+                                  catalog.entries.map((e) => e.brandKey).join('|')),
                               nodes: [
-                                for (final m in filtered)
-                                  _nodeFor(m),
+                                for (final entry in catalog.entries)
+                                  entry.node,
                               ],
                               initialIndex: sel,
                               diameter: wheelD,
@@ -410,6 +420,14 @@ class _ModelSelectPageState extends State<ModelSelectPage>
                 ),
         ),
         if (filtered.isNotEmpty) ...[
+          if (catalog.siblingsOfDocked.length > 1) ...[
+            _SiblingStrip(
+              models: catalog.siblingsOfDocked,
+              selectedName: _selectedName,
+              onPick: _onSiblingPicked,
+            ),
+            const SizedBox(height: 8),
+          ],
           const _Hint(),
           const SizedBox(height: 10),
           // Info (Details) button alongside the primary confirm action.
@@ -430,10 +448,6 @@ class _ModelSelectPageState extends State<ModelSelectPage>
     );
   }
 
-  WheelNode _nodeFor(OllamaModel m) {
-    final b = brandForModel(m);
-    return WheelNode(asset: b.asset, accent: b.accent, tinted: b.tinted);
-  }
 }
 
 /// Frosted search field that filters the wheel live.
@@ -491,6 +505,82 @@ class _SearchField extends StatelessWidget {
           else
             const SizedBox(width: 8),
         ],
+      ),
+    );
+  }
+}
+
+class _SiblingStrip extends StatelessWidget {
+  final List<OllamaModel> models;
+  final String selectedName;
+  final ValueChanged<OllamaModel> onPick;
+
+  const _SiblingStrip({
+    required this.models,
+    required this.selectedName,
+    required this.onPick,
+  });
+
+  static String _label(String name) {
+    final slash = name.lastIndexOf('/');
+    return slash >= 0 ? name.substring(slash + 1) : name;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 38,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        scrollDirection: Axis.horizontal,
+        itemCount: models.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final model = models[index];
+          final selected = model.name == selectedName;
+          return AnimatedScale(
+            scale: selected ? 1.0 : 0.96,
+            duration: motionDuration(context, const Duration(milliseconds: 260)),
+            curve: Curves.easeOutCubic,
+            child: AnimatedContainer(
+              duration: motionDuration(context, const Duration(milliseconds: 260)),
+              curve: Curves.easeOutCubic,
+              decoration: ShapeDecoration(
+                color: selected
+                    ? cs.primary.withValues(alpha: 0.16)
+                    : cs.surface.withValues(alpha: 0.62),
+                shape: StadiumBorder(
+                  side: BorderSide(
+                    color: selected
+                        ? cs.primary.withValues(alpha: 0.55)
+                        : cs.outline.withValues(alpha: 0.18),
+                  ),
+                ),
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  customBorder: const StadiumBorder(),
+                  onTap: () => onPick(model),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Text(
+                      _label(model.name),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                        color: selected
+                            ? cs.primary
+                            : cs.onSurface.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -597,7 +687,7 @@ class _Hint extends StatelessWidget {
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              'Turn the wheel · tap a logo to jump',
+              'Turn the wheel · tap a company to jump',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12, color: c),

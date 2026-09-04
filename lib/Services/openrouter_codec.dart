@@ -162,6 +162,12 @@ class OpenRouterCodec {
 
   /// Parses one SSE line (`data: {...}`). Returns null for keep-alives / DONE.
   static OllamaMessage? parseSseLine(String line) {
+    final json = decodeSseJson(line);
+    return json == null ? null : parseCompletion(json);
+  }
+
+  /// Decodes one `data: {...}` SSE payload. Null for keep-alives / DONE.
+  static Map<String, dynamic>? decodeSseJson(String line) {
     final trimmed = line.trim();
     if (trimmed.isEmpty || trimmed.startsWith(':')) return null;
     if (!trimmed.startsWith('data:')) return null;
@@ -169,14 +175,29 @@ class OpenRouterCodec {
     if (payload.isEmpty || payload == '[DONE]') return null;
     try {
       final json = jsonDecode(payload);
-      if (json is Map<String, dynamic>) return parseCompletion(json);
-      if (json is Map) {
-        return parseCompletion(Map<String, dynamic>.from(json));
-      }
+      if (json is Map<String, dynamic>) return json;
+      if (json is Map) return Map<String, dynamic>.from(json);
     } catch (_) {
       return null;
     }
     return null;
+  }
+
+  /// Raw `tool_calls` deltas from a completion / SSE chunk, including nameless
+  /// argument fragments that `_parseToolCalls` would drop.
+  static List<dynamic>? toolCallDeltas(Map<String, dynamic> json) {
+    final choices = json['choices'];
+    final choice = choices is List && choices.isNotEmpty && choices.first is Map
+        ? Map<String, dynamic>.from(choices.first as Map)
+        : const <String, dynamic>{};
+    final delta = choice['delta'] is Map
+        ? Map<String, dynamic>.from(choice['delta'] as Map)
+        : null;
+    final payload = choice['message'] is Map
+        ? Map<String, dynamic>.from(choice['message'] as Map)
+        : delta;
+    final raw = payload?['tool_calls'] ?? delta?['tool_calls'];
+    return raw is List ? raw : null;
   }
 
   static OllamaMessage parseCompletion(Map<String, dynamic> json) {
@@ -230,5 +251,85 @@ class OpenRouterCodec {
     if (raw is int) return raw;
     if (raw is num) return raw.round();
     return int.tryParse(raw?.toString() ?? '');
+  }
+}
+
+/// Merges OpenAI-compatible streamed `tool_calls` deltas by `index`.
+///
+/// OpenRouter (and Gemini through it) sends the function name in the first
+/// chunk and the JSON arguments as later nameless fragments. Treating each
+/// chunk as a finished call produced empty `web_search` queries.
+class OpenRouterToolCallAssembler {
+  final Map<int, _AssemblingCall> _calls = {};
+
+  void addFromCompletionJson(Map<String, dynamic> json) {
+    final deltas = OpenRouterCodec.toolCallDeltas(json);
+    if (deltas != null) addDeltas(deltas);
+  }
+
+  void addDeltas(dynamic raw) {
+    if (raw is! List) return;
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final index = map['index'] is num
+          ? (map['index'] as num).toInt()
+          : (_calls.isEmpty ? 0 : _calls.keys.reduce((a, b) => a > b ? a : b));
+      final existing = _calls.putIfAbsent(index, _AssemblingCall.new);
+      if (map['id'] != null) existing.id = map['id'].toString();
+      final function = map['function'] is Map
+          ? Map<String, dynamic>.from(map['function'] as Map)
+          : map;
+      final name = (function['name'] ?? map['name'])?.toString();
+      if (name != null && name.isNotEmpty) existing.name = name;
+      existing.addArguments(
+        function['arguments'] ??
+            function['args'] ??
+            map['arguments'] ??
+            map['args'],
+      );
+    }
+  }
+
+  List<OllamaToolCall> build() {
+    final keys = _calls.keys.toList()..sort();
+    return [
+      for (final key in keys)
+        if (_calls[key]!.name.isNotEmpty)
+          OllamaToolCall(
+            name: _calls[key]!.name,
+            arguments: _calls[key]!.parsedArguments(),
+          ),
+    ];
+  }
+
+  void clear() => _calls.clear();
+}
+
+class _AssemblingCall {
+  String name = '';
+  String id = '';
+  String argumentsJson = '';
+  Map<String, dynamic>? argumentsMap;
+
+  void addArguments(dynamic args) {
+    if (args == null) return;
+    if (args is String) {
+      argumentsJson += args;
+      return;
+    }
+    if (args is Map) {
+      argumentsMap = Map<String, dynamic>.from(args);
+    }
+  }
+
+  Map<String, dynamic> parsedArguments() {
+    if (argumentsJson.isNotEmpty) {
+      return OllamaToolCall.parseArguments(argumentsJson);
+    }
+    if (argumentsMap != null) {
+      return OllamaToolCall.normalizeSearchArgs(argumentsMap!);
+    }
+    return {};
   }
 }

@@ -77,8 +77,8 @@ void main() {
     (tester) async {
       _requestGate = Completer<void>();
 
-      Hive.box('settings').put('serverMode', 'local');
-      Hive.box('settings').put('serverAddress', 'http://localhost:11434');
+      Hive.box('settings').put('serverMode', 'cloud');
+      Hive.box('settings').put('cloudApiKey', 'test-key');
 
       // Mounting triggers the initial connection check, whose request stays
       // parked on the gate.

@@ -903,7 +903,7 @@ class SearchAgent {
         planned.add(_Planned.unknown(call.name));
         continue;
       }
-      final query = (call.arguments['query']?.toString() ?? '').trim();
+      final query = OllamaToolCall.searchQuery(call.arguments);
       if (query.isEmpty) {
         planned.add(_Planned.emptyQuery());
         continue;

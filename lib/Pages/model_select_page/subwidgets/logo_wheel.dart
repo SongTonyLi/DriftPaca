@@ -15,10 +15,12 @@ class WheelNode {
   final String asset;
   final Color accent;
   final bool tinted; // draw the logo tinted to the foreground (mono/fallback)
+  final String? label; // company name shown under the logo at the notch
   const WheelNode({
     required this.asset,
     required this.accent,
     this.tinted = false,
+    this.label,
   });
 }
 
@@ -91,7 +93,7 @@ class _LogoWheelState extends State<LogoWheel>
     _rotation.value = widget.initialIndex * _step;
     _lastDetent = widget.initialIndex;
     _entrance = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 720));
+        vsync: this, duration: const Duration(milliseconds: 920));
   }
 
   @override
@@ -130,8 +132,11 @@ class _LogoWheelState extends State<LogoWheel>
     }
   }
 
+  // Weighted ring settle: quick into the detent, then a short overshoot rest.
+  static const _settle = Cubic(0.18, 0.92, 0.22, 1.08);
+
   void _onSpinTick() {
-    final t = Curves.decelerate.transform(_spin.value);
+    final t = _settle.transform(_spin.value.clamp(0.0, 1.0));
     _setRotation(lerpDouble(_animBegin, _animEnd, t)!);
   }
 
@@ -149,7 +154,7 @@ class _LogoWheelState extends State<LogoWheel>
     }
     _animBegin = begin;
     _animEnd = target;
-    final secs = (dist / speed.clamp(2.0, 32.0)).clamp(0.28, 1.1);
+    final secs = (dist / speed.clamp(1.4, 20.0)).clamp(0.46, 1.35);
     _spin
       ..duration = Duration(milliseconds: (secs * 1000).round())
       ..forward(from: 0);
@@ -243,9 +248,13 @@ class _LogoWheelState extends State<LogoWheel>
             animation: _entrance,
             builder: (context, child) {
               final e = Curves.easeOutCubic.transform(_entrance.value);
+              final unwind = (1.0 - e) * 0.38;
               return Opacity(
                 opacity: e,
-                child: Transform.scale(scale: 0.9 + 0.1 * e, child: child),
+                child: Transform.rotate(
+                  angle: unwind,
+                  child: Transform.scale(scale: 0.82 + 0.18 * e, child: child),
+                ),
               );
             },
             child: AnimatedBuilder(
@@ -264,15 +273,18 @@ class _LogoWheelState extends State<LogoWheel>
     final ringR = holeR + (half - holeR) * 0.56;
     const topAngle = -math.pi / 2;
 
-    // Even spacing along the ring; size logos so neighbours never overlap, and
-    // only render logos within a small arc of the notch — the rest are quiet
-    // brand-coloured dots, so a long model list reads as a calm ring of dots
-    // instead of a pile-up of logos.
-    final spacing = (2 * math.pi * ringR) / math.max(1, _n);
-    final rawLogo = math.min(widget.diameter * 0.15, spacing * 0.9);
-    final logoSize = rawLogo < 20.0 ? 20.0 : rawLogo;
-    final dotSize = (widget.diameter * 0.028).clamp(6.0, 11.0).toDouble();
-    final topArc = _step * 2.5;
+    // Size logos for a comfortable visual density, not the raw catalog length.
+    // Large lists still have one detent per node, but painted dots are thinned
+    // so neighbours never fuse into a compacted belt.
+    final circ = 2 * math.pi * ringR;
+    final visualN = math.min(_n, 24);
+    final spacing = circ / math.max(1, visualN);
+    final logoSize = math.min(widget.diameter * 0.15, math.max(28.0, spacing * 0.72));
+    final dotSize = (widget.diameter * 0.028).clamp(7.0, 11.0).toDouble();
+    final minDotGap = dotSize * 2.3;
+    final maxDots = (circ / minDotGap).floor().clamp(12, 28);
+    final stride = _n <= maxDots ? 1 : (_n / maxDots).ceil();
+    final topArc = math.max(_step * 2.5, 0.55);
 
     final rotation = _rotation.value;
     final children = <Widget>[];
@@ -295,30 +307,60 @@ class _LogoWheelState extends State<LogoWheel>
         if (w > 0.4) {
           children.add(_dot(cx, cy, dotSize, node, depth * w));
         }
+        final label = node.label;
+        final labelH = (label == null || label.isEmpty) ? 0.0 : 18.0;
+        final boxW = math.max(logoSize, 72.0);
         children.add(Positioned(
-          left: cx - logoSize / 2,
+          left: cx - boxW / 2,
           top: cy - logoSize / 2,
-          width: logoSize,
-          height: logoSize,
+          width: boxW,
+          height: logoSize + labelH + 4,
           child: Opacity(
             opacity: logoOpacity,
-            child: Transform.scale(
-              scale: scale,
-              child: GestureDetector(
-                onTap: () => _selectIndex(i),
-                child: BrandNode(
-                  asset: node.asset,
-                  accent: node.accent,
-                  tinted: node.tinted,
-                  size: logoSize,
-                  prominence: depth,
+            child: Transform.translate(
+              offset: Offset(0, 8 * w),
+              child: Transform.scale(
+                scale: scale,
+                child: GestureDetector(
+                  onTap: () => _selectIndex(i),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      BrandNode(
+                        asset: node.asset,
+                        accent: node.accent,
+                        tinted: node.tinted,
+                        size: logoSize,
+                        prominence: depth,
+                      ),
+                      if (label != null && label.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.35,
+                            height: 1.05,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ));
-      } else {
-        // Everything else is a quiet dot.
+      } else if (i % stride == 0) {
+        // Quiet dots, thinned so a huge catalog cannot compact the ring.
         children.add(_dot(cx, cy, dotSize, node, 0.25 + 0.45 * depth));
       }
     }

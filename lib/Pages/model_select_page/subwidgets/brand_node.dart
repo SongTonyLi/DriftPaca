@@ -41,7 +41,9 @@ class BrandNode extends StatelessWidget {
     // read in every mode. Real brand logos keep their own colours.
     final tint = tinted ? cs.onSurface.withValues(alpha: 0.72) : null;
 
-    return Container(
+    return Transform.scale(
+      scale: 0.88 + 0.14 * p,
+      child: Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
@@ -67,6 +69,7 @@ class BrandNode extends StatelessWidget {
               tint == null ? null : ColorFilter.mode(tint, BlendMode.srcIn),
         ),
       ),
+    ),
     );
   }
 }

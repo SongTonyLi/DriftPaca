@@ -844,19 +844,62 @@ class OllamaService {
 
   Stream<OllamaMessage> _processOpenRouterStream(Stream<List<int>> stream) async* {
     String buffer = '';
+    final assembler = OpenRouterToolCallAssembler();
     await for (final chunk in stream.transform(utf8.decoder)) {
       buffer += chunk;
       final lines = buffer.split('\n');
       buffer = lines.removeLast();
       for (final line in lines) {
-        final message = OpenRouterCodec.parseSseLine(line);
+        final message = _consumeOpenRouterSseLine(line, assembler);
         if (message != null) yield message;
       }
     }
     if (buffer.trim().isNotEmpty) {
-      final message = OpenRouterCodec.parseSseLine(buffer);
+      final message = _consumeOpenRouterSseLine(buffer, assembler);
       if (message != null) yield message;
     }
+    final leftover = assembler.build();
+    if (leftover.isNotEmpty) {
+      yield OllamaMessage(
+        '',
+        role: OllamaMessageRole.assistant,
+        toolCalls: leftover,
+        done: true,
+      );
+    }
+  }
+
+  OllamaMessage? _consumeOpenRouterSseLine(
+    String line,
+    OpenRouterToolCallAssembler assembler,
+  ) {
+    final json = OpenRouterCodec.decodeSseJson(line);
+    if (json == null) return OpenRouterCodec.parseSseLine(line);
+    assembler.addFromCompletionJson(json);
+    final message = OpenRouterCodec.parseCompletion(json);
+    if (message.done == true) {
+      final built = assembler.build();
+      assembler.clear();
+      if (built.isEmpty) return message;
+      return OllamaMessage(
+        message.content,
+        role: message.role,
+        thinking: message.thinking,
+        toolCalls: built,
+        model: message.model,
+        done: true,
+      );
+    }
+    if (message.toolCalls != null) {
+      return OllamaMessage(
+        message.content,
+        role: message.role,
+        thinking: message.thinking,
+        model: message.model,
+        done: false,
+      );
+    }
+    return message;
   }
 
   Future<void> createModel(

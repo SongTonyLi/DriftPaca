@@ -131,6 +131,68 @@ void main() {
     expect(requests[1].transcript[1].toolName, 'web_search');
   });
 
+  test('OpenRouter-style q alias is treated as the search query', () async {
+    final started = <String>[];
+    var turn = 0;
+    final outcome = await agent(
+      streamTurn: (req) {
+        turn++;
+        if (turn == 1) {
+          return Stream.fromIterable([
+            OllamaMessage(
+              '',
+              role: OllamaMessageRole.assistant,
+              toolCalls: [
+                const OllamaToolCall(
+                  name: 'web_search',
+                  arguments: {'q': 'current weather Bellevue WA'},
+                ),
+              ],
+            ),
+          ]);
+        }
+        return Stream.fromIterable([answerChunk('rainy')]);
+      },
+    ).run(
+      history: history,
+      listener: SearchAgentListener(onSearchStart: started.add),
+    );
+
+    expect(started, ['current weather Bellevue WA']);
+    expect(outcome.searchCount, 1);
+  });
+
+  test('empty web_search arguments are skipped with a clear reason', () async {
+    final skipped = <String>[];
+    var turn = 0;
+    final outcome = await agent(
+      streamTurn: (req) {
+        turn++;
+        if (turn == 1) {
+          return Stream.fromIterable([
+            OllamaMessage(
+              '',
+              role: OllamaMessageRole.assistant,
+              toolCalls: [
+                const OllamaToolCall(name: 'web_search', arguments: {}),
+              ],
+            ),
+          ]);
+        }
+        return Stream.fromIterable([answerChunk('fallback')]);
+      },
+    ).run(
+      history: history,
+      listener: SearchAgentListener(
+        onSearchSkipped: (q, reason) => skipped.add(reason),
+      ),
+    );
+
+    expect(outcome.searchCount, 0);
+    expect(skipped.single, contains('No query provided'));
+    expect(outcome.content, 'fallback');
+  });
+
   test('two sequential searches accumulate source ids 1 then 2', () async {
     final requests = <SearchAgentRequest>[];
     var turn = 0;

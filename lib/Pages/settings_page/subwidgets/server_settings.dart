@@ -1,18 +1,10 @@
-import 'dart:convert';
-import 'dart:io';
-import 'dart:isolate';
-
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:http/http.dart' as http;
 import 'package:hive/hive.dart';
 import 'package:llamaseek/Constants/memory_constants.dart';
-import 'package:llamaseek/Extensions/markdown_stylesheet_extension.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_request_state.dart';
 import 'package:llamaseek/Widgets/model_selection_bottom_sheet.dart';
-import 'package:llamaseek/Widgets/ollama_bottom_sheet_header.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 class ServerSettings extends StatefulWidget {
   final bool autoFocusServerAddress;
@@ -26,25 +18,25 @@ class ServerSettings extends StatefulWidget {
 class _ServerSettingsState extends State<ServerSettings> {
   final _settingsBox = Hive.box('settings');
 
-  final _serverAddressController = TextEditingController();
   final _apiKeyController = TextEditingController();
   final _openRouterApiKeyController = TextEditingController();
 
-  OllamaRequestState _requestState = OllamaRequestState.uninitialized;
   OllamaRequestState _cloudRequestState = OllamaRequestState.uninitialized;
   OllamaRequestState _openRouterRequestState = OllamaRequestState.uninitialized;
-  get _isLoading => _requestState == OllamaRequestState.loading;
   get _isCloudLoading => _cloudRequestState == OllamaRequestState.loading;
   get _isOpenRouterLoading =>
       _openRouterRequestState == OllamaRequestState.loading;
 
-  String? _serverAddressErrorText;
   String? _cloudErrorText;
   String? _openRouterErrorText;
   bool _obscureApiKey = true;
   bool _obscureOpenRouterApiKey = true;
 
-  String get _serverMode => _settingsBox.get('serverMode', defaultValue: 'local');
+  String get _serverMode {
+    final mode = _settingsBox.get('serverMode', defaultValue: 'cloud');
+    if (mode == 'local' || mode == 'openwebui') return 'cloud';
+    return mode;
+  }
 
   @override
   void initState() {
@@ -54,15 +46,13 @@ class _ServerSettingsState extends State<ServerSettings> {
   }
 
   _initialize() {
-    final serverAddress = _settingsBox.get('serverAddress');
-    final cloudApiKey = _settingsBox.get('cloudApiKey');
-
-    if (serverAddress != null) {
-      _serverAddressController.text = serverAddress;
-      if (_serverMode == 'local') {
-        _handleConnectButton(silent: true);
-      }
+    final storedMode = _settingsBox.get('serverMode', defaultValue: 'cloud');
+    if (storedMode == 'local' || storedMode == 'openwebui') {
+      _settingsBox.put('serverMode', 'cloud');
+      _settingsBox.put('isCloudMode', true);
     }
+
+    final cloudApiKey = _settingsBox.get('cloudApiKey');
 
     if (cloudApiKey != null) {
       _apiKeyController.text = cloudApiKey;
@@ -82,7 +72,6 @@ class _ServerSettingsState extends State<ServerSettings> {
 
   @override
   void dispose() {
-    _serverAddressController.dispose();
     _apiKeyController.dispose();
     _openRouterApiKeyController.dispose();
 
@@ -111,105 +100,18 @@ class _ServerSettingsState extends State<ServerSettings> {
         ),
         const SizedBox(height: 16),
         _ServerModeControl(
-          mode: _serverMode == 'openwebui' ? 'local' : _serverMode,
+          mode: _serverMode == 'openrouter' ? 'openrouter' : 'cloud',
           onChanged: _setServerMode,
         ),
         const SizedBox(height: 16),
-        if (_serverMode == 'cloud')
-          _buildCloudSettings(context)
-        else if (_serverMode == 'openrouter')
+        if (_serverMode == 'openrouter')
           _buildOpenRouterSettings(context)
         else
-          _buildLocalSettings(context),
+          _buildCloudSettings(context),
         const SizedBox(height: 16),
         Text('Memory Model', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
         _buildMemoryModelSelector(context),
-      ],
-    );
-  }
-
-  Widget _buildLocalSettings(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          autofocus: widget.autoFocusServerAddress,
-          controller: _serverAddressController,
-          keyboardType: TextInputType.url,
-          onChanged: (_) {
-            setState(() {
-              _serverAddressErrorText = null;
-              _requestState = OllamaRequestState.uninitialized;
-            });
-          },
-          decoration: InputDecoration(
-            labelText: 'Ollama Server Address',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            errorText: _serverAddressErrorText,
-            suffixIcon: IconButton(
-              icon: Icon(Icons.info_outline),
-              onPressed: () => _showOllamaInfoBottomSheet(context),
-            ),
-          ),
-          onTapOutside: (PointerDownEvent event) {
-            FocusManager.instance.primaryFocus?.unfocus();
-          },
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.4),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
-            ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 16,
-                color: Theme.of(context).colorScheme.onSecondaryContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Your conversations will be sent to the Ollama server you configure. No data is collected by DriftPaca.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSecondaryContainer,
-                        height: 1.4,
-                      ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: Wrap(
-            spacing: 8.0,
-            runSpacing: 8.0,
-            alignment: (Platform.isAndroid || Platform.isIOS)
-                ? WrapAlignment.spaceEvenly
-                : WrapAlignment.spaceBetween,
-            children: [
-              ElevatedButton(
-                onPressed: _isLoading ? null : _handleSearchLocalNetwork,
-                child: const Text('Search Local Network'),
-              ),
-              ElevatedButton(
-                onPressed: _isLoading ? null : _handleConnectButton,
-                child: _ConnectionStatusIndicator(
-                  color: _connectionStatusColor,
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -259,19 +161,6 @@ class _ServerSettingsState extends State<ServerSettings> {
       onConnect: () => _handleOpenRouterConnectWithConsent(context),
       statusColor: _openRouterConnectionStatusColor,
     );
-  }
-
-  Color get _connectionStatusColor {
-    switch (_requestState) {
-      case OllamaRequestState.error:
-        return Colors.red;
-      case OllamaRequestState.loading:
-        return Colors.orange;
-      case OllamaRequestState.success:
-        return Colors.green;
-      case OllamaRequestState.uninitialized:
-        return Colors.grey;
-    }
   }
 
   Color get _cloudConnectionStatusColor {
@@ -461,104 +350,6 @@ class _ServerSettingsState extends State<ServerSettings> {
     }
   }
 
-  _handleConnectButton({bool silent = false}) async {
-    setState(() {
-      _serverAddressErrorText = null;
-      if (!silent) {
-        _requestState = OllamaRequestState.loading;
-      }
-    });
-
-    try {
-      // Validate the server address.
-      final newAddress = _validateServerAddress(_serverAddressController.text);
-      // Establish a connection to the server.
-      final result = await _establishServerConnection(Uri.parse(newAddress));
-
-      if (!mounted) return;
-
-      _requestState = result.$1;
-      _saveServerAddressWith(result);
-    } on OllamaException catch (error) {
-      _serverAddressErrorText = error.message;
-      _requestState = OllamaRequestState.error;
-    } catch (_) {
-      _serverAddressErrorText =
-          'Invalid URL format. Use: http(s)://<host>:<port>';
-      _requestState = OllamaRequestState.error;
-    } finally {
-      if (mounted) setState(() {});
-    }
-  }
-
-  void _saveServerAddressWith((OllamaRequestState, Uri) result) {
-    final state = result.$1;
-    final newAddress = result.$2.toString();
-
-    final currentAddress = _settingsBox.get('serverAddress');
-    if (state == OllamaRequestState.success && newAddress != currentAddress) {
-      _settingsBox.put('serverAddress', newAddress);
-    }
-  }
-
-  /// Establishes a connection to the Ollama server.
-  ///
-  /// Returns a tuple of the request state and the given server address.
-  static Future<(OllamaRequestState, Uri)> _establishServerConnection(
-    Uri serverAddress,
-  ) async {
-    try {
-      final response =
-          await http.get(serverAddress).timeout(const Duration(seconds: 2));
-
-      if (response.statusCode == 200) {
-        return (OllamaRequestState.success, serverAddress);
-      } else {
-        return (OllamaRequestState.error, serverAddress);
-      }
-    } catch (e) {
-      return (OllamaRequestState.error, serverAddress);
-    }
-  }
-
-  String _validateServerAddress(String address) {
-    if (address.isEmpty) {
-      throw OllamaException('Please enter a server address.');
-    }
-
-    final url = Uri.parse(address);
-
-    if (url.scheme.isEmpty) {
-      throw OllamaException(
-        'Please include the scheme. e.g. http://localhost:11434',
-      );
-    }
-
-    // If user don't include the scheme and just enter host and port like 'localhost:11434'.
-    // The parser will consider the host as the scheme, so host will be empty. But actually the scheme is empty.
-    if (url.scheme != 'http' && url.scheme != 'https' && url.host.isEmpty) {
-      throw OllamaException(
-        'Please include the scheme. e.g. http://localhost:11434',
-      );
-    }
-
-    if (url.host.isEmpty) {
-      throw OllamaException(
-        'Please include the host. e.g. http://localhost:11434',
-      );
-    }
-
-    if (url.scheme != 'http' && url.scheme != 'https') {
-      throw OllamaException(
-        'Invalid scheme. Only http and https are supported.',
-      );
-    }
-
-    final String formattedAddress =
-        "${url.scheme}://${url.host}${url.hasPort ? ":${url.port}" : ""}${url.path}";
-    return formattedAddress;
-  }
-
   Widget _buildMemoryModelSelector(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final currentModel = _settingsBox.get('memoryModel', defaultValue: MemoryConstants.defaultModel) as String;
@@ -615,84 +406,10 @@ class _ServerSettingsState extends State<ServerSettings> {
       setState(() {});
     }
   }
-
-  void _showOllamaInfoBottomSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (BuildContext context) {
-        return _OllamaInfoBottomSheet();
-      },
-    );
-  }
-
-  void _handleSearchLocalNetwork() async {
-    setState(() {
-      _serverAddressErrorText = null;
-      _requestState = OllamaRequestState.loading;
-    });
-
-    try {
-      final result = await Isolate.run(() => _searchLocalNetwork());
-      final foundAddress = result.$2.toString();
-
-      if (!mounted) return;
-
-      // Update the server address text field with the found address.
-      _serverAddressController.text = foundAddress;
-
-      _requestState = result.$1;
-      _saveServerAddressWith(result);
-    } on OllamaException catch (e) {
-      _serverAddressErrorText = e.message;
-      _requestState = OllamaRequestState.error;
-    } catch (e) {
-      _serverAddressErrorText = 'Something went wrong while searching.';
-      _requestState = OllamaRequestState.error;
-    } finally {
-      if (mounted) setState(() {});
-    }
-  }
-
-  static Future<(OllamaRequestState, Uri)> _searchLocalNetwork() async {
-    final networkInterfaces = await NetworkInterface.list(
-      includeLoopback: true,
-      type: InternetAddressType.IPv4,
-    );
-
-    final futures = <Future<(OllamaRequestState, Uri)>>[];
-    for (var interface in networkInterfaces) {
-      for (var address in interface.addresses) {
-        if (address.isLoopback) {
-          final url = Uri.parse('http://${address.address}:11434');
-          futures.add(_establishServerConnection(url));
-        } else {
-          final segments = address.address.split('.');
-          for (int i = 1; i < 255; i++) {
-            final url = Uri.parse(
-              'http://${segments[0]}.${segments[1]}.${segments[2]}.$i:11434',
-            );
-            futures.add(_establishServerConnection(url));
-          }
-        }
-      }
-    }
-
-    final results = await Future.wait(futures);
-
-    final result = results.firstWhere(
-      (result) => result.$1 == OllamaRequestState.success,
-      orElse: () =>
-          throw OllamaException('No Ollama server found on the local network.'),
-    );
-
-    return result;
-  }
 }
 
-/// Three-way Local / Cloud / OpenRouter control, matched to Themes'
-/// Light / Dark / Auto segmented button: 18px icons, compact density,
-/// full-width. Icons drop below 348pt so "OpenRouter" still fits an
-/// iPhone SE (320pt) with the settings page's 16px padding.
+/// Ollama / OpenRouter control, matched to Themes' Light / Dark / Auto
+/// segmented button: 18px icons, compact density, full-width.
 class _ServerModeControl extends StatelessWidget {
   final String mode;
   final ValueChanged<String> onChanged;
@@ -720,20 +437,12 @@ class _ServerModeControl extends StatelessWidget {
             ),
             segments: [
               ButtonSegment(
-                value: 'local',
-                tooltip: 'Local Ollama',
-                icon: showIcons
-                    ? const Icon(Icons.dns_outlined, size: 18)
-                    : null,
-                label: const Text('Local'),
-              ),
-              ButtonSegment(
                 value: 'cloud',
-                tooltip: 'Ollama Cloud',
+                tooltip: 'Ollama',
                 icon: showIcons
                     ? const Icon(Icons.cloud_outlined, size: 18)
                     : null,
-                label: const Text('Cloud'),
+                label: const Text('Ollama'),
               ),
               ButtonSegment(
                 value: 'openrouter',
@@ -881,37 +590,6 @@ class _ConnectionStatusIndicator extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _OllamaInfoBottomSheet extends StatelessWidget {
-  const _OllamaInfoBottomSheet();
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      bottom: false,
-      minimum: EdgeInsets.all(16.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          OllamaBottomSheetHeader(title: 'What is Ollama?'),
-          Divider(),
-          Expanded(
-            child: ListView(
-              children: [
-                MarkdownBody(
-                  data:
-                      "Ollama is a free platform that enables you to run advanced large language models (LLMs) like Llama 3.3, Phi 3, Mistral, Gemma 2, and more directly on your local machine. This setup enhances privacy, security, and control over your AI interactions. Ollama also allows you to customize and create your own models.\n\nTo get started with Ollama, visit their official website: [ollama.com](https://ollama.com). Here, you can explore various models and download the platform to begin using Ollama.",
-                  styleSheet: context.markdownStyleSheet,
-                  onTapLink: (_, href, __) => launchUrlString(href!),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

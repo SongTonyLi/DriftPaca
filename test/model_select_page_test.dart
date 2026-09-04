@@ -242,4 +242,55 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('x-ai/grok-4'), findsWidgets);
   });
+
+  testWidgets('large OpenRouter catalog groups the wheel by brand', (tester) async {
+    _phoneSurface(tester);
+    final models = [
+      for (var i = 0; i < 12; i++) _mk('openai/gpt-$i', 'openai'),
+      for (var i = 0; i < 12; i++) _mk('anthropic/claude-$i', 'anthropic'),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      home: ModelSelectPage(
+        models: models,
+        currentModelName: 'openai/gpt-0',
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final wheel = tester.widget<LogoWheel>(find.byType(LogoWheel));
+    expect(wheel.nodes, hasLength(2));
+    expect(find.text('openai/gpt-0'), findsWidgets);
+    expect(find.text('gpt-3'), findsOneWidget);
+
+    await tester.tap(find.text('gpt-3'));
+    await tester.pump();
+    expect(find.text('openai/gpt-3'), findsWidgets);
+  });
+
+  testWidgets('wheel shows company names and groups same-brand models', (tester) async {
+    _phoneSurface(tester);
+    final models = [
+      _mk('qwen3:8b', 'qwen', think: true),
+      _mk('qwen3:14b', 'qwen', think: true),
+      _mk('llama3.2:3b', 'llama', vision: true),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      home: ModelSelectPage(
+        models: models,
+        currentModelName: 'qwen3:14b',
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final wheel = tester.widget<LogoWheel>(find.byType(LogoWheel));
+    expect(wheel.nodes, hasLength(2));
+    expect(wheel.nodes.map((n) => n.label), ['Qwen', 'Llama']);
+    expect(find.text('Qwen'), findsWidgets);
+    expect(find.text('qwen3:14b'), findsWidgets);
+    expect(find.text('qwen3:8b'), findsOneWidget);
+
+    await tester.tap(find.text('qwen3:8b'));
+    await tester.pump();
+    expect(find.text('qwen3:8b'), findsWidgets);
+  });
 }

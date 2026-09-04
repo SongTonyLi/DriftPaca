@@ -14,8 +14,8 @@ class _FakePathProvider extends PathProviderPlatform
 
 /// Frontend-design layout inspection for the OpenRouter settings surfaces.
 ///
-/// Asserts the three-way server control fits phone widths without overflow
-/// and that Cloud and OpenRouter key panels share the same form geometry.
+/// Asserts the Cloud / OpenRouter server control fits phone widths without
+/// overflow and that both key panels share the same form geometry.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -76,7 +76,7 @@ void main() {
     return overflows;
   }
 
-  testWidgets('three server segments fit a 320pt phone without overflow', (
+  testWidgets('cloud and openrouter segments fit a 320pt phone without overflow', (
     tester,
   ) async {
     final overflows = _captureOverflows(tester);
@@ -90,9 +90,10 @@ void main() {
     final segmented = tester.widget<SegmentedButton<String>>(
       find.byType(SegmentedButton<String>),
     );
-    expect(segmented.segments, hasLength(3));
-    expect(find.text('Local'), findsOneWidget);
-    expect(find.text('Cloud'), findsOneWidget);
+    expect(segmented.segments, hasLength(2));
+    expect(find.text('Local'), findsNothing);
+    expect(find.text('Cloud'), findsNothing);
+    expect(find.text('Ollama'), findsOneWidget);
     expect(find.text('OpenRouter'), findsOneWidget);
 
     final control = tester.getRect(find.byType(SegmentedButton<String>));
@@ -103,15 +104,6 @@ void main() {
     );
     expect(overflows, isEmpty);
     expect(tester.takeException(), isNull);
-
-    // iPhone SE content width is 288pt — icons drop so the labels fit.
-    expect(
-      find.descendant(
-        of: find.byType(SegmentedButton<String>),
-        matching: find.byIcon(Icons.dns_outlined),
-      ),
-      findsNothing,
-    );
   });
 
   testWidgets('iPhone 14 width keeps 18px mode icons like Themes', (
@@ -144,8 +136,6 @@ void main() {
   ) async {
     await pumpPhone(tester, const ServerSettings());
 
-    await tester.tap(find.text('Cloud'));
-    await tester.pump();
     final cloudField = tester.getSize(find.byType(TextField));
     final cloudButton =
         tester.getSize(find.widgetWithText(ElevatedButton, 'Connect'));

@@ -16,20 +16,51 @@ class OllamaToolCall {
         : json;
     return OllamaToolCall(
       name: function['name']?.toString() ?? '',
-      arguments: _parseArguments(function['arguments']),
+      arguments: parseArguments(function['arguments'] ?? function['args']),
     );
   }
 
-  static Map<String, dynamic> _parseArguments(dynamic raw) {
-    if (raw is Map<String, dynamic>) return raw;
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    if (raw is String && raw.isNotEmpty) {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) return decoded;
-      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+  /// Parses OpenAI / Gemini tool arguments and lifts common query aliases
+  /// (`q`, `search_query`, a bare string) onto `query`.
+  static Map<String, dynamic> parseArguments(dynamic raw) {
+    if (raw is Map<String, dynamic>) return normalizeSearchArgs(raw);
+    if (raw is Map) return normalizeSearchArgs(Map<String, dynamic>.from(raw));
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) return normalizeSearchArgs(decoded);
+        if (decoded is Map) {
+          return normalizeSearchArgs(Map<String, dynamic>.from(decoded));
+        }
+        if (decoded is String && decoded.trim().isNotEmpty) {
+          return {'query': decoded.trim()};
+        }
+      } catch (_) {
+        return {'query': raw.trim()};
+      }
     }
     return {};
   }
+
+  static Map<String, dynamic> normalizeSearchArgs(Map<String, dynamic> args) {
+    if (_nonEmpty(args['query'])) return args;
+    const aliases = ['q', 'search_query', 'searchQuery', 'text', 'input'];
+    for (final key in aliases) {
+      if (_nonEmpty(args[key])) {
+        return {...args, 'query': args[key].toString().trim()};
+      }
+    }
+    if (args.length == 1 && _nonEmpty(args.values.single)) {
+      return {...args, 'query': args.values.single.toString().trim()};
+    }
+    return args;
+  }
+
+  static String searchQuery(Map<String, dynamic> arguments) =>
+      (normalizeSearchArgs(arguments)['query']?.toString() ?? '').trim();
+
+  static bool _nonEmpty(dynamic value) =>
+      value != null && value.toString().trim().isNotEmpty;
 
   Map<String, dynamic> toJson() => {
         'function': {

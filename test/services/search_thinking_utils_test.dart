@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
@@ -88,8 +89,7 @@ void main() {
             const LedgerEntryView(
               query: 'Vietnam GDP 2025',
               searched: true,
-              sourceIdStart: 1,
-              sourceIdEnd: 3,
+              ranges: [SourceIdRange(1, 3), SourceIdRange(11, 12)],
               excerpt: 'Vietnam GDP projected at 6.5% growth...',
             ),
             const LedgerEntryView(
@@ -117,13 +117,28 @@ void main() {
       expect(ledger.entries.length, 2);
       expect(ledger.entries[0].query, 'Vietnam GDP 2025');
       expect(ledger.entries[0].searched, isTrue);
-      expect(ledger.entries[0].sourceIdStart, 1);
-      expect(ledger.entries[0].sourceIdEnd, 3);
+      expect(ledger.entries[0].ranges,
+          [const SourceIdRange(1, 3), const SourceIdRange(11, 12)]);
+      expect(ledger.entries[0].sourceCount, 5);
       expect(ledger.entries[0].excerpt, contains('6.5%'));
       expect(ledger.entries[1].query, 'Vietnam GDP forecast 2026');
       expect(ledger.entries[1].searched, isFalse);
-      expect(ledger.entries[1].sourceIdStart, isNull);
+      expect(ledger.entries[1].ranges, isEmpty);
       expect(ledger.terminationReason, 'converged');
+    });
+
+    test('decodes a ledger persisted with the single sourceIdStart/End pair', () {
+      // Written by every build before a sub-goal could carry evidence from
+      // more than one search. Those chats still have to render their chip.
+      const legacy =
+          '<!--SEARCH_DATA:W3sidHlwZSI6ImxlZGdlciIsIm9iamVjdGl2ZSI6Ik9sZCBnb2FsIiwiZW50cmllcyI6W3sicXVlcnkiOiJvbGQgcXVlcnkiLCJzZWFyY2hlZCI6dHJ1ZSwic291cmNlSWRTdGFydCI6NCwic291cmNlSWRFbmQiOjZ9XX1d-->\n';
+
+      final decoded = decodeSearchSegments(legacy);
+
+      final ledger = decoded!.single as ResearchLedgerSegment;
+      expect(ledger.objective, 'Old goal');
+      expect(ledger.entries.single.ranges, [const SourceIdRange(4, 6)]);
+      expect(ledger.entries.single.sourceCount, 3);
     });
 
     test('decodes a legacy persisted blob unchanged', () {

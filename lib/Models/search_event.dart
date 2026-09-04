@@ -1,3 +1,5 @@
+import 'package:llamaseek/Models/research_ledger.dart';
+
 /// Status of a single URL fetch. `state` is mutable so the view model
 /// can flip an entry from `pending` → `success`/`failed` in place as
 /// fetches resolve, without rebuilding the whole list. `title` is the
@@ -113,17 +115,26 @@ class ResearchLedgerSegment extends MessageSegment {
 class LedgerEntryView {
   final String query;
   final bool searched;
-  final int? sourceIdStart;
-  final int? sourceIdEnd;
+
+  /// One entry per executed search that returned sources — see
+  /// `ResearchLedger.recordEvidence`. A list rather than a single pair
+  /// because a sub-goal searched twice cites two id blocks with other
+  /// sub-goals' ids in between; collapsing them to one span would claim
+  /// evidence this sub-goal never gathered.
+  final List<SourceIdRange> ranges;
   final String? excerpt;
 
   const LedgerEntryView({
     required this.query,
     required this.searched,
-    this.sourceIdStart,
-    this.sourceIdEnd,
+    this.ranges = const [],
     this.excerpt,
   });
+
+  /// Total sources across every range — what "N sources" means for this
+  /// sub-goal, and what a run's search tally is summed from.
+  int get sourceCount =>
+      ranges.fold<int>(0, (sum, range) => sum + range.count);
 }
 
 class AnswerSegment extends MessageSegment {}

@@ -20,6 +20,7 @@ import 'package:url_launcher/url_launcher_string.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
 
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 
@@ -730,6 +731,16 @@ class _ResearchLedgerPanelState extends State<_ResearchLedgerPanel> {
     final searched = segment.entries.where((e) => e.searched).toList();
     final open = segment.entries.where((e) => !e.searched).toList();
 
+    // A finished run that never opened a single sub-goal did no research at
+    // all — the model answered straight from the chat. The panel exists to
+    // frame research; with nothing to frame it is just a heading, so it
+    // stays out of the way. Mid-run it still shows (entries are empty until
+    // the first round lands), because that is exactly when the reader most
+    // needs to see what the run is going after.
+    if (segment.entries.isEmpty && segment.terminationReason != null) {
+      return const SizedBox.shrink();
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Container(
@@ -830,7 +841,10 @@ class _LedgerBody extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant,
               height: 1.4,
             ),
-            maxLines: 2,
+            // Three, not two: a derived goal is one line, but the fallback
+            // when derivation fails is the user's raw message, and clipping
+            // that mid-clause is how this line stopped reading as a goal.
+            maxLines: 3,
             overflow: TextOverflow.ellipsis,
           ),
         if (searched.isNotEmpty) ...[
@@ -845,13 +859,58 @@ class _LedgerBody extends StatelessWidget {
           for (final entry in open)
             _LedgerEntryRow(entry: entry, searched: false),
         ],
-        if (segment.terminationReason != null) ...[
-          const SizedBox(height: 10),
+        const SizedBox(height: 10),
+        if (segment.terminationReason != null)
           _TerminationBanner(
             reason: segment.terminationReason!,
-            searchedCount: searched.length,
+            // Searches, not sub-goals: one sub-goal can be searched more
+            // than once, and counting entries under-reported a run by
+            // exactly the searches this panel had already failed to show.
+            searchedCount: searched.fold<int>(
+                0, (sum, entry) => sum + entry.ranges.length),
+          )
+        else
+          _NextStepLine(nextOpen: open.isEmpty ? null : open.first.query),
+      ],
+    );
+  }
+}
+
+/// What the run is about to do, shown while it is still going — the live
+/// counterpart to [_TerminationBanner], which replaces it once the run
+/// stops. Named off the ledger's own state rather than any prediction: the
+/// harness tells the model, every round, to close a still-open item next,
+/// so the first one is what it has asked for — not a guess about what the
+/// model will choose.
+class _NextStepLine extends StatelessWidget {
+  final String? nextOpen;
+
+  const _NextStepLine({required this.nextOpen});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.arrow_forward,
+            size: 14,
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            nextOpen == null
+                ? 'Next — drafting the answer'
+                : 'Next — researching "$nextOpen"',
+            style: TextStyle(
+              fontSize: 11.5,
+              fontStyle: FontStyle.italic,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
+        ),
       ],
     );
   }
@@ -896,13 +955,10 @@ class _LedgerEntryRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (searched && entry.sourceIdStart != null)
+          if (searched && entry.ranges.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 1, right: 6),
-              child: _SourceIdChip(
-                start: entry.sourceIdStart!,
-                end: entry.sourceIdEnd ?? entry.sourceIdStart!,
-              ),
+              child: _SourceIdChip(ranges: entry.ranges),
             )
           else
             Padding(
@@ -926,20 +982,24 @@ class _LedgerEntryRow extends StatelessWidget {
   }
 }
 
-/// Small pill showing the source id (or range) backing a searched entry —
-/// e.g. "3" or "3–5". Never renders the "[a]-[b]" bracket form: that
-/// syntax is reserved for citation markers the model reads and the
-/// citation parser scans for (see SearchAgent's compaction/ledger text).
+/// Small pill showing the source ids backing a searched entry — e.g. "3",
+/// "3–5", or "3–5 · 12–16" when the sub-goal was searched more than once.
+/// The ranges are listed rather than merged into one span because the ids
+/// between them belong to other sub-goals. Never renders the "[a]-[b]"
+/// bracket form: that syntax is reserved for citation markers the model
+/// reads and the citation parser scans for (see SearchAgent's
+/// compaction/ledger text).
 class _SourceIdChip extends StatelessWidget {
-  final int start;
-  final int end;
+  final List<SourceIdRange> ranges;
 
-  const _SourceIdChip({required this.start, required this.end});
+  const _SourceIdChip({required this.ranges});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final label = start == end ? '$start' : '$start–$end';
+    final label = ranges
+        .map((r) => r.start == r.end ? '${r.start}' : '${r.start}–${r.end}')
+        .join(' · ');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
@@ -998,6 +1058,16 @@ class _TerminationBanner extends StatelessWidget {
   ({IconData icon, String text}) _presentation() {
     switch (reason) {
       case 'converged':
+        // Zero is its own case, not a degenerate plural: "findings gathered
+        // across 0 searches" claims research that never happened. The model
+        // answered from what it already knew, and saying so is the honest
+        // caption for a panel whose checklist is entirely unticked.
+        if (searchedCount == 0) {
+          return (
+            icon: Icons.check_circle_outline,
+            text: 'Answered without searching',
+          );
+        }
         final plural = searchedCount == 1 ? '' : 'es';
         return (
           icon: Icons.check_circle_outline,

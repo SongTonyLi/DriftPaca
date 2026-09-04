@@ -99,23 +99,52 @@ void main() {
     });
   });
 
-  group('ResearchLedger.markSearched', () {
-    test('is idempotent — the first evidence wins', () {
+  group('ResearchLedger.recordEvidence', () {
+    test('accumulates a second search\'s ids instead of discarding them', () {
+      // The dropped block is not hypothetical: a query close enough to
+      // group onto an existing sub-goal but not close enough to be refused
+      // runs for real and consumes ids. Under first-write-wins those ids
+      // vanished from the ledger — the panel showed …17-24 then 33-40, and
+      // the run under-reported its own searches.
       final ledger = ResearchLedger(objective: 'objective');
       final goal = ledger.upsert('Vietnam GDP 2024');
 
-      ledger.markSearched(goal,
+      ledger.recordEvidence(goal,
           sourceIdStart: 1, sourceIdEnd: 2, excerpt: 'first evidence');
       expect(goal.status, SubGoalStatus.searched);
-      expect(goal.sourceIdStart, 1);
-      expect(goal.sourceIdEnd, 2);
-      expect(goal.excerpt, 'first evidence');
 
-      ledger.markSearched(goal,
+      ledger.recordEvidence(goal,
           sourceIdStart: 5, sourceIdEnd: 6, excerpt: 'second evidence');
+
+      expect(goal.ranges,
+          [const SourceIdRange(1, 2), const SourceIdRange(5, 6)]);
+      // The opening evidence still identifies the sub-goal...
       expect(goal.sourceIdStart, 1);
       expect(goal.sourceIdEnd, 2);
+      // ...and the excerpt is still the first one, since there is no reason
+      // to prefer a later search's illustrative quote.
       expect(goal.excerpt, 'first evidence');
+    });
+
+    test('never records the same range twice', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      final goal = ledger.upsert('Vietnam GDP 2024');
+
+      ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 2);
+      ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 2);
+
+      expect(goal.ranges, hasLength(1));
+    });
+
+    test('takes the first non-empty excerpt, not merely the first call', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      final goal = ledger.upsert('Vietnam GDP 2024');
+
+      ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 2);
+      ledger.recordEvidence(goal,
+          sourceIdStart: 5, sourceIdEnd: 6, excerpt: 'late evidence');
+
+      expect(goal.excerpt, 'late evidence');
     });
   });
 
@@ -123,19 +152,34 @@ void main() {
     test('tracks two independent stall counters', () {
       final ledger = ResearchLedger(objective: 'objective');
       expect(ledger.roundsSinceProgress, 0);
-      expect(ledger.roundsSinceNewSubGoal, 0);
+      expect(ledger.roundsSinceCoverageGrew, 0);
 
-      ledger.recordRoundOutcome(madeProgress: false, openedNewSubGoal: false);
+      ledger.recordRoundOutcome(madeProgress: false, broadenedCoverage: false);
       expect(ledger.roundsSinceProgress, 1);
-      expect(ledger.roundsSinceNewSubGoal, 1);
+      expect(ledger.roundsSinceCoverageGrew, 1);
 
-      ledger.recordRoundOutcome(madeProgress: true, openedNewSubGoal: false);
+      ledger.recordRoundOutcome(madeProgress: true, broadenedCoverage: false);
       expect(ledger.roundsSinceProgress, 0);
-      expect(ledger.roundsSinceNewSubGoal, 2);
+      expect(ledger.roundsSinceCoverageGrew, 2);
 
-      ledger.recordRoundOutcome(madeProgress: false, openedNewSubGoal: true);
+      ledger.recordRoundOutcome(madeProgress: false, broadenedCoverage: true);
       expect(ledger.roundsSinceProgress, 1);
-      expect(ledger.roundsSinceNewSubGoal, 0);
+      expect(ledger.roundsSinceCoverageGrew, 0);
+    });
+  });
+
+  group('ResearchLedger.searchedSubGoalCount', () {
+    test('counts sub-goals with evidence, however many searches produced it', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      final searched = ledger.upsert('Vietnam GDP 2024');
+      ledger.upsert('Thailand tourism recovery 2024');
+      expect(ledger.searchedSubGoalCount, 0);
+
+      ledger.recordEvidence(searched, sourceIdStart: 1, sourceIdEnd: 2);
+      expect(ledger.searchedSubGoalCount, 1);
+
+      ledger.recordEvidence(searched, sourceIdStart: 9, sourceIdEnd: 10);
+      expect(ledger.searchedSubGoalCount, 1);
     });
   });
 
@@ -145,23 +189,78 @@ void main() {
       expect(ledger.render(), '');
     });
 
-    test('renders the objective, searched entries with source ids and excerpt, and open entries', () {
+    test('renders the goal, a ticked checklist with source ids and excerpt, and unticked items', () {
       final ledger = ResearchLedger(objective: 'find the GDP and tourism trend');
       final searchedGoal = ledger.upsert('Vietnam GDP 2024');
-      ledger.markSearched(searchedGoal,
+      ledger.recordEvidence(searchedGoal,
           sourceIdStart: 1, sourceIdEnd: 2, excerpt: 'GDP grew 5% in 2024');
       ledger.upsert('Thailand tourism recovery 2024');
 
       final rendered = ledger.render();
 
-      expect(rendered, contains('find the GDP and tourism trend'));
+      expect(rendered, contains('Goal: find the GDP and tourism trend'));
+      expect(rendered, contains('- [x] "Vietnam GDP 2024"'));
       expect(rendered, contains('[1]'));
       expect(rendered, contains('[2]'));
       expect(rendered, contains('GDP grew 5% in 2024'));
-      expect(rendered, contains('Still open:'));
-      expect(rendered, contains('Thailand tourism recovery 2024'));
+      expect(rendered, contains('- [ ] "Thailand tourism recovery 2024"'));
+      // The finish line has to be written down, or the model re-decides
+      // "am I done?" from scratch every round and keeps saying no.
+      expect(rendered, contains(ResearchLedger.stoppingRule));
       // The harness never claims a searched sub-goal was actually answered.
       expect(rendered, isNot(contains('established')));
+    });
+
+    test('lists every range a re-searched sub-goal gathered', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      final goal = ledger.upsert('TikTok new grad offer timing');
+      ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 8);
+      ledger.recordEvidence(goal, sourceIdStart: 25, sourceIdEnd: 32);
+
+      final rendered = ledger.render();
+
+      expect(rendered, contains('16 sources'));
+      expect(rendered, contains('[1][2][3][4][5][6][7][8]'));
+      expect(rendered, contains('[25][26][27][28][29][30][31][32]'));
+      // Merging into one span would claim ids 9-24, which belong to other
+      // sub-goals entirely.
+      expect(rendered, isNot(contains('[9]')));
+    });
+
+    test('renderBrief states the goal and stopping rule before any sub-goal exists', () {
+      // This is what reaches the model on the FIRST turn, where there is no
+      // transcript for the ledger to ride along on — and the first turn is
+      // the one that decides how much research the run does.
+      final ledger = ResearchLedger(objective: 'when does TikTok start '
+          'new-grad offer negotiations');
+
+      final brief = ledger.renderBrief();
+
+      expect(brief, contains('Goal: when does TikTok start'));
+      expect(brief, contains(ResearchLedger.stoppingRule));
+      expect(brief, isNot(contains('Checklist')));
+    });
+  });
+
+  group('ResearchLedger.userQuestion', () {
+    test('splits instances the user named even when the goal paraphrases them away', () {
+      // The derived goal is a model's restatement and may drop the years.
+      // The instance split has to keep working off what the user actually
+      // typed, or a four-year question collapses to one sub-goal again.
+      final ledger = ResearchLedger(
+        objective: 'find recent US inflation rates',
+        userQuestion: 'US inflation rate in 2023 and 2024?',
+      );
+      ledger.upsert('US inflation rate 2023');
+
+      expect(ledger.findMatch('US inflation rate 2024'), isNull);
+    });
+
+    test('defaults to the objective when no separate question is given', () {
+      final ledger = ResearchLedger(objective: 'US inflation in 2023 and 2024');
+      expect(ledger.userQuestion, 'US inflation in 2023 and 2024');
+      ledger.upsert('US inflation rate 2023');
+      expect(ledger.findMatch('US inflation rate 2024'), isNull);
     });
   });
 

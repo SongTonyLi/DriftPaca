@@ -593,8 +593,10 @@ class ChatPageViewModel extends ChangeNotifier {
             LedgerEntryView(
               query: goal.query,
               searched: goal.status == SubGoalStatus.searched,
-              sourceIdStart: goal.sourceIdStart,
-              sourceIdEnd: goal.sourceIdEnd,
+              // Copied, not aliased: the harness keeps mutating its own
+              // list as later searches land on this sub-goal, and an
+              // already-rendered entry must not change underneath the UI.
+              ranges: List<SourceIdRange>.unmodifiable(goal.ranges),
               excerpt: goal.excerpt,
             ),
         ];

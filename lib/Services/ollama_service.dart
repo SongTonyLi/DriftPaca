@@ -579,6 +579,10 @@ class OllamaService {
   Future<ModelCapabilities?> getCapabilities(String model) async {
     final cached = _capabilitiesCache[model];
     if (cached != null) return cached;
+    // OpenRouter capabilities come from /models. An uncached model is
+    // unknown; probing Ollama's /api/show here only adds a failed network
+    // round trip (or a 10-second timeout) before research can start.
+    if (_isOpenRouterMode) return null;
     final show = await _showModel(model);
     if (show != null && show.capabilities.isNotEmpty) {
       final caps = ModelCapabilities.fromList(show.capabilities);

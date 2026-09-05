@@ -6,6 +6,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:notification_centre/notification_centre.dart';
 
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Models/chat_configure_arguments.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
@@ -845,11 +846,33 @@ class ChatProvider extends ChangeNotifier {
     if (_messages.isEmpty) return null;
 
     final history = List<OllamaMessage>.from(_messages);
-    final conversationMemory =
-        await _memoryService.getConversationMemory(associatedChat.id);
-    final profile = associatedChat.isIncognito
-        ? null
-        : await _memoryService.getAgentMemory();
+    bool cancelled() => !_activeChatStreams.containsKey(associatedChat.id);
+
+    // Goal derivation is isolated from memory. Prepare the first turn's
+    // memory concurrently so the two model calls overlap instead of making
+    // the user wait for retrieval after the research goal appears.
+    final memoryPreparation = () async {
+      final (conversationMemory, profile) = await (
+        _memoryService.getConversationMemory(associatedChat.id),
+        associatedChat.isIncognito
+            ? Future<AgentMemory?>.value(null)
+            : _memoryService.getAgentMemory(),
+      ).wait;
+      final relevantContext = associatedChat.isIncognito || cancelled()
+          ? ''
+          : await _memoryService.selectRelevantContext(
+              history,
+              conversationSummary: conversationMemory?.summary,
+            );
+      return (
+        conversationMemory: conversationMemory,
+        profile: profile,
+        relevantContext: relevantContext,
+      );
+    }();
+    // Install an error handler now: the first turn awaits this same future
+    // and propagates failures, but cancellation may mean it never gets there.
+    memoryPreparation.ignore();
 
     final origPrompt = associatedChat.systemPrompt ?? '';
     final policy = toolPolicyInstruction();
@@ -889,8 +912,6 @@ class ChatProvider extends ChangeNotifier {
       notifyListeners();
       return streamingMessage!;
     }
-
-    bool cancelled() => !_activeChatStreams.containsKey(associatedChat.id);
 
     // The compaction budget means nothing unless it's tied to what this
     // chat's model can actually see — see SearchAgent.transcriptLimitsFor.
@@ -963,13 +984,8 @@ class ChatProvider extends ChangeNotifier {
         return parseCoverageGaps(buffer.toString());
       },
       streamTurn: (request) async* {
-        String relevantContext = '';
-        if (request.includeMemory && !associatedChat.isIncognito) {
-          relevantContext = await _memoryService.selectRelevantContext(
-            request.history,
-            conversationSummary: conversationMemory?.summary,
-          );
-        }
+        final memory = await memoryPreparation;
+        if (cancelled()) return;
         // The ledger rides along on tool messages, so it only reaches the
         // model from round 2 onward — after the turn that decides how the
         // run is shaped. Putting the same brief in the system prompt makes
@@ -989,9 +1005,9 @@ class ChatProvider extends ChangeNotifier {
         yield* _ollamaService.chatStream(
           request.history,
           chat: turnChat,
-          conversationMemory: conversationMemory,
-          profile: profile,
-          relevantContext: relevantContext,
+          conversationMemory: memory.conversationMemory,
+          profile: memory.profile,
+          relevantContext: request.includeMemory ? memory.relevantContext : '',
           extraMessages: request.transcript,
           tools: request.toolsEnabled
               ? const [OllamaToolDefinition.webSearch]

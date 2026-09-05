@@ -8,6 +8,18 @@ import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 
 void main() {
+  test('uncached OpenRouter capabilities do not probe an Ollama endpoint', () async {
+    final requests = <Uri>[];
+    final service = OllamaService(client: MockClient((request) async {
+      requests.add(request.url);
+      return http.Response('Not found', 404);
+    }))
+      ..isOpenRouterMode = true;
+
+    expect(await service.getCapabilities('openai/uncached-model'), isNull);
+    expect(requests, isEmpty, reason: 'An unknown capability must not block search startup on HTTP.');
+  });
+
   test('OpenRouter mode lists models from /api/v1/models with a bearer key',
       () async {
     late http.Request captured;

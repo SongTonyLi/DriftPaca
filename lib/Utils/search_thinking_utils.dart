@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 
 /// Separator between persisted search thinking and model thinking.
@@ -69,8 +70,10 @@ String encodeSearchSegments(List<MessageSegment> segments) {
             .map((e) => {
                   'query': e.query,
                   'searched': e.searched,
-                  if (e.sourceIdStart != null) 'sourceIdStart': e.sourceIdStart,
-                  if (e.sourceIdEnd != null) 'sourceIdEnd': e.sourceIdEnd,
+                  if (e.ranges.isNotEmpty)
+                    'ranges': [
+                      for (final r in e.ranges) [r.start, r.end]
+                    ],
                   if (e.excerpt != null) 'excerpt': e.excerpt,
                 })
             .toList(),
@@ -140,8 +143,7 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
                 ?.map((e) => LedgerEntryView(
                       query: e['query'] as String? ?? '',
                       searched: e['searched'] as bool? ?? false,
-                      sourceIdStart: e['sourceIdStart'] as int?,
-                      sourceIdEnd: e['sourceIdEnd'] as int?,
+                      ranges: _decodeRanges(e),
                       excerpt: e['excerpt'] as String?,
                     ))
                 .toList() ??
@@ -157,6 +159,24 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
   } catch (e) {
     return null;
   }
+}
+
+/// Reads a ledger entry's source ids, accepting both shapes: the current
+/// `ranges` list, and the single `sourceIdStart`/`sourceIdEnd` pair written
+/// before a sub-goal could carry evidence from more than one search. Chats
+/// persisted under the old shape keep rendering their citation chip.
+List<SourceIdRange> _decodeRanges(dynamic entry) {
+  final raw = entry['ranges'] as List?;
+  if (raw != null) {
+    return [
+      for (final r in raw)
+        if (r is List && r.length == 2 && r[0] is int && r[1] is int)
+          SourceIdRange(r[0] as int, r[1] as int),
+    ];
+  }
+  final start = entry['sourceIdStart'] as int?;
+  if (start == null) return const [];
+  return [SourceIdRange(start, entry['sourceIdEnd'] as int? ?? start)];
 }
 
 /// Strips the search data header from thinking text for display.

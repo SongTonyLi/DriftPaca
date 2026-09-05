@@ -10,11 +10,23 @@ class SearchAgentRequest {
   final bool includeMemory;
   final bool toolsEnabled;
 
+  /// The run's goal, checklist and stopping rule (see
+  /// [ResearchLedger.renderBrief]) for the caller to put in front of the
+  /// model on EVERY turn — including the first, which has no transcript and
+  /// therefore no tool message for the ledger to ride along on.
+  ///
+  /// That first turn is where a run's shape is decided: a model that plans
+  /// its research against a written finish line stops when it reaches one,
+  /// where a model handed only a chat message keeps re-deciding whether it
+  /// is done and keeps concluding it isn't.
+  final String researchBrief;
+
   const SearchAgentRequest({
     required this.history,
     required this.transcript,
     required this.includeMemory,
     required this.toolsEnabled,
+    this.researchBrief = '',
   });
 }
 
@@ -165,7 +177,7 @@ class SearchAgent {
   static const defaultRoundBatchCap = 2;
 
   /// Consecutive unproductive rounds (see run()'s madeProgress /
-  /// openedNewSubGoal) tolerated before the loop forces an answer.
+  /// broadenedCoverage) tolerated before the loop forces an answer.
   static const defaultStallLimit = 2;
 
   /// Max searches run against any single research sub-goal (a ledger
@@ -267,6 +279,19 @@ class SearchAgent {
   /// Deliberately separate from [streamTurn]: this is an isolated,
   /// tool-less call that must not pollute the research transcript.
   final Future<List<String>> Function(CoverageRequest)? assessCoverage;
+
+  /// Turns the user's raw message into a research goal and a checklist,
+  /// once, before the first turn. Optional: when null the run uses the
+  /// message verbatim as its objective with no pre-seeded sub-goals, which
+  /// is the behavior every caller had before this existed.
+  ///
+  /// Also isolated from [streamTurn] for the same reason [assessCoverage]
+  /// is — it must not leave anything in the research transcript.
+  ///
+  /// A failure here is never fatal: the raw message is a workable objective,
+  /// just a worse one, and losing an entire research run because a framing
+  /// call timed out would be an absurd trade. See [_deriveGoal].
+  final Future<ResearchGoal?> Function(String userQuestion)? deriveGoal;
   final int maxCoverageChecks;
   final int maxSearches;
   final int maxRounds;
@@ -280,6 +305,7 @@ class SearchAgent {
     required this.streamTurn,
     required this.search,
     this.assessCoverage,
+    this.deriveGoal,
     this.maxCoverageChecks = defaultMaxCoverageChecks,
     this.maxSearches = defaultMaxSearches,
     this.maxRounds = defaultMaxRounds,
@@ -297,7 +323,24 @@ class SearchAgent {
   }) async {
     final transcript = <OllamaMessage>[];
     final sourceUrls = <int, String>{};
-    final ledger = ResearchLedger(objective: _objectiveFrom(history));
+    final userQuestion = _objectiveFrom(history);
+    final goal = await _deriveGoal(userQuestion);
+    final ledger = ResearchLedger(
+      objective: goal.statement,
+      userQuestion: userQuestion,
+    );
+    for (final question in goal.subQuestions) {
+      ledger.openGap(question);
+    }
+    // Published before the first turn, not after the first search round.
+    // The goal is known from the outset, so the panel that frames a run
+    // should exist from the outset too — created on the first round's
+    // update instead, it gets appended below that round's search cards and
+    // stays wedged there for the rest of the run, ending up showing the
+    // whole run's findings and its "research complete" banner ABOVE
+    // searches that had not happened yet when it was placed.
+    listener.onLedgerUpdate
+        ?.call(ledger.objective, List<SubGoal>.from(ledger.subGoals));
     final roundRecords = <List<_RoundSearchRecord>>[];
     var searchCount = 0;
     var idOffset = 0;
@@ -328,7 +371,7 @@ class SearchAgent {
           searchCount < maxSearches &&
           round < maxRounds &&
           ledger.roundsSinceProgress < stallLimit &&
-          ledger.roundsSinceNewSubGoal < stallLimit;
+          ledger.roundsSinceCoverageGrew < stallLimit;
 
       final turn = await _streamOneTurn(
         history: history,
@@ -336,6 +379,7 @@ class SearchAgent {
         listener: listener,
         isCancelled: isCancelled,
         toolsEnabled: canSearch,
+        researchBrief: ledger.renderBrief(),
       );
       allThinking += turn.thinking;
       // Only overwrite when this turn actually said something. lastContent
@@ -393,7 +437,12 @@ class SearchAgent {
           coverageChecks: coverageChecks,
         )) {
           coverageChecks++;
-          final gaps = await _assessGaps(ledger.objective, turn.content);
+          // Judged against what the user actually typed, never the derived
+          // restatement: "did this answer my question" has exactly one
+          // ground truth, and a paraphrase that quietly dropped a clause
+          // would make the gate blind to precisely the omission it exists
+          // to catch.
+          final gaps = await _assessGaps(ledger.userQuestion, turn.content);
           if (gaps.isNotEmpty) {
             for (final gap in gaps) {
               ledger.openGap(gap);
@@ -466,6 +515,7 @@ class SearchAgent {
       }
 
       final subGoalsBefore = ledger.subGoals.length;
+      final searchedBefore = ledger.searchedSubGoalCount;
       final executed = await _executeToolCalls(
         turn.toolCalls,
         remaining: maxSearches - searchCount,
@@ -486,7 +536,13 @@ class SearchAgent {
       ledger.recordRoundOutcome(
         madeProgress:
             executed.uniqueSearchCount > 0 && executed.anyNonEmptyResults,
-        openedNewSubGoal: ledger.subGoals.length > subGoalsBefore,
+        // Ticking a checklist item that was still open counts as new
+        // ground, not just opening a brand-new sub-goal. With a pre-seeded
+        // checklist every sub-goal exists from round 1, so the old
+        // "did the list get longer" test reads a model working steadily
+        // down that list as stalled and cuts the run off two rounds in.
+        broadenedCoverage: ledger.subGoals.length > subGoalsBefore ||
+            ledger.searchedSubGoalCount > searchedBefore,
       );
       listener.onLedgerUpdate
           ?.call(ledger.objective, List<SubGoal>.from(ledger.subGoals));
@@ -532,6 +588,40 @@ class SearchAgent {
       canSearch &&
       searchCount > 0 &&
       coverageChecks < maxCoverageChecks;
+
+  /// Most checklist items a derived goal may open.
+  ///
+  /// Over-decomposition is this feature's mirror-image regression: the goal
+  /// exists to make runs converge, and seeding six sub-questions for a
+  /// one-lookup question guarantees the opposite — every one of them is a
+  /// [ ] the stopping rule then insists on closing. Capping is cheaper and
+  /// more predictable than prompting the behavior away, exactly as with
+  /// maxCoverageGaps.
+  static const maxGoalSubQuestions = 4;
+
+  /// Derives the run's goal, falling back to the user's message verbatim.
+  ///
+  /// Every failure mode lands on that fallback: no callback, a throw, a
+  /// null, or a blank statement. The fallback is precisely the behavior
+  /// this feature replaces, so degrading to it costs the run nothing but
+  /// the improvement.
+  Future<ResearchGoal> _deriveGoal(String userQuestion) async {
+    final fallback = ResearchGoal(statement: userQuestion);
+    if (deriveGoal == null) return fallback;
+    try {
+      final derived = await deriveGoal!(userQuestion);
+      if (derived == null || derived.statement.trim().isEmpty) return fallback;
+      return ResearchGoal(
+        statement: derived.statement.trim(),
+        subQuestions: [
+          for (final q in derived.subQuestions)
+            if (q.trim().isNotEmpty) q.trim()
+        ].take(maxGoalSubQuestions).toList(),
+      );
+    } catch (_) {
+      return fallback;
+    }
+  }
 
   /// Runs the gate, treating any failure as "the answer is complete".
   ///
@@ -630,6 +720,7 @@ class SearchAgent {
     required SearchAgentListener listener,
     required bool Function()? isCancelled,
     required bool toolsEnabled,
+    String researchBrief = '',
   }) async {
     final accum = _TurnAccum();
     final request = SearchAgentRequest(
@@ -637,6 +728,7 @@ class SearchAgent {
       transcript: List<OllamaMessage>.from(transcript),
       includeMemory: transcript.isEmpty,
       toolsEnabled: toolsEnabled,
+      researchBrief: researchBrief,
     );
 
     await for (final chunk in streamTurn(request)) {
@@ -746,8 +838,8 @@ class SearchAgent {
       listener.onSearchComplete?.call(results, callSourceUrls);
       formattedByKey[p.key] = results.isEmpty
           ? 'No results found for "${p.query}". Try a different phrasing, '
-              'or check the research ledger below for a still-open '
-              'question to search instead.'
+              'or check the research ledger below for a [ ] item to search '
+              'instead.'
           : WebSearchService.formatResultsAsContext(results,
               idOffset: offset, query: p.query);
       urls.addAll(callSourceUrls);
@@ -761,7 +853,7 @@ class SearchAgent {
             r.snippet,
           ],
         ].whereType<String>().toList();
-        ledger.markSearched(
+        ledger.recordEvidence(
           p.subGoal!,
           sourceIdStart: offset + 1,
           sourceIdEnd: offset + results.length,

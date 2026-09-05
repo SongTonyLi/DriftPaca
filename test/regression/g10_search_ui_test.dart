@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
+import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
@@ -343,15 +344,13 @@ void main() {
             LedgerEntryView(
               query: 'first query',
               searched: true,
-              sourceIdStart: 1,
-              sourceIdEnd: 2,
+              ranges: [SourceIdRange(1, 2)],
               excerpt: 'supporting evidence',
             ),
             LedgerEntryView(
               query: 'second query',
               searched: true,
-              sourceIdStart: 3,
-              sourceIdEnd: 3,
+              ranges: [SourceIdRange(3, 3)],
             ),
             LedgerEntryView(query: 'third query', searched: false),
           ],
@@ -413,6 +412,146 @@ void main() {
       expect(find.text('Searched: "legacy query"'), findsOneWidget);
       expect(find.textContaining('Search 1'), findsNothing);
       expect(find.text('Research goal'), findsNothing);
+    });
+
+    testWidgets('a re-searched sub-goal shows every id block it gathered',
+        (tester) async {
+      // The ids between the two blocks belong to other sub-goals, so the
+      // chip lists the ranges instead of merging them into one span. Before
+      // the ledger accumulated evidence this second block was dropped
+      // outright — the panel jumped …17-24 straight to 33-40.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ResearchLedgerSegment(
+            objective: 'goal',
+            entries: const [
+              LedgerEntryView(
+                query: 'TikTok new grad offer timing',
+                searched: true,
+                ranges: [SourceIdRange(1, 8), SourceIdRange(25, 32)],
+              ),
+            ],
+            terminationReason: 'converged',
+          ),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('1–8 · 25–32'), findsOneWidget);
+      // Two searches produced this sub-goal, and the banner counts searches.
+      expect(
+          find.textContaining('across 2 searches'), findsOneWidget);
+    });
+
+    testWidgets('an in-progress run names the next thing it will research',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ResearchLedgerSegment(
+            objective: 'goal',
+            entries: const [
+              LedgerEntryView(
+                query: 'done query',
+                searched: true,
+                ranges: [SourceIdRange(1, 2)],
+              ),
+              LedgerEntryView(query: 'open query', searched: false),
+            ],
+          ),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Next — researching "open query"'), findsOneWidget);
+      // The termination banner is the finished-run counterpart; only one of
+      // the two ever shows.
+      expect(find.textContaining('Research complete'), findsNothing);
+    });
+
+    testWidgets('an in-progress run with nothing open says it is drafting',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ResearchLedgerSegment(
+            objective: 'goal',
+            entries: const [
+              LedgerEntryView(
+                query: 'done query',
+                searched: true,
+                ranges: [SourceIdRange(1, 2)],
+              ),
+            ],
+          ),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Next — drafting the answer'), findsOneWidget);
+    });
+
+    testWidgets('a run that never searched says so instead of claiming 0 searches',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ResearchLedgerSegment(
+            objective: 'goal',
+            entries: const [
+              LedgerEntryView(query: 'never searched', searched: false),
+            ],
+            terminationReason: 'converged',
+          ),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Answered without searching'), findsOneWidget);
+      expect(find.textContaining('0 searches'), findsNothing);
+    });
+
+    testWidgets('a finished run with no sub-goals at all hides the panel',
+        (tester) async {
+      // Web search was on, the model answered straight from the chat, and
+      // the goal derivation opened nothing. There is no research to frame.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ResearchLedgerSegment(
+            objective: 'goal',
+            terminationReason: 'converged',
+          ),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Research goal'), findsNothing);
+    });
+
+    testWidgets('mid-run the panel shows the goal before any search lands',
+        (tester) async {
+      // The opening ledger update carries the goal and no entries. This is
+      // the state the panel is created in now, and it is exactly when the
+      // reader most needs to see what the run is going after.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ResearchLedgerSegment(objective: 'Establish the 2024 GDP figure'),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Research goal'), findsOneWidget);
+      expect(find.text('Establish the 2024 GDP figure'), findsOneWidget);
+      expect(find.text('Next — drafting the answer'), findsOneWidget);
     });
   });
 }

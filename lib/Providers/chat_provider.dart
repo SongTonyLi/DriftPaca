@@ -18,6 +18,7 @@ import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Utils/coverage_gaps.dart';
+import 'package:llamaseek/Utils/research_goal.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
@@ -63,7 +64,7 @@ Answer as soon as the evidence you have is sufficient; search again only to clos
 
 Before you finish, check your answer against the question: if it asked about several things, several time periods, or several entities, address each one explicitly. If one of them could not be established from the sources you have, say so plainly in the answer rather than searching again or leaving it out silently.
 
-Tool results may include a "Research ledger" section listing what's already been searched (with source ids) and what's still open. Check it before searching again: re-searching something already covered wastes a round, so prefer a query aimed at something still open, or a corroborating follow-up on a specific gap.
+A "Research ledger" section states this run's goal and a checklist. `[x]` marks an item a search already gathered sources for (its source ids follow); `[ ]` marks one nothing has been searched for yet. Search only to close a specific `[ ]` item — re-searching an `[x]` wastes a round. Stop searching and answer as soon as your sources cover the goal: an `[x]` item counts as covered, and so does a `[ ]` item your searches have already failed to turn anything up for.
 
 When you have enough information, answer the user and cite sources inline using exactly [N], where N is the source id.
 
@@ -90,6 +91,36 @@ If the draft addresses every part, reply with exactly: NONE
 Reply NONE unless a part is clearly missing. Do not list a part merely because it could be more detailed, better sourced, updated, or expanded. A draft that answers the question briefly is complete. A draft that could not determine a fact is NOT complete.
 
 A refusal is a complete answer. If the draft declines a part because it would be unsafe, unethical, illegal, or a violation of someone's privacy, that part is addressed — never list it. Declining to say something is different from failing to find it: the first is settled, the second is a gap. When a draft both declines and says it could not find something, the refusal governs.''';
+
+/// System prompt for goal derivation — see SearchAgent.deriveGoal.
+///
+/// Two failure modes to steer between, and they pull opposite ways. Drift
+/// (adding a topic, dropping a clause, "improving" the question) corrupts
+/// the objective every later stage is measured against. Over-decomposition
+/// is worse in practice: every bullet becomes a `[ ]` the stopping rule
+/// then obliges the model to close, so a four-way split of a one-lookup
+/// question buys exactly the extra rounds this feature exists to remove.
+/// Hence the explicit "most questions need none".
+///
+/// The language instruction is not a nicety: a goal silently translated to
+/// English is shown back to the user as their own research goal, and lands
+/// in the model's context as a paraphrase of a question it will then search
+/// for in the wrong language.
+String _goalDerivationInstruction() => '''
+You turn a chat message into a research brief for a web-search agent.
+
+Reply in exactly this shape, and nothing else:
+GOAL: <one sentence naming what has to be found out>
+- <a part that needs its own separate web search>
+- <another such part>
+
+The GOAL line restates the user's question faithfully and completely. Never add a topic they did not ask about; never drop one they did.
+
+List a bullet ONLY for a part that genuinely needs a search of its own. Most questions need none at all — if one search could answer it, write no bullets. At most 4, and fewer is better: every bullet is a search the agent will feel obliged to run.
+
+Keep the user's own wording for names, numbers, dates and entities, and write in the language the user wrote in.
+
+No preamble, no explanation, no closing remarks.''';
 
 /// Extracts the search query from a buffer containing "WEBSEARCH: <query>".
 String _extractSearchQuery(String buffer) {
@@ -875,6 +906,29 @@ class ChatProvider extends ChangeNotifier {
       maxSearches: maxSearches,
       transcriptBudgetChars: transcriptLimits.transcriptBudgetChars,
       minRawRounds: transcriptLimits.minRawRounds,
+      deriveGoal: (userQuestion) async {
+        // Isolated for the same reason the coverage gate is: one message
+        // in, one brief out, with no memory, no history and no tools. This
+        // call decides what the whole run is aimed at, and anything else in
+        // context is a chance for it to drift off the question.
+        final goalChat = OllamaChat(
+          id: associatedChat.id,
+          model: associatedChat.model,
+          title: associatedChat.title,
+          systemPrompt: _goalDerivationInstruction(),
+          options: associatedChat.options,
+          isIncognito: associatedChat.isIncognito,
+        );
+        final buffer = StringBuffer();
+        await for (final chunk in _ollamaService.chatStream(
+          [OllamaMessage(userQuestion, role: OllamaMessageRole.user)],
+          chat: goalChat,
+        )) {
+          if (cancelled()) return null;
+          buffer.write(chunk.content);
+        }
+        return parseResearchGoal(buffer.toString());
+      },
       assessCoverage: (request) async {
         // Isolated on purpose: a bare two-message exchange with no tools, no
         // memory, no research transcript and no chat history. The gate is
@@ -916,9 +970,25 @@ class ChatProvider extends ChangeNotifier {
             conversationSummary: conversationMemory?.summary,
           );
         }
+        // The ledger rides along on tool messages, so it only reaches the
+        // model from round 2 onward — after the turn that decides how the
+        // run is shaped. Putting the same brief in the system prompt makes
+        // the goal, the checklist and the stopping rule present on the
+        // FIRST turn too, which is the one that plans the research.
+        final turnChat = request.researchBrief.isEmpty
+            ? streamChat
+            : OllamaChat(
+                id: streamChat.id,
+                model: streamChat.model,
+                title: streamChat.title,
+                systemPrompt:
+                    '${streamChat.systemPrompt}\n\n${request.researchBrief}',
+                options: streamChat.options,
+                isIncognito: streamChat.isIncognito,
+              );
         yield* _ollamaService.chatStream(
           request.history,
-          chat: streamChat,
+          chat: turnChat,
           conversationMemory: conversationMemory,
           profile: profile,
           relevantContext: relevantContext,

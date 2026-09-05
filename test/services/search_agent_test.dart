@@ -606,7 +606,116 @@ void main() {
     ).run(history: history, listener: const SearchAgentListener());
 
     expect(requests[1].transcript.last.content, contains('Vietnam GDP 2024'));
-    expect(requests[1].transcript.last.content, contains('Searched'));
+    expect(requests[1].transcript.last.content,
+        contains('- [x] "Vietnam GDP 2024"'));
+    expect(requests[1].transcript.last.content,
+        contains(ResearchLedger.stoppingRule));
+  });
+
+  test('every turn carries the goal, checklist and stopping rule as a brief', () async {
+    // The transcript copy of the ledger only exists from round 2 onward —
+    // round 1 has no tool message to carry it. The brief is what puts a
+    // finish line in front of the model on the turn that plans the run.
+    final requests = <SearchAgentRequest>[];
+    var turn = 0;
+    await agent(
+      streamTurn: (req) {
+        requests.add(req);
+        turn++;
+        if (turn == 1) {
+          return Stream.fromIterable([searchChunk('Vietnam GDP 2024')]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+    ).run(history: history, listener: const SearchAgentListener());
+
+    expect(requests.first.transcript, isEmpty);
+    expect(requests.first.researchBrief, contains('Goal: What is Vietnam GDP?'));
+    expect(requests.first.researchBrief, contains(ResearchLedger.stoppingRule));
+    // Round 2's brief has grown a ticked checklist item.
+    expect(requests[1].researchBrief, contains('- [x] "Vietnam GDP 2024"'));
+  });
+
+  test('a derived goal seeds the objective and an unticked checklist', () async {
+    final requests = <SearchAgentRequest>[];
+    var snapshot = <SubGoal>[];
+    final outcome = await SearchAgent(
+      streamTurn: (req) {
+        requests.add(req);
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async => [hit('https://example.com')],
+      deriveGoal: (userQuestion) async => const ResearchGoal(
+        statement: 'Establish Vietnam\'s 2024 GDP figure',
+        subQuestions: ['Vietnam nominal GDP 2024', 'Vietnam GDP growth 2024'],
+      ),
+    ).run(
+      history: history,
+      listener: SearchAgentListener(
+        onLedgerUpdate: (objective, goals) => snapshot = goals,
+      ),
+    );
+
+    expect(outcome.content, 'done');
+    expect(requests.first.researchBrief,
+        contains('Goal: Establish Vietnam\'s 2024 GDP figure'));
+    expect(requests.first.researchBrief,
+        contains('- [ ] "Vietnam nominal GDP 2024"'));
+    // Seeded as gaps, not as issued searches: charging them a search would
+    // eat the per-sub-goal budget before anything has been looked up.
+    expect(snapshot.map((g) => g.searchCount), everyElement(0));
+    expect(snapshot.map((g) => g.status), everyElement(SubGoalStatus.open));
+  });
+
+  test('a goal derivation that fails leaves the run on the raw question', () async {
+    final requests = <SearchAgentRequest>[];
+    final outcome = await SearchAgent(
+      streamTurn: (req) {
+        requests.add(req);
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async => [hit('https://example.com')],
+      deriveGoal: (_) async => throw StateError('model unreachable'),
+    ).run(history: history, listener: const SearchAgentListener());
+
+    // Losing an entire research run because a framing call fell over would
+    // be an absurd trade — the raw question is a workable objective.
+    expect(outcome.content, 'done');
+    expect(requests.first.researchBrief, contains('Goal: What is Vietnam GDP?'));
+  });
+
+  test('a checklist question the model works through does not read as a stall', () async {
+    // Every sub-goal exists from round 1 when the checklist is pre-seeded,
+    // so "did the list get longer" is false every round. Under that older
+    // rule the run was cut off after two rounds with most of its own
+    // checklist still unticked.
+    const seeded = [
+      'kangaroo diet facts',
+      'printer ink cartridge types',
+      'medieval sword forging',
+      'volcanic eruption warning signs',
+    ];
+    final executed = <String>[];
+    var turn = 0;
+    final outcome = await SearchAgent(
+      maxSearches: 15,
+      streamTurn: (req) {
+        turn++;
+        if (turn <= seeded.length) {
+          return Stream.fromIterable([searchChunk(seeded[turn - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async => [hit('https://example.com/${req.query}')],
+      deriveGoal: (_) async =>
+          const ResearchGoal(statement: 'cover four topics', subQuestions: seeded),
+    ).run(
+      history: history,
+      listener: SearchAgentListener(onSearchStart: executed.add),
+    );
+
+    expect(executed, seeded);
+    expect(outcome.reason, SearchTerminationReason.converged);
   });
 
   test('a query grouped onto a sub-goal that already hit its search budget is redirected', () async {
@@ -668,8 +777,14 @@ void main() {
         contains('You already asked something very close to this'));
   });
 
-  test('onLedgerUpdate fires once per search round with the objective and snapshot', () async {
+  test('onLedgerUpdate fires before the first turn, then once per search round', () async {
+    // The leading update is what lets the UI place its research panel at
+    // the top of the run. Fired only after round 1 instead, the panel gets
+    // appended below that round's search cards and stays wedged there —
+    // ending up showing the run's findings and its "research complete"
+    // banner above searches that had not happened yet when it was placed.
     final objectives = <String>[];
+    final sizes = <int>[];
     var turn = 0;
     await agent(
       streamTurn: (req) {
@@ -682,12 +797,17 @@ void main() {
     ).run(
       history: history,
       listener: SearchAgentListener(
-        onLedgerUpdate: (objective, snapshot) => objectives.add(objective),
+        onLedgerUpdate: (objective, snapshot) {
+          objectives.add(objective);
+          sizes.add(snapshot.length);
+        },
       ),
     );
 
-    expect(objectives, hasLength(1));
-    expect(objectives.single, 'What is Vietnam GDP?');
+    expect(objectives, hasLength(2));
+    expect(objectives, everyElement('What is Vietnam GDP?'));
+    expect(sizes, [0, 1],
+        reason: 'the opening update precedes any search, so it has no entries');
   });
 
   test('two consecutive unproductive rounds stop the loop well under the hard cap', () async {

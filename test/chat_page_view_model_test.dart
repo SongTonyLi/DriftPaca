@@ -435,8 +435,7 @@ void main() {
       final onLedgerUpdate = fakeChatProvider.capturedOnLedgerUpdate!;
       final goal = SubGoal(query: 'q1', normalizedQuery: 'q1')
         ..status = SubGoalStatus.searched
-        ..sourceIdStart = 1
-        ..sourceIdEnd = 2
+        ..ranges.add(const SourceIdRange(1, 2))
         ..excerpt = 'evidence found';
 
       onLedgerUpdate('what is the objective', [goal]);
@@ -448,7 +447,8 @@ void main() {
       expect(ledgers.single.objective, 'what is the objective');
       expect(ledgers.single.entries.single.query, 'q1');
       expect(ledgers.single.entries.single.searched, isTrue);
-      expect(ledgers.single.entries.single.sourceIdStart, 1);
+      expect(ledgers.single.entries.single.ranges,
+          [const SourceIdRange(1, 2)]);
       expect(ledgers.single.entries.single.excerpt, 'evidence found');
 
       // A second update (e.g. a later round) must overwrite the same
@@ -463,6 +463,28 @@ void main() {
           reason: 'must update in place, not append a duplicate segment');
       expect(ledgers.single.entries.length, 2);
       expect(ledgers.single.entries[1].searched, isFalse);
+    });
+
+    test('a rendered ledger entry does not change when the harness searches '
+        'that sub-goal again', () {
+      // The harness keeps mutating its own SubGoal list for the rest of the
+      // run. An entry already handed to the UI must be a snapshot, or a
+      // later search silently rewrites a panel the user is looking at.
+      final onLedgerUpdate = fakeChatProvider.capturedOnLedgerUpdate!;
+      final goal = SubGoal(query: 'q1', normalizedQuery: 'q1')
+        ..status = SubGoalStatus.searched
+        ..ranges.add(const SourceIdRange(1, 8));
+
+      onLedgerUpdate('objective', [goal]);
+      final rendered = viewModel.searchSegments
+          .whereType<ResearchLedgerSegment>()
+          .single
+          .entries
+          .single;
+
+      goal.ranges.add(const SourceIdRange(25, 32));
+
+      expect(rendered.ranges, [const SourceIdRange(1, 8)]);
     });
 
     test(

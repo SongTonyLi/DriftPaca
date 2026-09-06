@@ -324,6 +324,23 @@ class SearchAgent {
     final transcript = <OllamaMessage>[];
     final sourceUrls = <int, String>{};
     final userQuestion = _objectiveFrom(history);
+    // Opened BEFORE the goal call, with the fallback objective (the user's
+    // own question) and an empty checklist.
+    //
+    // Deriving the goal is a whole model request of its own, and nothing
+    // reached the UI until it returned — on a reasoning model that is tens
+    // of seconds of an empty bubble, because this panel is the first thing
+    // a run shows and it was gated on that request. The derived statement
+    // and its checklist overwrite this in place the moment they land (the
+    // listener updates one panel rather than appending), which is exactly
+    // how every later round already refreshes it.
+    //
+    // Only when there IS a derivation call to wait for: without one the
+    // update below already fires immediately, and a second identical
+    // publish would say nothing.
+    if (deriveGoal != null) {
+      listener.onLedgerUpdate?.call(userQuestion, const []);
+    }
     final goal = await _deriveGoal(userQuestion);
     final ledger = ResearchLedger(
       objective: goal.statement,

@@ -468,7 +468,14 @@ class ChatPageViewModel extends ChangeNotifier {
         _searchSegments.add(ThinkingSegment(thinking));
         notifyListeners();
       },
-      segmentsProvider: () => _searchSegments,
+      // Called once, by ChatProvider, just before the assistant message is
+      // encoded into its `thinking` blob — the last moment at which a card
+      // left mid-flight can be closed before the stuck spinner is baked
+      // into the saved message.
+      segmentsProvider: () {
+        _finalizeSearchCards();
+        return _searchSegments;
+      },
       onSearchStart: (query) {
         _searchSegments.add(SearchCardSegment(
           query: query,
@@ -570,17 +577,40 @@ class ChatPageViewModel extends ChangeNotifier {
         notifyListeners();
       },
       // A search the harness declined to run (duplicate, empty query, over
-      // budget, ...). ALWAYS appends a fresh card rather than touching the
-      // most recent one — that card may belong to an already-completed
-      // search, and mutating it would silently discard its URL list (see
-      // onSearchComplete above) the moment skipReason took over its render.
+      // budget, rate-limited, ...).
+      //
+      // Resolves the card for the search currently in flight when the skip
+      // is about THAT query, and otherwise appends a fresh one. Both halves
+      // matter:
+      //
+      //  - A rate-limited round abandons the search it had already started
+      //    (SearchAgent._executeToolCalls breaks out of its loop on
+      //    WebSearchUnavailableException) and reports it back through here
+      //    rather than through onSearchComplete. Appending there left the
+      //    started card spinning "Searching: ..." for the rest of the
+      //    session — the answer finishes generating, the run ends, and the
+      //    bubble still looks like it is searching — while a second card
+      //    for the same query was added right below it.
+      //  - Every other skip must NOT touch the most recent card: it may
+      //    belong to an already-completed search, and mutating it would
+      //    silently discard its URL list (see onSearchComplete above) the
+      //    moment skipReason took over its render.
       onSearchSkipped: (query, reason) {
-        _searchSegments.add(SearchCardSegment(
-          query: query,
-          skipReason: reason,
-          isComplete: true,
-          round: _searchCardOrdinal(),
-        ));
+        final pending = _inFlightSearchCard();
+        if (pending != null && pending.query == query) {
+          // A skipped card renders its reason in place of the URL list, so
+          // whatever partial list this search collected is dead weight.
+          pending.urls = const [];
+          pending.skipReason = reason;
+          pending.isComplete = true;
+        } else {
+          _searchSegments.add(SearchCardSegment(
+            query: query,
+            skipReason: reason,
+            isComplete: true,
+            round: _searchCardOrdinal(),
+          ));
+        }
         notifyListeners();
       },
       // Fired once per round with the ledger's full current state — always
@@ -635,6 +665,45 @@ class ChatPageViewModel extends ChangeNotifier {
           ? content.substring(0, _maxPersistedSourceChars)
           : content;
 
+  /// The card for the search the harness currently has in flight: opened by
+  /// onSearchStart and not yet closed by onSearchComplete or onSearchSkipped.
+  /// Null when nothing is running. Searches execute one at a time
+  /// (SearchAgent._executeToolCalls awaits each in turn), so at most one card
+  /// is ever open — but it need not be the LAST one, since a round reports
+  /// the queries it declined only after the one it actually started.
+  SearchCardSegment? _inFlightSearchCard() => _searchSegments
+      .whereType<SearchCardSegment>()
+      .where((card) => !card.isComplete && card.skipReason == null)
+      .lastOrNull;
+
+  /// Closes any search card still rendering as in flight.
+  ///
+  /// Every card the harness opens is normally closed by onSearchComplete or
+  /// onSearchSkipped, but a run can end in between: stopped mid-fetch, or a
+  /// turn that threw. An open card renders a spinner and a "Searching: ..."
+  /// label for as long as these live segments back the bubble, so the answer
+  /// finishes generating and the message still looks like it is searching.
+  ///
+  /// Called at persistence time (see segmentsProvider) and again when the
+  /// search machinery is torn down, which together cover every path out of
+  /// a run, including the ones that never save a message. The persistence
+  /// call also matters after a reload: decoding forces every card complete
+  /// (see search_thinking_utils.dart), so without an error recorded here a
+  /// card that never finished comes back claiming it searched and found
+  /// nothing.
+  void _finalizeSearchCards() {
+    for (final card in _searchSegments.whereType<SearchCardSegment>()) {
+      if (card.isComplete) continue;
+      card.isComplete = true;
+      card.error ??= 'Search did not finish';
+      for (final url in card.urls) {
+        if (url.state == SearchURLState.pending) {
+          url.state = SearchURLState.failed;
+        }
+      }
+    }
+  }
+
   /// Ordinal position (1-indexed) the NEXT SearchCardSegment would occupy —
   /// real and skipped searches both counted, so "Search N" reads as one
   /// sequential narrative rather than claiming to be SearchAgent's internal
@@ -655,6 +724,10 @@ class ChatPageViewModel extends ChangeNotifier {
     }
     _webSearchToken = null;
     _chatProvider.clearWebSearchCallbacks();
+    // Nothing can close a card after this point — the callbacks are gone —
+    // so a run that ended without closing one (an error before any message
+    // was persisted, say) gets its spinner resolved here.
+    _finalizeSearchCards();
     _isSearching = false;
     notifyListeners();
   }

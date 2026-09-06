@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -839,6 +840,68 @@ class ChatProvider extends ChangeNotifier {
     return streamingMessage;
   }
 
+  /// How long the isolated goal-derivation call may take before the run
+  /// gives up on it and uses the user's question verbatim.
+  ///
+  /// That fallback is the behavior every other derivation failure already
+  /// lands on (see SearchAgent._deriveGoal), and it costs the run only a
+  /// worse objective — while an unbounded framing call costs it the whole
+  /// wait before the first search, with a reasoning model free to spend a
+  /// minute deciding how to phrase the goal. Generous enough that a normal
+  /// derivation (a sentence and a few bullets) always finishes inside it.
+  @visibleForTesting
+  static Duration goalDerivationBudget = const Duration(seconds: 20);
+
+  /// Accumulates [stream]'s content, giving up after [budget] or as soon as
+  /// [isCancelled] fires, and cancelling the request either way.
+  ///
+  /// Cancelling matters as much as the deadline: a request left running
+  /// keeps the model busy, and for a local server that is the very model
+  /// the first research turn is waiting on — abandoning the wait without
+  /// abandoning the work would just move the stall.
+  ///
+  /// Returns null rather than a partial string when it gives up. A
+  /// half-emitted GOAL line parses into a truncated objective, which is
+  /// worse than the fallback it would displace.
+  static Future<String?> _collectWithin(
+    Stream<OllamaMessage> stream,
+    Duration budget, {
+    required bool Function() isCancelled,
+  }) async {
+    final buffer = StringBuffer();
+    final finished = Completer<bool>();
+    final timer = Timer(budget, () {
+      if (!finished.isCompleted) finished.complete(false);
+    });
+    final subscription = stream.listen(
+      (chunk) {
+        if (isCancelled()) {
+          if (!finished.isCompleted) finished.complete(false);
+          return;
+        }
+        buffer.write(chunk.content);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!finished.isCompleted) finished.completeError(error, stackTrace);
+      },
+      onDone: () {
+        if (!finished.isCompleted) finished.complete(true);
+      },
+      cancelOnError: true,
+    );
+    try {
+      return (await finished.future) ? buffer.toString() : null;
+    } finally {
+      timer.cancel();
+      // Not awaited, deliberately. Cancelling an async* generator only
+      // takes effect at its next suspension point, so a request stuck
+      // waiting on a server that never answers would make cancel() hang on
+      // exactly the stall the budget exists to escape. The teardown still
+      // happens; this just stops the run waiting for it.
+      subscription.cancel().ignore();
+    }
+  }
+
   Future<OllamaMessage?> _streamWithNativeTools(
     OllamaChat associatedChat, {
     int maxSearches = SearchAgent.defaultMaxSearches,
@@ -940,15 +1003,15 @@ class ChatProvider extends ChangeNotifier {
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );
-        final buffer = StringBuffer();
-        await for (final chunk in _ollamaService.chatStream(
-          [OllamaMessage(userQuestion, role: OllamaMessageRole.user)],
-          chat: goalChat,
-        )) {
-          if (cancelled()) return null;
-          buffer.write(chunk.content);
-        }
-        return parseResearchGoal(buffer.toString());
+        final reply = await _collectWithin(
+          _ollamaService.chatStream(
+            [OllamaMessage(userQuestion, role: OllamaMessageRole.user)],
+            chat: goalChat,
+          ),
+          goalDerivationBudget,
+          isCancelled: cancelled,
+        );
+        return reply == null ? null : parseResearchGoal(reply);
       },
       assessCoverage: (request) async {
         // Isolated on purpose: a bare two-message exchange with no tools, no
@@ -1096,6 +1159,13 @@ class ChatProvider extends ChangeNotifier {
           touch(force: true);
         },
         onLedgerUpdate: (objective, snapshot) {
+          // The bubble has to exist for the panel to land anywhere: search
+          // segments are handed to the index-0 message, and until this the
+          // index-0 message is the user's own. SearchAgent now opens the
+          // ledger before the goal-derivation request rather than after it,
+          // so this is the first callback of a run — earlier than any
+          // thinking or content token, which is the whole point.
+          ensureBubble();
           _webSearchLedgerUpdateCallback?.call(objective, snapshot);
           touch(force: true);
         },
@@ -1105,6 +1175,21 @@ class ChatProvider extends ChangeNotifier {
         },
       ),
     );
+
+    // Stopped before the model said anything at all. The bubble exists from
+    // the ledger's first update (see onLedgerUpdate above), well ahead of
+    // the first token, and the panel it was opened for hides itself once a
+    // run reports a termination reason with an empty checklist — so keeping
+    // this message would persist a visibly blank assistant turn.
+    if (streamingMessage != null &&
+        outcome.cancelled &&
+        outcome.content.isEmpty &&
+        streamingMessage!.content.isEmpty &&
+        (streamingMessage!.thinking ?? '').isEmpty) {
+      _messages.remove(streamingMessage);
+      notifyListeners();
+      return null;
+    }
 
     _interceptedSourceUrls = Map<int, String>.from(outcome.sourceUrls);
 

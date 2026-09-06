@@ -72,6 +72,7 @@ class _Ollama extends OllamaService {
   bool goalStarted = false;
   bool turnStarted = false;
   String? receivedContext;
+  String? receivedSystemPrompt;
 
   @override
   Future<ModelCapabilities?> getCapabilities(String model) async => const ModelCapabilities(tools: true);
@@ -92,6 +93,7 @@ class _Ollama extends OllamaService {
     } else {
       turnStarted = true;
       receivedContext = relevantContext;
+      receivedSystemPrompt = chat.systemPrompt;
       yield OllamaMessage('Answer', role: OllamaMessageRole.assistant);
     }
   }
@@ -140,6 +142,74 @@ void main() {
     expect(memory.selectedSummary, 'Summary');
     expect(ollama.turnStarted, isTrue);
     expect(ollama.receivedContext, 'Relevant memory');
+  });
+
+  test('the research panel has a bubble to render into while the goal call '
+      'is still out', () async {
+    // Search segments are handed to the index-0 message, so without an
+    // assistant bubble the panel SearchAgent opens ahead of the derivation
+    // has nowhere to go — and the skeleton loader hides as soon as a
+    // segment exists, leaving the run showing nothing at all.
+    final db = _Db();
+    final memory = _Memory(db);
+    final ollama = _Ollama();
+    final provider = ChatProvider(ollamaService: ollama, databaseService: db, memoryService: memory);
+    addTearDown(provider.dispose);
+    addTearDown(memory.dispose);
+    await db.ready.future;
+    await _flush();
+    provider.destinationChatSelected(1);
+    await _flush();
+    final run = provider.sendPrompt(provider.displayUserMessage('What is new?'), searchAttemptsRemaining: 1);
+    await _flush();
+
+    expect(ollama.goalStarted, isTrue);
+    expect(ollama.turnStarted, isFalse, reason: 'the derivation has not returned yet');
+    expect(provider.messages.map((m) => m.role),
+        [OllamaMessageRole.user, OllamaMessageRole.assistant]);
+
+    memory.conversation.complete(ConversationMemory(summary: 'Summary'));
+    memory.selection.complete('Relevant memory');
+    ollama.goal.complete('GOAL: Find what is new');
+    await run;
+  });
+
+  test('a stalled goal derivation does not hold up the first research turn',
+      () async {
+    // The framing call is the first thing a run does and nothing else can
+    // start until it answers. Unbounded, a model that never replies (or
+    // spends a minute reasoning about how to phrase the goal) is the whole
+    // wait before the first search — so past the budget the run drops it
+    // and keeps the user's question as the objective, which is what every
+    // other derivation failure already falls back to.
+    final defaultBudget = ChatProvider.goalDerivationBudget;
+    ChatProvider.goalDerivationBudget = const Duration(milliseconds: 20);
+    addTearDown(() {
+      ChatProvider.goalDerivationBudget = defaultBudget;
+    });
+    final db = _Db();
+    final memory = _Memory(db);
+    final ollama = _Ollama();
+    final provider = ChatProvider(ollamaService: ollama, databaseService: db, memoryService: memory);
+    addTearDown(provider.dispose);
+    addTearDown(memory.dispose);
+    await db.ready.future;
+    await _flush();
+    provider.destinationChatSelected(1);
+    await _flush();
+    final run = provider.sendPrompt(provider.displayUserMessage('What is new?'), searchAttemptsRemaining: 1);
+    await _flush();
+    memory.conversation.complete(ConversationMemory(summary: 'Summary'));
+    memory.selection.complete('Relevant memory');
+    // ollama.goal is deliberately never completed: the derivation request
+    // hangs for the rest of the test.
+    await run;
+
+    expect(ollama.goalStarted, isTrue);
+    expect(ollama.turnStarted, isTrue,
+        reason: 'research starts anyway once the budget is spent');
+    expect(ollama.receivedSystemPrompt, contains('Goal: What is new?'),
+        reason: 'the run falls back to the question the user actually asked');
   });
 
   for (final incognito in [false, true]) {

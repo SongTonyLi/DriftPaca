@@ -81,6 +81,19 @@ class OllamaService {
   /// Cached model capabilities from /api/show, keyed by model name.
   final Map<String, ModelCapabilities> _capabilitiesCache = {};
 
+  /// Models whose /api/show probe came back with nothing usable, keyed by
+  /// "<server>|<model>" so switching servers re-probes rather than
+  /// inheriting the old one's answer.
+  ///
+  /// Without this a server that does not report capabilities is probed
+  /// again before EVERY search-enabled message — see [getCapabilities],
+  /// which sits on the critical path between pressing send and research
+  /// starting, and pays a full round trip (or _showModel's 5-10s timeout)
+  /// every time to re-learn the same nothing.
+  final Set<String> _capabilitiesUnavailable = {};
+
+  String _capabilityProbeKey(String model) => '$_baseUrl|$model';
+
   /// Persistent HTTP client so TCP/TLS connections are reused across requests.
   /// Top-level http.* helpers create a fresh client per call, which pays a
   /// new TLS handshake every time on Ollama Cloud. When injected (shared with
@@ -583,12 +596,19 @@ class OllamaService {
     // unknown; probing Ollama's /api/show here only adds a failed network
     // round trip (or a 10-second timeout) before research can start.
     if (_isOpenRouterMode) return null;
+    final probeKey = _capabilityProbeKey(model);
+    if (_capabilitiesUnavailable.contains(probeKey)) return null;
     final show = await _showModel(model);
     if (show != null && show.capabilities.isNotEmpty) {
       final caps = ModelCapabilities.fromList(show.capabilities);
       _capabilitiesCache[model] = caps;
       return caps;
     }
+    // Remembered as unknown, not retried. Callers treat null the same as
+    // "capable" (an unknown model still gets tools), so re-asking costs a
+    // stall before every research run and can never change the answer
+    // within a session.
+    _capabilitiesUnavailable.add(probeKey);
     return null;
   }
 

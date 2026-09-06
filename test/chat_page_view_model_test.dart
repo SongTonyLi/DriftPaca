@@ -488,7 +488,7 @@ void main() {
     });
 
     test(
-        'onSearchSkipped always appends a new card and never mutates an existing one',
+        'onSearchSkipped appends a new card and never mutates a completed one',
         () {
       final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
       final onSearchComplete = fakeChatProvider.capturedOnSearchComplete!;
@@ -530,6 +530,110 @@ void main() {
     });
 
     test(
+        'a search abandoned mid-flight resolves its own card instead of '
+        'leaving it spinning', () {
+      // What a rate-limited round actually does: SearchAgent opens a card
+      // via onSearchStart, the search throws WebSearchUnavailableException,
+      // and the SAME query comes back through onSearchSkipped — it never
+      // reaches onSearchComplete. Appending there left the opened card
+      // reading "Searching: ..." with a spinner for the rest of the
+      // session, next to a duplicate card for the same query.
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchSkipped = fakeChatProvider.capturedOnSearchSkipped!;
+
+      onSearchStart('taiwan gdp 2025');
+      onSearchSkipped('taiwan gdp 2025', 'This query was NOT searched.');
+
+      final cards =
+          viewModel.searchSegments.whereType<SearchCardSegment>().toList();
+      expect(cards.length, 1,
+          reason: 'the in-flight card is resolved, not duplicated');
+      expect(cards.single.isComplete, isTrue);
+      expect(cards.single.skipReason, 'This query was NOT searched.');
+      expect(cards.single.round, 1);
+    });
+
+    test('a skip for a different query still appends while one is in flight',
+        () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchSkipped = fakeChatProvider.capturedOnSearchSkipped!;
+
+      onSearchStart('q1');
+      onSearchSkipped('q2', 'Not run this round.');
+
+      final cards =
+          viewModel.searchSegments.whereType<SearchCardSegment>().toList();
+      expect(cards.length, 2);
+      expect(cards[0].query, 'q1');
+      expect(cards[0].skipReason, isNull);
+      expect(cards[1].query, 'q2');
+      expect(cards[1].skipReason, 'Not run this round.');
+    });
+
+    test('an in-flight card is still resolved when skips for other queries '
+        'were reported first', () {
+      // A round reports the queries it declined only after the one it
+      // actually started, so the open card is not necessarily the last one.
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchSkipped = fakeChatProvider.capturedOnSearchSkipped!;
+
+      onSearchStart('q1');
+      onSearchSkipped('', 'No query provided; nothing was searched.');
+      onSearchSkipped('q1', 'This query was NOT searched.');
+
+      final cards =
+          viewModel.searchSegments.whereType<SearchCardSegment>().toList();
+      expect(cards.length, 2);
+      expect(cards[0].query, 'q1');
+      expect(cards[0].isComplete, isTrue);
+      expect(cards[0].skipReason, 'This query was NOT searched.');
+    });
+
+    test('segmentsProvider closes a card the run left open before the '
+        'message is persisted', () {
+      // ChatProvider calls this to encode the segments into the saved
+      // message. Decoding forces every card complete, so a card left open
+      // here would come back claiming it searched and found nothing.
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onUrlsKnown = fakeChatProvider.capturedOnUrlsKnown!;
+
+      onSearchStart('q1');
+      onUrlsKnown([
+        WebSearchResult(url: 'https://example.com', title: 't', snippet: 's'),
+      ]);
+
+      fakeChatProvider.capturedSegmentsProvider!();
+
+      final card =
+          viewModel.searchSegments.whereType<SearchCardSegment>().single;
+      expect(card.isComplete, isTrue);
+      expect(card.error, 'Search did not finish');
+      expect(card.urls.single.state, SearchURLState.failed,
+          reason: 'a pending row shimmers forever otherwise');
+    });
+
+    test('a completed card is left untouched by the finalize sweep', () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchComplete = fakeChatProvider.capturedOnSearchComplete!;
+
+      onSearchStart('q1');
+      onSearchComplete([
+        WebSearchResult(
+            url: 'https://example.com',
+            title: 't',
+            snippet: 's',
+            pageContent: 'body'),
+      ]);
+
+      fakeChatProvider.capturedSegmentsProvider!();
+
+      final card =
+          viewModel.searchSegments.whereType<SearchCardSegment>().single;
+      expect(card.error, isNull);
+      expect(card.urls.single.state, SearchURLState.success);
+    });
+
+    test(
         'onSearchComplete truncates persisted source content and drops the duplicate extractedContent copy',
         () {
       final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
@@ -553,6 +657,33 @@ void main() {
       expect(card.extractedContent, isNull);
       expect(card.sources, isNotNull);
       expect(card.sources!.single.content.length, lessThan(5000));
+    });
+  });
+
+  group('search machinery teardown', () {
+    test('a run that ends without closing its card does not leave the bubble '
+        'searching', () async {
+      // The stop button and the search card both read as "generating". A run
+      // that ends between onSearchStart and its matching close — cancelled
+      // mid-fetch, or a turn that threw before anything was persisted — must
+      // not leave the card spinning once the machinery is torn down.
+      fakeChatProvider.setCurrentChat(createTestChat('test-id'));
+      viewModel.setTextFieldValue('Hello');
+      viewModel.acceptWebSearchConsent();
+      fakeChatProvider.duringSendPrompt = () async {
+        fakeChatProvider.capturedOnSearchStart!('q1');
+      };
+
+      await viewModel.sendMessage(
+        onModelSelectionRequired: () async {},
+        onServerNotConfigured: () {},
+      );
+
+      expect(viewModel.isSearching, isFalse);
+      final card =
+          viewModel.searchSegments.whereType<SearchCardSegment>().single;
+      expect(card.isComplete, isTrue);
+      expect(card.error, 'Search did not finish');
     });
   });
 
@@ -764,10 +895,16 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     return message;
   }
 
+  /// Runs while sendPrompt is in flight, so a test can drive the captured
+  /// web-search callbacks the way SearchAgent would during a real run —
+  /// i.e. before the view model tears the machinery down.
+  Future<void> Function()? duringSendPrompt;
+
   @override
   Future<void> sendPrompt(OllamaMessage prompt, {int searchAttemptsRemaining = 0}) async {
     sendPromptCalled = true;
     lastSendPromptSearchAttempts = searchAttemptsRemaining;
+    await duringSendPrompt?.call();
   }
 
   @override

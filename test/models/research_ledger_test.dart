@@ -242,6 +242,35 @@ void main() {
     });
   });
 
+  group('ResearchLedger closed brief', () {
+    test('swaps the stopping rule for the closed rule and keeps the checklist', () {
+      final ledger = ResearchLedger(objective: 'find the GDP');
+      final goal = ledger.upsert('Vietnam GDP 2024');
+      ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 2);
+      ledger.openGap('Thailand tourism recovery 2024');
+
+      final brief = ledger.renderBrief(closed: true);
+
+      expect(brief, contains('Goal: find the GDP'));
+      expect(brief, contains('- [x] "Vietnam GDP 2024"'));
+      expect(brief, contains('- [ ] "Thailand tourism recovery 2024"'));
+      expect(brief, contains(ResearchLedger.closedRule));
+      // The open rule invites a search; on a request carrying no tool that
+      // invitation is the contradiction this variant exists to remove.
+      expect(brief, isNot(contains(ResearchLedger.stoppingRule)));
+      expect(ledger.render(closed: true), brief);
+    });
+
+    test('is open by default, so every existing caller is unchanged', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      ledger.upsert('anything');
+
+      expect(ledger.renderBrief(), contains(ResearchLedger.stoppingRule));
+      expect(ledger.render(), contains(ResearchLedger.stoppingRule));
+      expect(ledger.render(), isNot(contains(ResearchLedger.closedRule)));
+    });
+  });
+
   group('ResearchLedger.userQuestion', () {
     test('splits instances the user named even when the goal paraphrases them away', () {
       // The derived goal is a model's restatement and may drop the years.

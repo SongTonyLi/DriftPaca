@@ -638,6 +638,81 @@ void main() {
     expect(requests[1].researchBrief, contains('- [x] "Vietnam GDP 2024"'));
   });
 
+  test('only the newest round carries the ledger in the transcript, and it agrees with the brief', () async {
+    // Appended to every round and left there, the ledger reached the model
+    // as one copy per round: by round 3 the oldest still showed `[ ]`
+    // against items later rounds had ticked, with its own copy of the
+    // stopping rule — a standing invitation to re-search a closed item.
+    final requests = <SearchAgentRequest>[];
+    var turn = 0;
+    await agent(
+      maxSearches: 10,
+      streamTurn: (req) {
+        requests.add(req);
+        turn++;
+        if (turn <= 3) {
+          return Stream.fromIterable([searchChunk(distinctTopics[turn - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+    ).run(history: history, listener: const SearchAgentListener());
+
+    final toolMessages = requests[3]
+        .transcript
+        .where((m) => m.role == OllamaMessageRole.tool)
+        .toList();
+    expect(toolMessages, hasLength(3));
+    final carriers =
+        toolMessages.where((m) => m.content.contains('### Research ledger'));
+    expect(carriers, hasLength(1),
+        reason: 'exactly one ledger copy, never one per round');
+    expect(carriers.single, same(toolMessages.last));
+    // Stripping the old copy leaves that round's own results intact.
+    expect(toolMessages.first.content, contains(distinctTopics[0]));
+    expect(toolMessages.first.content, contains('body'));
+    // And the one copy shows every round's state, not a stale snapshot.
+    for (final topic in distinctTopics.take(3)) {
+      expect(toolMessages.last.content, contains('- [x] "$topic"'));
+    }
+    expect(toolMessages.last.content, contains(ResearchLedger.stoppingRule));
+  });
+
+  test('a turn with tools withdrawn is briefed that research is closed, not invited to search', () async {
+    // Dropping `tools` from the request while the brief still says "search
+    // only to close a specific [ ] item" — under a system prompt that still
+    // says "You have a web_search tool" — is how a literal-minded model
+    // ends up emitting one more tool call and no prose, and needs a whole
+    // extra turn to be told in a tool reply what its brief could have said.
+    final requests = <SearchAgentRequest>[];
+    await agent(
+      streamTurn: (req) {
+        requests.add(req);
+        if (req.toolsEnabled) {
+          return Stream.fromIterable([searchChunk(distinctTopics[requests.length - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('must answer')]);
+      },
+    ).run(history: history, listener: const SearchAgentListener());
+
+    expect(requests.last.toolsEnabled, isFalse);
+    // Every turn that could still search was briefed with the open rule.
+    for (final open in requests.take(requests.length - 1)) {
+      expect(open.researchBrief, contains(ResearchLedger.stoppingRule));
+      expect(open.researchBrief, isNot(contains(ResearchLedger.closedRule)));
+    }
+    expect(requests.last.researchBrief, contains(ResearchLedger.closedRule));
+    expect(requests.last.researchBrief,
+        isNot(contains(ResearchLedger.stoppingRule)));
+    // The checklist itself is still there for the answer to cover.
+    expect(requests.last.researchBrief, contains('- [x] "${distinctTopics[0]}"'));
+    // The transcript copy tells the same story as the brief it sits under.
+    final lastToolMessage = requests.last.transcript
+        .lastWhere((m) => m.role == OllamaMessageRole.tool);
+    expect(lastToolMessage.content, contains(ResearchLedger.closedRule));
+    expect(lastToolMessage.content,
+        isNot(contains(ResearchLedger.stoppingRule)));
+  });
+
   test('a derived goal seeds the objective and an unticked checklist', () async {
     final requests = <SearchAgentRequest>[];
     var snapshot = <SubGoal>[];
@@ -1417,6 +1492,51 @@ void main() {
 
       expect(outcome.content, 'Knicks won, Brunson MVP, Villanova');
       expect(outcome.searchCount, 2);
+    });
+
+    test('publishes the gaps it opened before the corrective turn runs',
+        () async {
+      // The gaps become [ ] items the model is told to close right now.
+      // Published only after the next search round, the panel the user is
+      // watching lags the model by a round — and never shows them at all
+      // if the model answers the gap notice without searching.
+      final snapshots = <List<SubGoal>>[];
+      final transcriptsSeen = <List<OllamaMessage>>[];
+      var turn = 0;
+
+      await agent(
+        maxSearches: 10,
+        streamTurn: (req) {
+          transcriptsSeen.add(req.transcript);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('topic')]);
+          if (turn == 2) {
+            return Stream.fromIterable([answerChunk('partial draft')]);
+          }
+          // Answers the gap notice straight away, without searching.
+          return Stream.fromIterable([answerChunk('partial draft, plus more')]);
+        },
+        assessCoverage: (req) async => ['the part that was missing'],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onLedgerUpdate: (objective, snapshot) => snapshots.add(snapshot),
+        ),
+      );
+
+      expect(
+        snapshots.last.map((g) => g.query),
+        contains('the part that was missing'),
+        reason: 'the gap reached the panel even though no search followed',
+      );
+      // The corrective turn's transcript copy of the ledger shows the gap
+      // as open, in agreement with the brief and the gap notice.
+      final ledgerCopy = transcriptsSeen[2]
+          .where((m) => m.role == OllamaMessageRole.tool)
+          .map((m) => m.content)
+          .where((c) => c.contains('### Research ledger'));
+      expect(ledgerCopy, hasLength(1));
+      expect(ledgerCopy.single, contains('- [ ] "the part that was missing"'));
     });
 
     test('the corrective round can see the draft it was told to keep',

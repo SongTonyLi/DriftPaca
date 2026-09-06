@@ -315,9 +315,24 @@ class ResearchLedger {
       'again. While something is genuinely still missing, search only to '
       'close a specific [ ] item.';
 
+  /// What replaces [stoppingRule] once the harness has withdrawn the tool:
+  /// the budget is spent, the round cap hit, the run stalled, or the search
+  /// backend blocked. Until this existed the brief kept inviting the model
+  /// to "search only to close a specific [ ] item" on the very request that
+  /// carried no tool, while the system prompt still said "You have a
+  /// web_search tool" — so a model that took its instructions literally
+  /// emitted another tool call and no prose, costing a whole extra turn to
+  /// be told in a tool reply what its brief could have said up front.
+  static const closedRule =
+      'Research is closed: no further searches will run. Write the answer '
+      'now from the sources already gathered. If a part of the goal could '
+      'not be established, say so plainly in the answer instead of searching '
+      'again.';
+
   /// The ledger as the model should see it: the goal, the checklist, and the
-  /// stopping rule. Never empty — [render] is the variant that opts out.
-  String renderBrief() {
+  /// stopping rule — or, when [closed], the closed rule in its place. Never
+  /// empty — [render] is the variant that opts out.
+  String renderBrief({bool closed = false}) {
     final buffer = StringBuffer()
       ..writeln('### Research ledger')
       ..writeln('Goal: $objective');
@@ -334,14 +349,15 @@ class ResearchLedger {
 
     return (buffer
           ..writeln()
-          ..write(stoppingRule))
+          ..write(closed ? closedRule : stoppingRule))
         .toString()
         .trimRight();
   }
 
   /// Renders the ledger for the model's context. Empty when no sub-goal
   /// exists at all, so callers can skip appending it entirely.
-  String render() => subGoals.isEmpty ? '' : renderBrief();
+  String render({bool closed = false}) =>
+      subGoals.isEmpty ? '' : renderBrief(closed: closed);
 
   static String _checklistLine(SubGoal goal) {
     if (goal.status != SubGoalStatus.searched) return '- [ ] "${goal.query}"';

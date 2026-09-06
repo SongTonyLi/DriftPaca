@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
@@ -665,6 +667,35 @@ void main() {
     // eat the per-sub-goal budget before anything has been looked up.
     expect(snapshot.map((g) => g.searchCount), everyElement(0));
     expect(snapshot.map((g) => g.status), everyElement(SubGoalStatus.open));
+  });
+
+  test('the research panel opens before the goal derivation returns', () async {
+    // Deriving the goal is a whole model request of its own. Gating this
+    // update on it left the bubble showing nothing for that request's
+    // entire duration — tens of seconds on a reasoning model — even though
+    // the fallback objective (the user's own question) is known up front.
+    final derivation = Completer<ResearchGoal?>();
+    final objectives = <String>[];
+    final run = SearchAgent(
+      streamTurn: (req) => Stream.fromIterable([answerChunk('done')]),
+      search: (req) async => [hit('https://example.com')],
+      deriveGoal: (_) => derivation.future,
+    ).run(
+      history: history,
+      listener: SearchAgentListener(
+        onLedgerUpdate: (objective, snapshot) => objectives.add(objective),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(objectives, ['What is Vietnam GDP?'],
+        reason: 'the panel is open while the goal call is still in flight');
+
+    derivation.complete(const ResearchGoal(statement: 'Establish Vietnam GDP'));
+    await run;
+
+    expect(objectives, ['What is Vietnam GDP?', 'Establish Vietnam GDP'],
+        reason: 'the derived goal then replaces it in the same panel');
   });
 
   test('a goal derivation that fails leaves the run on the raw question', () async {

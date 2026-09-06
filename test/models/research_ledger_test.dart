@@ -271,6 +271,47 @@ void main() {
     });
   });
 
+  group('ResearchClarification', () {
+    test('the brief carries what the user clarified on every turn', () {
+      // The answering model's history holds only the ambiguous original,
+      // so the brief is where the user's choice reaches it.
+      final ledger = ResearchLedger(
+        objective: 'Find the latest Mercury results',
+        clarification: ResearchClarification.note(
+            'Which Mercury?', ['The Phoenix Mercury basketball team']),
+      );
+
+      expect(ledger.renderBrief(),
+          contains('The user clarified: Which Mercury? The Phoenix Mercury basketball team'));
+      expect(ResearchLedger(objective: 'x').renderBrief(),
+          isNot(contains('The user clarified')));
+    });
+
+    test('picks folded into the question count as requested instances', () {
+      // "Population for which years?" answered with two years is two
+      // questions, exactly as if the user had typed both years — so the
+      // ledger must keep their searches apart instead of grouping them.
+      final question = ResearchClarification.clarifiedQuestion(
+          'What was the population of Lagos?',
+          'Which years?',
+          ['2023', '2024']);
+      final ledger = ResearchLedger(
+        objective: 'Establish the population of Lagos',
+        userQuestion: question,
+      );
+      ledger.upsert('Lagos population 2023');
+
+      expect(question, startsWith('What was the population of Lagos?'));
+      expect(ledger.findMatch('Lagos population 2024'), isNull);
+    });
+
+    test('an empty pick list leaves the question untouched', () {
+      expect(ResearchClarification.clarifiedQuestion('q', 'which?', const []),
+          'q');
+      expect(ResearchClarification.note('which?', const []), isEmpty);
+    });
+  });
+
   group('ResearchLedger.userQuestion', () {
     test('splits instances the user named even when the goal paraphrases them away', () {
       // The derived goal is a model's restatement and may drop the years.

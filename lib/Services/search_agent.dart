@@ -292,6 +292,20 @@ class SearchAgent {
   /// just a worse one, and losing an entire research run because a framing
   /// call timed out would be an absurd trade. See [_deriveGoal].
   final Future<ResearchGoal?> Function(String userQuestion)? deriveGoal;
+
+  /// Puts a derived goal's clarification question to the user and returns
+  /// the options they picked — empty when they chose to skip, null when
+  /// the run was stopped while waiting. Optional: when null a clarification
+  /// the goal asked for is simply not asked, and the run proceeds on the
+  /// goal statement alone, exactly as it did before clarifications existed.
+  ///
+  /// This is the one place the loop waits on a person rather than a model
+  /// or a search engine, and it is deliberately before the first turn: a
+  /// question asked mid-run would land after searches that may already
+  /// have gone the wrong way. Nothing bounds the wait but cancellation —
+  /// the user is the one being waited for.
+  final Future<List<String>?> Function(ResearchClarification clarification)?
+      askClarification;
   final int maxCoverageChecks;
   final int maxSearches;
   final int maxRounds;
@@ -306,6 +320,7 @@ class SearchAgent {
     required this.search,
     this.assessCoverage,
     this.deriveGoal,
+    this.askClarification,
     this.maxCoverageChecks = defaultMaxCoverageChecks,
     this.maxSearches = defaultMaxSearches,
     this.maxRounds = defaultMaxRounds,
@@ -342,9 +357,19 @@ class SearchAgent {
       listener.onLedgerUpdate?.call(userQuestion, const []);
     }
     final goal = await _deriveGoal(userQuestion);
+    // Asked before the ledger exists, because the answer changes what the
+    // ledger is judged against: the instance detection and the
+    // completeness gate both read userQuestion as ground truth, and a
+    // choice the user made explicitly belongs in that ground truth.
+    final clarified = await _clarify(goal, userQuestion, isCancelled);
+    if (clarified == null) {
+      return _outcome('', '', sourceUrls, 0, true,
+          reason: SearchTerminationReason.cancelled, listener: listener);
+    }
     final ledger = ResearchLedger(
       objective: goal.statement,
-      userQuestion: userQuestion,
+      userQuestion: clarified.question,
+      clarification: clarified.note,
     );
     for (final question in goal.subQuestions) {
       ledger.openGap(question);
@@ -657,6 +682,40 @@ class SearchAgent {
   /// maxCoverageGaps.
   static const maxGoalSubQuestions = 4;
 
+  /// Asks the goal's clarification question, if it has one and there is
+  /// someone to ask. Returns the question the rest of the run should treat
+  /// as the user's (their picks folded in) plus the one-line note for the
+  /// brief; null only when the run was cancelled while waiting.
+  ///
+  /// Every other failure — no callback, a throw, a skip — lands on the
+  /// question as typed, which is what the run would have used anyway.
+  Future<({String question, String note})?> _clarify(
+    ResearchGoal goal,
+    String userQuestion,
+    bool Function()? isCancelled,
+  ) async {
+    final unclarified = (question: userQuestion, note: '');
+    final clarification = goal.clarification;
+    if (clarification == null || askClarification == null) return unclarified;
+    List<String>? selected;
+    try {
+      selected = await askClarification!(clarification);
+    } catch (_) {
+      selected = const [];
+    }
+    if (selected == null || isCancelled?.call() == true) return null;
+    final picks = [
+      for (final option in selected)
+        if (option.trim().isNotEmpty) option.trim()
+    ];
+    if (picks.isEmpty) return unclarified;
+    return (
+      question: ResearchClarification.clarifiedQuestion(
+          userQuestion, clarification.question, picks),
+      note: ResearchClarification.note(clarification.question, picks),
+    );
+  }
+
   /// Derives the run's goal, falling back to the user's message verbatim.
   ///
   /// Every failure mode lands on that fallback: no callback, a throw, a
@@ -675,6 +734,7 @@ class SearchAgent {
           for (final q in derived.subQuestions)
             if (q.trim().isNotEmpty) q.trim()
         ].take(maxGoalSubQuestions).toList(),
+        clarification: derived.clarification,
       );
     } catch (_) {
       return fallback;

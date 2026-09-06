@@ -137,4 +137,24 @@ class LedgerEntryView {
       ranges.fold<int>(0, (sum, range) => sum + range.count);
 }
 
+/// A question the run put to the user before searching (see
+/// `ResearchClarification`), with what they picked. [selected] is null
+/// while the card is still waiting for them; an empty list means they
+/// chose to continue without answering. Persisted so a saved message still
+/// shows what was asked and chosen — the answer is part of how the run
+/// understood the question.
+class ClarificationSegment extends MessageSegment {
+  final String question;
+  final List<String> options;
+  List<String>? selected;
+
+  ClarificationSegment({
+    required this.question,
+    required this.options,
+    this.selected,
+  });
+
+  bool get isAnswered => selected != null;
+}
+
 class AnswerSegment extends MessageSegment {}

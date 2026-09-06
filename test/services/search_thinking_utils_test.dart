@@ -60,6 +60,34 @@ void main() {
       expect(card.isComplete, true);
     });
 
+    test('roundtrips a clarification card with what was chosen', () {
+      final decoded = decodeSearchSegments(encodeSearchSegments([
+        ClarificationSegment(
+          question: 'Which Mercury?',
+          options: const ['The planet', 'The team'],
+          selected: const ['The team'],
+        ),
+      ]));
+
+      final card = decoded!.single as ClarificationSegment;
+      expect(card.question, 'Which Mercury?');
+      expect(card.options, ['The planet', 'The team']);
+      expect(card.selected, ['The team']);
+      expect(card.isAnswered, isTrue);
+    });
+
+    test('a card still waiting when saved comes back as skipped', () {
+      // A reloaded message has no run to resume, so a card that reads as
+      // still asking would be a form wired to nothing.
+      final decoded = decodeSearchSegments(encodeSearchSegments([
+        ClarificationSegment(question: 'Which?', options: const ['a', 'b']),
+      ]));
+
+      final card = decoded!.single as ClarificationSegment;
+      expect(card.isAnswered, isTrue);
+      expect(card.selected, isEmpty);
+    });
+
     test('returns null for non-search thinking', () {
       final result = decodeSearchSegments('Regular thinking text');
       expect(result, isNull);

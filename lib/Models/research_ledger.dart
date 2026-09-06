@@ -20,7 +20,52 @@ class ResearchGoal {
   /// exactly the extra rounds this whole mechanism exists to avoid.
   final List<String> subQuestions;
 
-  const ResearchGoal({required this.statement, this.subQuestions = const []});
+  /// A question the run should put to the user BEFORE searching, when the
+  /// message could mean several distinct things and the research would go
+  /// a different way for each. Null for the overwhelming majority of
+  /// messages — see the derivation prompt's bias against asking.
+  final ResearchClarification? clarification;
+
+  const ResearchGoal({
+    required this.statement,
+    this.subQuestions = const [],
+    this.clarification,
+  });
+}
+
+/// One multiple-choice question for the user, asked once per run before
+/// any search happens. Options are what the user picks from — several may
+/// apply at once ("both years"), so the answer is a set, not one choice.
+///
+/// Exists because the alternative is guessing. A run that silently picks
+/// one reading of "the Mercury results" and researches it to completion
+/// delivers a confident, well-cited answer to a question that was not
+/// asked — and the completeness gate can never catch that, because the
+/// draft does cover the question as the run understood it.
+class ResearchClarification {
+  final String question;
+  final List<String> options;
+
+  const ResearchClarification({required this.question, required this.options});
+
+  /// The user's picks folded into the question they typed, for every
+  /// stage that must judge against what the user actually meant: the
+  /// ledger's instance detection and the completeness gate both read
+  /// [ResearchLedger.userQuestion], and neither should be blind to a
+  /// choice the user made explicitly. Verbatim question first, so nothing
+  /// that reads it as ground truth is handed a paraphrase.
+  static String clarifiedQuestion(
+    String userQuestion,
+    String question,
+    List<String> selected,
+  ) {
+    if (selected.isEmpty) return userQuestion;
+    return '$userQuestion\n\n(Clarified — "$question": ${selected.join('; ')})';
+  }
+
+  /// The one-line form for the research brief.
+  static String note(String question, List<String> selected) =>
+      selected.isEmpty ? '' : '$question ${selected.join('; ')}';
 }
 
 /// Whether a research sub-goal has been searched at least once. Naming is
@@ -99,6 +144,13 @@ class ResearchLedger {
   /// drafted answer covered the question (SearchAgent's completeness gate).
   final String userQuestion;
 
+  /// What the user said they meant, when the run asked (see
+  /// [ResearchClarification]) — rendered as its own line of the brief on
+  /// every turn, since the answering model's history holds only the
+  /// original, ambiguous message. Empty when nothing was asked or the user
+  /// skipped the question.
+  final String clarification;
+
   final List<SubGoal> subGoals = [];
 
   /// Consecutive rounds that made no progress (see SearchAgent's
@@ -121,8 +173,11 @@ class ResearchLedger {
   /// still unticked.
   int roundsSinceCoverageGrew = 0;
 
-  ResearchLedger({required this.objective, String? userQuestion})
-      : userQuestion = userQuestion ?? objective;
+  ResearchLedger({
+    required this.objective,
+    String? userQuestion,
+    this.clarification = '',
+  }) : userQuestion = userQuestion ?? objective;
 
   /// Sub-goal identity only — this NEVER decides whether to block a
   /// search; it decides which sub-goal a query belongs to. Checks exact
@@ -336,6 +391,9 @@ class ResearchLedger {
     final buffer = StringBuffer()
       ..writeln('### Research ledger')
       ..writeln('Goal: $objective');
+    if (clarification.isNotEmpty) {
+      buffer.writeln('The user clarified: $clarification');
+    }
 
     if (subGoals.isNotEmpty) {
       buffer

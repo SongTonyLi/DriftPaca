@@ -1382,6 +1382,118 @@ void main() {
         contains('lorem'));
   });
 
+  group('a clarification before the first search', () {
+    const clarification = ResearchClarification(
+      question: 'Which Mercury?',
+      options: ['The planet', 'The team'],
+    );
+    const goal = ResearchGoal(
+      statement: 'Find the latest Mercury results',
+      clarification: clarification,
+    );
+
+    test('waits for the user, then folds their picks into the brief and the gate',
+        () async {
+      final requests = <SearchAgentRequest>[];
+      final assessed = <CoverageRequest>[];
+      ResearchClarification? asked;
+      var turn = 0;
+
+      final outcome = await SearchAgent(
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk('Mercury')]);
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        search: (req) async => [hit('https://example.com')],
+        deriveGoal: (_) async => goal,
+        askClarification: (c) async {
+          asked = c;
+          expect(requests, isEmpty,
+              reason: 'the question comes before any research turn');
+          return ['The team'];
+        },
+        assessCoverage: (req) async {
+          assessed.add(req);
+          return const [];
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(asked, same(clarification));
+      expect(outcome.content, 'done');
+      // Every turn's brief says what the user meant.
+      for (final req in requests) {
+        expect(req.researchBrief,
+            contains('The user clarified: Which Mercury? The team'));
+      }
+      // The gate judges against the clarified question, not the ambiguous
+      // original — it has one ground truth, and the user just refined it.
+      expect(assessed.single.objective, startsWith('What is Vietnam GDP?'));
+      expect(assessed.single.objective, contains('The team'));
+    });
+
+    test('a skip proceeds on the goal alone', () async {
+      final requests = <SearchAgentRequest>[];
+      final outcome = await SearchAgent(
+        streamTurn: (req) {
+          requests.add(req);
+          return Stream.fromIterable([answerChunk('done')]);
+        },
+        search: (req) async => [hit('https://example.com')],
+        deriveGoal: (_) async => goal,
+        askClarification: (_) async => const [],
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.content, 'done');
+      expect(requests.single.researchBrief,
+          contains('Goal: Find the latest Mercury results'));
+      expect(requests.single.researchBrief,
+          isNot(contains('The user clarified')));
+    });
+
+    test('stopping the run while it waits ends it without a turn', () async {
+      var turns = 0;
+      final outcome = await SearchAgent(
+        streamTurn: (req) {
+          turns++;
+          return Stream.fromIterable([answerChunk('never')]);
+        },
+        search: (req) async => [hit('https://example.com')],
+        deriveGoal: (_) async => goal,
+        askClarification: (_) async => null,
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.cancelled, isTrue);
+      expect(outcome.reason, SearchTerminationReason.cancelled);
+      expect(turns, 0);
+    });
+
+    test('is not asked at all when nobody can answer, and survives a throw',
+        () async {
+      var asks = 0;
+      final unasked = await SearchAgent(
+        streamTurn: (req) => Stream.fromIterable([answerChunk('done')]),
+        search: (req) async => [hit('https://example.com')],
+        deriveGoal: (_) async => goal,
+      ).run(history: history, listener: const SearchAgentListener());
+      expect(unasked.content, 'done');
+
+      final thrown = await SearchAgent(
+        streamTurn: (req) => Stream.fromIterable([answerChunk('done')]),
+        search: (req) async => [hit('https://example.com')],
+        deriveGoal: (_) async => goal,
+        askClarification: (_) async {
+          asks++;
+          throw StateError('card never mounted');
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+      expect(asks, 1);
+      expect(thrown.content, 'done',
+          reason: 'a failed question costs the run only the clarification');
+    });
+  });
+
   group('a model that will not stop searching still answers', () {
     // Observed against gpt-oss:120b: handed a request with `tools` omitted
     // after its budget ran out, it emitted another tool call and no prose,

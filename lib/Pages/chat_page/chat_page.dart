@@ -342,6 +342,9 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                         controller: _viewModel.textFieldController,
                         onEditingComplete: _sendMessage,
                         focusNode: _inputFocusNode,
+                        hintText: _viewModel.isAwaitingClarification
+                            ? 'Answer the question above to continue'
+                            : 'Message',
                       ),
                     ),
                   ),

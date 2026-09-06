@@ -23,6 +23,7 @@ import 'package:llamaseek/Utils/search_thinking_utils.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
+import 'package:llamaseek/Widgets/clarification_card.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
@@ -616,6 +617,19 @@ class _AssistantBubbleState extends State<_AssistantBubble>
           widgets.add(SearchCard(segment: segment));
         case ResearchLedgerSegment():
           widgets.add(_ResearchLedgerPanel(segment: segment));
+        case ClarificationSegment():
+          // Only a live, streaming bubble has a paused run to resume; a
+          // saved message renders the card as the record it is.
+          final viewModel = widget.isStreaming
+              ? context.read<ChatPageViewModel?>()
+              : null;
+          widgets.add(ClarificationCard(
+            segment: segment,
+            onAnswer: viewModel == null
+                ? null
+                : (selected) =>
+                    viewModel.answerClarification(segment, selected),
+          ));
         case AnswerSegment():
           break;
       }

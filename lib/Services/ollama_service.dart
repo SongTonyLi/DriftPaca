@@ -391,12 +391,22 @@ class OllamaService {
       final lines = LineSplitter.split(chunk);
 
       for (var line in lines) {
+        OllamaMessage? message;
         try {
-          final jsonBody = json.decode(line);
-          yield OllamaMessage.fromJson(jsonBody);
+          message = OllamaMessage.fromJson(json.decode(line));
         } catch (_) {
           buffer = line;
         }
+        if (message == null) continue;
+
+        yield message;
+
+        // `done: true` is Ollama's end-of-response marker: nothing follows
+        // it on this request. Reading on until the socket closes instead
+        // leaves the whole run — and the "generating" UI with it — waiting
+        // on a connection a keep-alive proxy is free to hold open long
+        // after the answer is complete.
+        if (message.done == true) return;
       }
     }
   }
@@ -869,16 +879,25 @@ class OllamaService {
   Stream<OllamaMessage> _processOpenRouterStream(Stream<List<int>> stream) async* {
     String buffer = '';
     final assembler = OpenRouterToolCallAssembler();
+    // Set by the `data: [DONE]` sentinel — see OpenRouterCodec
+    // .isStreamTerminator for why the response ends there rather than when
+    // the socket does.
+    var terminated = false;
     await for (final chunk in stream.transform(utf8.decoder)) {
       buffer += chunk;
       final lines = buffer.split('\n');
       buffer = lines.removeLast();
       for (final line in lines) {
+        if (OpenRouterCodec.isStreamTerminator(line)) {
+          terminated = true;
+          break;
+        }
         final message = _consumeOpenRouterSseLine(line, assembler);
         if (message != null) yield message;
       }
+      if (terminated) break;
     }
-    if (buffer.trim().isNotEmpty) {
+    if (!terminated && buffer.trim().isNotEmpty) {
       final message = _consumeOpenRouterSseLine(buffer, assembler);
       if (message != null) yield message;
     }

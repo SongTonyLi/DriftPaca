@@ -95,6 +95,22 @@ void main() {
       expect(OpenRouterCodec.parseSseLine(''), isNull);
     });
 
+    test('recognizes the terminator, and only the terminator', () {
+      // A reader that stops here stops at the end of the response instead
+      // of at the end of the socket — see isStreamTerminator.
+      expect(OpenRouterCodec.isStreamTerminator('data: [DONE]'), isTrue);
+      expect(OpenRouterCodec.isStreamTerminator('data:[DONE]'), isTrue);
+      expect(OpenRouterCodec.isStreamTerminator('data: [DONE]\r'), isTrue);
+      expect(OpenRouterCodec.isStreamTerminator(': ping'), isFalse);
+      expect(OpenRouterCodec.isStreamTerminator(''), isFalse);
+      expect(
+        OpenRouterCodec.isStreamTerminator(
+            'data: {"choices":[{"delta":{"content":"[DONE]"}}]}'),
+        isFalse,
+        reason: 'a model may well write the word in its own answer',
+      );
+    });
+
     test('emits tool calls when finish_reason is tool_calls', () {
       final message = OpenRouterCodec.parseSseLine(
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"x\\"}"}}]},"finish_reason":"tool_calls"}]}',

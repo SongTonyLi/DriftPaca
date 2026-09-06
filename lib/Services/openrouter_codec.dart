@@ -166,6 +166,22 @@ class OpenRouterCodec {
     return json == null ? null : parseCompletion(json);
   }
 
+  /// Whether [line] is the SSE stream terminator (`data: [DONE]`).
+  ///
+  /// The OpenAI-compatible protocol OpenRouter speaks marks end-of-response
+  /// with this sentinel and sends nothing after it, so a reader that
+  /// recognizes it can stop at the answer instead of waiting for the socket
+  /// to close. That wait is not free: a keep-alive connection (OpenRouter's
+  /// own, or any proxy in between) can stay open long after the last token,
+  /// and every consumer up the stack — the research turn, the run, the
+  /// "generating" UI and its stop button — is blocked on the stream ending.
+  /// The user sees a finished answer that the app still calls in progress.
+  static bool isStreamTerminator(String line) {
+    final trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return false;
+    return trimmed.substring(5).trim() == '[DONE]';
+  }
+
   /// Decodes one `data: {...}` SSE payload. Null for keep-alives / DONE.
   static Map<String, dynamic>? decodeSseJson(String line) {
     final trimmed = line.trim();

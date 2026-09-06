@@ -765,7 +765,7 @@ class ChatProvider extends ChangeNotifier {
       _webSearchQueryUpdateCallback?.call(searchQuery);
       notifyListeners();
 
-      final searchService = WebSearchService();
+      final searchService = searchServiceFactory();
       final searchResults = await searchService.searchAndExtract(
         searchQuery,
         onUrlsKnown: _webSearchUrlsKnownCallback,
@@ -840,6 +840,17 @@ class ChatProvider extends ChangeNotifier {
     return streamingMessage;
   }
 
+  /// Builds the web-search backend a run searches with.
+  ///
+  /// A seam, not a configuration point: the service is constructed per
+  /// search and has no injection point of its own, so without this a test
+  /// that wants to exercise a research run end-to-end — the answer, and
+  /// everything the run does after it — can only do so against the live
+  /// network.
+  @visibleForTesting
+  static WebSearchService Function() searchServiceFactory =
+      WebSearchService.new;
+
   /// How long the isolated goal-derivation call may take before the run
   /// gives up on it and uses the user's question verbatim.
   ///
@@ -851,6 +862,21 @@ class ChatProvider extends ChangeNotifier {
   /// derivation (a sentence and a few bullets) always finishes inside it.
   @visibleForTesting
   static Duration goalDerivationBudget = const Duration(seconds: 20);
+
+  /// How long the completeness gate may take before the run stops waiting on
+  /// it and keeps the answer it already has.
+  ///
+  /// This one is the most expensive unbounded call in a run, because of WHEN
+  /// it happens: the answer has finished streaming and is sitting complete on
+  /// screen, the gate shows the user nothing while it thinks, and the run
+  /// cannot end until it replies. Every second it spends is a second the app
+  /// displays a finished answer while still claiming to generate — and with a
+  /// reasoning model judging a long draft, or a request that simply never
+  /// comes back, that is the "stuck generating" the user sees. Giving up
+  /// costs at most one corrective round, which is exactly what every other
+  /// gate failure already falls back on (see SearchAgent._assessGaps).
+  @visibleForTesting
+  static Duration coverageGateBudget = const Duration(seconds: 30);
 
   /// Accumulates [stream]'s content, giving up after [budget] or as soon as
   /// [isCancelled] fires, and cancelling the request either way.
@@ -873,6 +899,14 @@ class ChatProvider extends ChangeNotifier {
     final timer = Timer(budget, () {
       if (!finished.isCompleted) finished.complete(false);
     });
+    // Polled rather than checked only on arriving chunks. A stalled request
+    // delivers no chunks by definition, so the per-chunk check below cannot
+    // fire on the exact requests the user is most likely to be stopping —
+    // leaving a run to sit out the rest of its budget on work nobody is
+    // waiting for any more.
+    final cancelPoll = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (isCancelled() && !finished.isCompleted) finished.complete(false);
+    });
     final subscription = stream.listen(
       (chunk) {
         if (isCancelled()) {
@@ -893,6 +927,7 @@ class ChatProvider extends ChangeNotifier {
       return (await finished.future) ? buffer.toString() : null;
     } finally {
       timer.cancel();
+      cancelPoll.cancel();
       // Not awaited, deliberately. Cancelling an async* generator only
       // takes effect at its next suspension point, so a request stuck
       // waiting on a server that never answers would make cancel() hang on
@@ -1030,21 +1065,24 @@ class ChatProvider extends ChangeNotifier {
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );
-        final buffer = StringBuffer();
-        await for (final chunk in _ollamaService.chatStream(
-          [
-            OllamaMessage(
-              'Question:\n${request.objective}\n\n'
-              'Draft answer:\n${request.draftAnswer}',
-              role: OllamaMessageRole.user,
-            )
-          ],
-          chat: gateChat,
-        )) {
-          if (cancelled()) return const [];
-          buffer.write(chunk.content);
-        }
-        return parseCoverageGaps(buffer.toString());
+        final reply = await _collectWithin(
+          _ollamaService.chatStream(
+            [
+              OllamaMessage(
+                'Question:\n${request.objective}\n\n'
+                'Draft answer:\n${request.draftAnswer}',
+                role: OllamaMessageRole.user,
+              )
+            ],
+            chat: gateChat,
+          ),
+          coverageGateBudget,
+          isCancelled: cancelled,
+        );
+        // Out of budget, or stopped: no gaps, so the answer already on
+        // screen stands.
+        if (reply == null) return const [];
+        return parseCoverageGaps(reply);
       },
       streamTurn: (request) async* {
         final memory = await memoryPreparation;
@@ -1078,7 +1116,7 @@ class ChatProvider extends ChangeNotifier {
         );
       },
       search: (req) {
-        return WebSearchService().searchAndExtract(
+        return searchServiceFactory().searchAndExtract(
           req.query,
           excludeUrls: req.excludeUrls,
           onUrlsKnown: (urls) {

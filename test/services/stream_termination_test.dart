@@ -88,6 +88,43 @@ void main() {
     expect(content.toString(), 'Hello');
   });
 
+  test('the idle limit counts from the first byte, not from the request',
+      () async {
+    // A slow first token is not a stall: a local model loading or chewing
+    // through a large prompt sends nothing for a while, and the limit must
+    // not cut that short. Silence AFTER the response has started is what
+    // it exists for.
+    final defaultIdle = OllamaService.streamIdleLimit;
+    OllamaService.streamIdleLimit = const Duration(milliseconds: 150);
+    addTearDown(() => OllamaService.streamIdleLimit = defaultIdle);
+    final body = StreamController<List<int>>();
+    addTearDown(body.close);
+    final service = OllamaService(client: _NeverClosingClient(body.stream))
+      ..isOpenRouterMode = true
+      ..apiKey = 'or-key';
+
+    final content = StringBuffer();
+    final run = service
+        .chatStream(
+          [OllamaMessage('Hi', role: OllamaMessageRole.user)],
+          chat: OllamaChat(model: 'openai/gpt-4o-mini'),
+        )
+        .forEach((message) => content.write(message.content));
+
+    // Well past the idle limit before the first byte.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    body.add(utf8.encode('data: {"choices":[{"delta":{"content":"Late"}}]}\n\n'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    body.add(utf8.encode('data: {"choices":[{"delta":{"content":" start"}}]}\n\n'));
+    // Then nothing: no finish_reason, no [DONE], socket held open.
+
+    await run.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail('the stream never ended after going silent'),
+    );
+    expect(content.toString(), 'Late start');
+  });
+
   test('a partial trailing SSE line is still assembled across chunks',
       () async {
     // The terminator check runs on every line, so it must not disturb the

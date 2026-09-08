@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -374,14 +375,76 @@ class OllamaService {
     }
   }
 
-  Stream<OllamaMessage> _processStream(Stream stream) async* {
+  /// How long a response may go silent — no bytes at all, keep-alive
+  /// comments included — after its first byte before the reader treats it
+  /// as over.
+  ///
+  /// The end-of-response markers ([_processStream], [_processOpenRouterStream])
+  /// cover a server that says it is done and then leaves the socket open.
+  /// This covers the one that never says so: an upstream that drops out
+  /// after the last token, with the edge in front of it holding the client
+  /// connection until its own idle timeout (a hundred seconds, typically)
+  /// or indefinitely. Nothing above the reader can tell that apart from a
+  /// slow model, so the answer sits complete on screen while the app still
+  /// calls it generating.
+  ///
+  /// Counted from the first byte, never from the request: time-to-first-
+  /// token is where a local model legitimately goes quiet (loading, prompt
+  /// evaluation on a large context) and is bounded by the transport
+  /// instead. Once a response has started, a minute without a single
+  /// byte is not generation — every streaming backend this app talks to
+  /// emits tokens, reasoning deltas or keep-alive comments well inside
+  /// that.
+  @visibleForTesting
+  static Duration streamIdleLimit = const Duration(seconds: 60);
+
+  /// [source] with the [streamIdleLimit] applied: closes after the first
+  /// byte once nothing has arrived for that long, cancelling the upstream
+  /// subscription (and with it the connection) as it goes.
+  static Stream<List<int>> _endWhenSilent(Stream<List<int>> source) {
+    late final StreamController<List<int>> controller;
+    StreamSubscription<List<int>>? subscription;
+    Timer? idle;
+    void arm() {
+      idle?.cancel();
+      idle = Timer(streamIdleLimit, () {
+        subscription?.cancel().ignore();
+        controller.close();
+      });
+    }
+
+    controller = StreamController<List<int>>(
+      onListen: () {
+        subscription = source.listen(
+          (bytes) {
+            arm();
+            controller.add(bytes);
+          },
+          onError: controller.addError,
+          onDone: () {
+            idle?.cancel();
+            controller.close();
+          },
+        );
+      },
+      onPause: () => subscription?.pause(),
+      onResume: () => subscription?.resume(),
+      onCancel: () {
+        idle?.cancel();
+        return subscription?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<OllamaMessage> _processStream(Stream<List<int>> stream) async* {
     // Buffer to store the incomplete JSON object. This is necessary because
     // the Ollama service may send partial JSON objects in a single response.
     // We need to buffer the partial JSON objects and combine them to form
     // complete JSON objects.
     String buffer = '';
 
-    await for (var chunk in stream.transform(utf8.decoder)) {
+    await for (var chunk in _endWhenSilent(stream).transform(utf8.decoder)) {
       chunk = buffer + chunk;
       buffer = '';
 
@@ -879,11 +942,14 @@ class OllamaService {
   Stream<OllamaMessage> _processOpenRouterStream(Stream<List<int>> stream) async* {
     String buffer = '';
     final assembler = OpenRouterToolCallAssembler();
-    // Set by the `data: [DONE]` sentinel — see OpenRouterCodec
+    // Set by either end-of-response marker — see OpenRouterCodec
     // .isStreamTerminator for why the response ends there rather than when
-    // the socket does.
+    // the socket does. The `data: [DONE]` sentinel is the protocol's own;
+    // a chunk carrying `finish_reason` is the model's, and with one choice
+    // per request nothing but the usage tally and the sentinel can follow
+    // it. Hosts exist that send one without the other, so both count.
     var terminated = false;
-    await for (final chunk in stream.transform(utf8.decoder)) {
+    await for (final chunk in _endWhenSilent(stream).transform(utf8.decoder)) {
       buffer += chunk;
       final lines = buffer.split('\n');
       buffer = lines.removeLast();
@@ -894,6 +960,10 @@ class OllamaService {
         }
         final message = _consumeOpenRouterSseLine(line, assembler);
         if (message != null) yield message;
+        if (message?.done == true) {
+          terminated = true;
+          break;
+        }
       }
       if (terminated) break;
     }

@@ -50,3 +50,8 @@ docs/superpowers/
 
 # Git worktrees
 .worktrees/
+
+# Local API keys for live integration tests — never commit these.
+.env
+.env.*
+!.env.example

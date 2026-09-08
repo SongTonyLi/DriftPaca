@@ -83,7 +83,8 @@ Today's date: $today.''';
 /// spends rounds and can talk a good answer into being rewritten. So the
 /// bar is an explicitly asked-for thing that is absent, not a thing that
 /// could be elaborated.
-String _coverageGateInstruction() => '''
+@visibleForTesting
+String coverageGateInstruction() => '''
 You check whether a draft answer addresses everything the question asked.
 
 List ONLY parts of the question the draft leaves genuinely unanswered — including any part the draft itself admits it could not establish. One per line, phrased as the missing thing, with no other commentary.
@@ -116,7 +117,8 @@ A refusal is a complete answer. If the draft declines a part because it would be
 /// to a question nobody asked. Biased hard against asking, for the same
 /// reason the gate is biased toward NONE — a question the user did not
 /// need is a run that stalls on a card.
-String _goalDerivationInstruction() => '''
+@visibleForTesting
+String goalDerivationInstruction() => '''
 You turn a chat message into a research brief for a web-search agent.
 
 Reply in exactly this shape, and nothing else:
@@ -1073,7 +1075,7 @@ class ChatProvider extends ChangeNotifier {
           id: associatedChat.id,
           model: associatedChat.model,
           title: associatedChat.title,
-          systemPrompt: _goalDerivationInstruction(),
+          systemPrompt: goalDerivationInstruction(),
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );
@@ -1123,7 +1125,7 @@ class ChatProvider extends ChangeNotifier {
           id: associatedChat.id,
           model: associatedChat.model,
           title: associatedChat.title,
-          systemPrompt: _coverageGateInstruction(),
+          systemPrompt: coverageGateInstruction(),
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );

@@ -67,6 +67,87 @@ void main() {
       expect(out[1]['role'], 'tool');
       expect(out[1]['content'], 'results');
     });
+
+    test('every tool message answers the id of the call it follows', () {
+      // Ollama tool calls carry no id, so both sides are minted here — and
+      // an OpenAI-compatible provider rejects the whole request when a tool
+      // message's tool_call_id answers no call in the preceding assistant
+      // message. Minted independently they never matched.
+      final out = OpenRouterCodec.toOpenAiMessages([
+        {'role': 'user', 'content': 'compare two things'},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'function': {
+                'name': 'web_search',
+                'arguments': {'query': 'one'},
+              },
+            },
+            {
+              'function': {
+                'name': 'web_search',
+                'arguments': {'query': 'two'},
+              },
+            },
+          ],
+        },
+        {'role': 'tool', 'content': 'r1', 'tool_name': 'web_search'},
+        {'role': 'tool', 'content': 'r2', 'tool_name': 'web_search'},
+        // A second round, whose ids must not collide with the first's.
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'function': {
+                'name': 'web_search',
+                'arguments': {'query': 'three'},
+              },
+            },
+          ],
+        },
+        {'role': 'tool', 'content': 'r3', 'tool_name': 'web_search'},
+      ]);
+
+      List<String> callIds(Map<String, dynamic> assistant) => [
+            for (final c in assistant['tool_calls'] as List)
+              (c as Map)['id'] as String,
+          ];
+
+      final round1 = callIds(out[1]);
+      expect(round1, hasLength(2));
+      expect(out[2]['tool_call_id'], round1[0]);
+      expect(out[3]['tool_call_id'], round1[1]);
+
+      final round2 = callIds(out[4]);
+      expect(out[5]['tool_call_id'], round2.single);
+      expect({...round1, ...round2}, hasLength(3),
+          reason: 'ids stay unique across the whole conversation');
+    });
+
+    test('keeps a provider-supplied tool call id verbatim', () {
+      final out = OpenRouterCodec.toOpenAiMessages([
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'call_abc',
+              'function': {
+                'name': 'web_search',
+                'arguments': {'query': 'x'},
+              },
+            },
+          ],
+        },
+        {'role': 'tool', 'content': 'r', 'tool_name': 'web_search'},
+      ]);
+
+      expect((out[0]['tool_calls'] as List).single['id'], 'call_abc');
+      expect(out[1]['tool_call_id'], 'call_abc');
+    });
   });
 
   group('OpenRouterCodec.parseSseLine', () {

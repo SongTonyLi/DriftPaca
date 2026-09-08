@@ -242,6 +242,76 @@ void main() {
     });
   });
 
+  group('ResearchLedger closed brief', () {
+    test('swaps the stopping rule for the closed rule and keeps the checklist', () {
+      final ledger = ResearchLedger(objective: 'find the GDP');
+      final goal = ledger.upsert('Vietnam GDP 2024');
+      ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 2);
+      ledger.openGap('Thailand tourism recovery 2024');
+
+      final brief = ledger.renderBrief(closed: true);
+
+      expect(brief, contains('Goal: find the GDP'));
+      expect(brief, contains('- [x] "Vietnam GDP 2024"'));
+      expect(brief, contains('- [ ] "Thailand tourism recovery 2024"'));
+      expect(brief, contains(ResearchLedger.closedRule));
+      // The open rule invites a search; on a request carrying no tool that
+      // invitation is the contradiction this variant exists to remove.
+      expect(brief, isNot(contains(ResearchLedger.stoppingRule)));
+      expect(ledger.render(closed: true), brief);
+    });
+
+    test('is open by default, so every existing caller is unchanged', () {
+      final ledger = ResearchLedger(objective: 'objective');
+      ledger.upsert('anything');
+
+      expect(ledger.renderBrief(), contains(ResearchLedger.stoppingRule));
+      expect(ledger.render(), contains(ResearchLedger.stoppingRule));
+      expect(ledger.render(), isNot(contains(ResearchLedger.closedRule)));
+    });
+  });
+
+  group('ResearchClarification', () {
+    test('the brief carries what the user clarified on every turn', () {
+      // The answering model's history holds only the ambiguous original,
+      // so the brief is where the user's choice reaches it.
+      final ledger = ResearchLedger(
+        objective: 'Find the latest Mercury results',
+        clarification: ResearchClarification.note(
+            'Which Mercury?', ['The Phoenix Mercury basketball team']),
+      );
+
+      expect(ledger.renderBrief(),
+          contains('The user clarified: Which Mercury? The Phoenix Mercury basketball team'));
+      expect(ResearchLedger(objective: 'x').renderBrief(),
+          isNot(contains('The user clarified')));
+    });
+
+    test('picks folded into the question count as requested instances', () {
+      // "Population for which years?" answered with two years is two
+      // questions, exactly as if the user had typed both years — so the
+      // ledger must keep their searches apart instead of grouping them.
+      final question = ResearchClarification.clarifiedQuestion(
+          'What was the population of Lagos?',
+          'Which years?',
+          ['2023', '2024']);
+      final ledger = ResearchLedger(
+        objective: 'Establish the population of Lagos',
+        userQuestion: question,
+      );
+      ledger.upsert('Lagos population 2023');
+
+      expect(question, startsWith('What was the population of Lagos?'));
+      expect(ledger.findMatch('Lagos population 2024'), isNull);
+    });
+
+    test('an empty pick list leaves the question untouched', () {
+      expect(ResearchClarification.clarifiedQuestion('q', 'which?', const []),
+          'q');
+      expect(ResearchClarification.note('which?', const []), isEmpty);
+    });
+  });
+
   group('ResearchLedger.userQuestion', () {
     test('splits instances the user named even when the goal paraphrases them away', () {
       // The derived goal is a model's restatement and may drop the years.

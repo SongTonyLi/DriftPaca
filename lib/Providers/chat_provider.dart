@@ -108,6 +108,14 @@ A refusal is a complete answer. If the draft declines a part because it would be
 /// English is shown back to the user as their own research goal, and lands
 /// in the model's context as a paraphrase of a question it will then search
 /// for in the wrong language.
+///
+/// The CLARIFY block is the one exit from "restate faithfully": when the
+/// message genuinely names something ambiguous, the run asks the user
+/// which reading they meant (see ResearchClarification) instead of
+/// guessing and researching the guess to a confident, well-cited answer
+/// to a question nobody asked. Biased hard against asking, for the same
+/// reason the gate is biased toward NONE — a question the user did not
+/// need is a run that stalls on a card.
 String _goalDerivationInstruction() => '''
 You turn a chat message into a research brief for a web-search agent.
 
@@ -119,6 +127,13 @@ GOAL: <one sentence naming what has to be found out>
 The GOAL line restates the user's question faithfully and completely. Never add a topic they did not ask about; never drop one they did.
 
 List a bullet ONLY for a part that genuinely needs a search of its own. Most questions need none at all — if one search could answer it, write no bullets. At most 4, and fewer is better: every bullet is a search the agent will feel obliged to run.
+
+If — and only if — the message could mean several distinct things and the research would go a different way for each (which entity, which time period, which place, which sense of a word), add after the bullets:
+CLARIFY: <one short question to the user>
+[ ] <a concrete reading>
+[ ] <another concrete reading>
+
+Almost no messages need this. Ask only when a careful reader genuinely could not tell which of several specific things is meant. Never ask about scope, depth, format, or preferences, and never ask something a quick search would settle. 2 to 4 options, each a specific, distinct thing, in the user's own words where possible.
 
 Keep the user's own wording for names, numbers, dates and entities, and write in the language the user wrote in.
 
@@ -152,6 +167,27 @@ class ChatProvider extends ChangeNotifier {
   void Function(String objective, List<SubGoal> snapshot)? _webSearchLedgerUpdateCallback;
   void Function(String query, String reason)? _webSearchSkippedCallback;
   void Function(SearchTerminationReason reason)? _webSearchResearchDoneCallback;
+  void Function(ResearchClarification clarification)?
+      _webSearchClarificationCallback;
+
+  /// The clarification a research run is currently waiting on, if any.
+  /// Completed by [answerClarification] (the user picked), or with null by
+  /// cancellation (the user stopped the run instead).
+  Completer<List<String>?>? _pendingClarification;
+  String? _pendingClarificationChatId;
+
+  /// Whether a research run is paused on a clarification card right now.
+  bool get isAwaitingClarification =>
+      _pendingClarification != null && !_pendingClarification!.isCompleted;
+
+  /// Resumes a research run paused on its clarification question with the
+  /// options the user picked — empty to continue without answering.
+  void answerClarification(List<String> selected) {
+    final pending = _pendingClarification;
+    if (pending == null || pending.isCompleted) return;
+    pending.complete(List<String>.unmodifiable(selected));
+    notifyListeners();
+  }
 
   void setWebSearchCallbacks({
     required void Function(String thinking) onSearchThinking,
@@ -165,7 +201,9 @@ class ChatProvider extends ChangeNotifier {
     void Function(String objective, List<SubGoal> snapshot)? onLedgerUpdate,
     void Function(String query, String reason)? onSearchSkipped,
     void Function(SearchTerminationReason reason)? onResearchDone,
+    void Function(ResearchClarification clarification)? onClarification,
   }) {
+    _webSearchClarificationCallback = onClarification;
     _webSearchThinkingCallback = onSearchThinking;
     _webSearchCallback = onSearchStart;
     _webSearchQueryUpdateCallback = onSearchQueryUpdate;
@@ -191,6 +229,7 @@ class ChatProvider extends ChangeNotifier {
     _webSearchLedgerUpdateCallback = null;
     _webSearchSkippedCallback = null;
     _webSearchResearchDoneCallback = null;
+    _webSearchClarificationCallback = null;
   }
 
   /// Source URLs intercepted during WEBSEARCH stream interception.
@@ -1048,6 +1087,29 @@ class ChatProvider extends ChangeNotifier {
         );
         return reply == null ? null : parseResearchGoal(reply);
       },
+      askClarification: (clarification) async {
+        // The run pauses here on the user. The card is the only thing
+        // that can complete this, apart from the stop button — polled the
+        // same way _collectWithin polls, since a paused run receives no
+        // chunks for a per-chunk check to fire on.
+        final completer = Completer<List<String>?>();
+        _pendingClarification = completer;
+        _pendingClarificationChatId = associatedChat.id;
+        _webSearchClarificationCallback?.call(clarification);
+        notifyListeners();
+        final cancelPoll =
+            Timer.periodic(const Duration(milliseconds: 200), (_) {
+          if (cancelled() && !completer.isCompleted) completer.complete(null);
+        });
+        try {
+          return await completer.future;
+        } finally {
+          cancelPoll.cancel();
+          if (identical(_pendingClarification, completer)) {
+            _pendingClarification = null;
+          }
+        }
+      },
       assessCoverage: (request) async {
         // Isolated on purpose: a bare two-message exchange with no tools, no
         // memory, no research transcript and no chat history. The gate is
@@ -1545,6 +1607,15 @@ class ChatProvider extends ChangeNotifier {
 
   void cancelCurrentStreaming() {
     _activeChatStreams.remove(currentChat?.id);
+    // A run paused on its clarification card is waiting on nobody but the
+    // user, and stopping is their answer — for THIS chat's run. A run
+    // paused in another chat keeps waiting, as its own stream does.
+    final pending = _pendingClarification;
+    if (pending != null &&
+        !pending.isCompleted &&
+        _pendingClarificationChatId == currentChat?.id) {
+      pending.complete(null);
+    }
     notifyListeners();
   }
 

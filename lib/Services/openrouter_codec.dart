@@ -87,6 +87,15 @@ class OpenRouterCodec {
     List<Map<String, dynamic>> messages,
   ) {
     final out = <Map<String, dynamic>>[];
+    // Ids of the most recent assistant message's tool calls that no tool
+    // message has answered yet, in call order. OpenAI-compatible providers
+    // (OpenAI, Anthropic and Gemini through OpenRouter) reject a request
+    // whose tool messages do not answer those exact ids — and Ollama tool
+    // calls carry no id at all, so both sides are minted here. Minting
+    // them independently (the call from its index, the reply from its
+    // position in the conversation) meant no reply ever matched its call,
+    // which is a 400 on every research turn after the first.
+    final pendingCallIds = <String>[];
     for (final raw in messages) {
       final msg = Map<String, dynamic>.from(raw);
       final images = msg.remove('images');
@@ -94,15 +103,22 @@ class OpenRouterCodec {
       final ollamaTools = msg['tool_calls'];
 
       if (ollamaTools is List && ollamaTools.isNotEmpty) {
-        msg['tool_calls'] = [
-          for (var i = 0; i < ollamaTools.length; i++)
-            _toOpenAiToolCall(ollamaTools[i], i),
-        ];
+        pendingCallIds.clear();
+        final calls = <Map<String, dynamic>>[];
+        for (var i = 0; i < ollamaTools.length; i++) {
+          final call =
+              _toOpenAiToolCall(ollamaTools[i], 'call_${out.length}_$i');
+          pendingCallIds.add(call['id'] as String);
+          calls.add(call);
+        }
+        msg['tool_calls'] = calls;
       }
 
       if (toolName != null && msg['role'] == 'tool') {
         msg['name'] = toolName;
-        msg['tool_call_id'] = 'tool_${out.length}';
+        msg['tool_call_id'] = pendingCallIds.isNotEmpty
+            ? pendingCallIds.removeAt(0)
+            : 'tool_${out.length}';
       }
 
       if (images is List && images.isNotEmpty) {
@@ -125,7 +141,7 @@ class OpenRouterCodec {
     return out;
   }
 
-  static Map<String, dynamic> _toOpenAiToolCall(dynamic raw, int index) {
+  static Map<String, dynamic> _toOpenAiToolCall(dynamic raw, String fallbackId) {
     final map = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
     final function = map['function'] is Map
         ? Map<String, dynamic>.from(map['function'] as Map)
@@ -135,7 +151,7 @@ class OpenRouterCodec {
         ? arguments
         : jsonEncode(arguments ?? {});
     return {
-      'id': map['id'] ?? 'call_$index',
+      'id': map['id'] ?? fallbackId,
       'type': 'function',
       'function': {
         'name': function['name'] ?? '',

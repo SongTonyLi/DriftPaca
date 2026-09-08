@@ -11,6 +11,11 @@ class ChatTextField extends StatefulWidget {
   final Widget? prefixIcon;
   final Widget? suffixIcon;
 
+  /// Placeholder shown while the field is empty. Overridden while a research
+  /// run is paused on its clarification card, so the bar says what it is
+  /// waiting for instead of inviting a message it cannot send yet.
+  final String hintText;
+
   const ChatTextField({
     super.key,
     this.controller,
@@ -19,6 +24,7 @@ class ChatTextField extends StatefulWidget {
     this.focusNode,
     this.prefixIcon,
     this.suffixIcon,
+    this.hintText = 'Message',
   });
 
   @override
@@ -61,7 +67,7 @@ class _ChatTextFieldState extends State<ChatTextField> {
         onEditingComplete: widget.onEditingComplete,
         decoration: InputDecoration(
           border: InputBorder.none,
-          hintText: 'Message',
+          hintText: widget.hintText,
           prefixIcon: widget.prefixIcon,
           suffixIcon: widget.suffixIcon,
           contentPadding: const EdgeInsets.only(left: 4, right: 4, top: 14, bottom: 8),

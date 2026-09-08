@@ -31,6 +31,9 @@ class _EmptyChatProvider extends ChangeNotifier implements ChatProvider {
   bool get isCurrentChatStreaming => false;
 
   @override
+  bool get isAwaitingClarification => false;
+
+  @override
   bool get isCurrentChatThinking => false;
 
   @override

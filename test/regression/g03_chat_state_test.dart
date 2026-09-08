@@ -256,6 +256,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     void Function(String objective, List<SubGoal> snapshot)? onLedgerUpdate,
     void Function(String query, String reason)? onSearchSkipped,
     void Function(SearchTerminationReason reason)? onResearchDone,
+    void Function(ResearchClarification clarification)? onClarification,
   }) {
     activeCallbacks = WebSearchCallbackSet(onSearchStart);
   }

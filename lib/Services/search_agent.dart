@@ -292,6 +292,20 @@ class SearchAgent {
   /// just a worse one, and losing an entire research run because a framing
   /// call timed out would be an absurd trade. See [_deriveGoal].
   final Future<ResearchGoal?> Function(String userQuestion)? deriveGoal;
+
+  /// Puts a derived goal's clarification question to the user and returns
+  /// the options they picked — empty when they chose to skip, null when
+  /// the run was stopped while waiting. Optional: when null a clarification
+  /// the goal asked for is simply not asked, and the run proceeds on the
+  /// goal statement alone, exactly as it did before clarifications existed.
+  ///
+  /// This is the one place the loop waits on a person rather than a model
+  /// or a search engine, and it is deliberately before the first turn: a
+  /// question asked mid-run would land after searches that may already
+  /// have gone the wrong way. Nothing bounds the wait but cancellation —
+  /// the user is the one being waited for.
+  final Future<List<String>?> Function(ResearchClarification clarification)?
+      askClarification;
   final int maxCoverageChecks;
   final int maxSearches;
   final int maxRounds;
@@ -306,6 +320,7 @@ class SearchAgent {
     required this.search,
     this.assessCoverage,
     this.deriveGoal,
+    this.askClarification,
     this.maxCoverageChecks = defaultMaxCoverageChecks,
     this.maxSearches = defaultMaxSearches,
     this.maxRounds = defaultMaxRounds,
@@ -342,9 +357,19 @@ class SearchAgent {
       listener.onLedgerUpdate?.call(userQuestion, const []);
     }
     final goal = await _deriveGoal(userQuestion);
+    // Asked before the ledger exists, because the answer changes what the
+    // ledger is judged against: the instance detection and the
+    // completeness gate both read userQuestion as ground truth, and a
+    // choice the user made explicitly belongs in that ground truth.
+    final clarified = await _clarify(goal, userQuestion, isCancelled);
+    if (clarified == null) {
+      return _outcome('', '', sourceUrls, 0, true,
+          reason: SearchTerminationReason.cancelled, listener: listener);
+    }
     final ledger = ResearchLedger(
       objective: goal.statement,
-      userQuestion: userQuestion,
+      userQuestion: clarified.question,
+      clarification: clarified.note,
     );
     for (final question in goal.subQuestions) {
       ledger.openGap(question);
@@ -367,6 +392,7 @@ class SearchAgent {
     var forcedAnswer = false;
     var searchUnavailable = false;
     var coverageChecks = 0;
+    _LedgerCarrier? ledgerCarrier;
 
     while (true) {
       if (isCancelled?.call() == true) {
@@ -374,29 +400,24 @@ class SearchAgent {
             reason: SearchTerminationReason.cancelled, listener: listener);
       }
 
-      // Computed once per round and used at both checkpoints below so a
-      // model that keeps emitting tool_calls after budget/round/stall caps
-      // trip can't force another search round just because it ignored
-      // toolsEnabled:false on the request.
-      // A throttled backend ends research outright rather than counting
-      // against the stall limit. Those counters exist to notice a model
-      // going in circles; spending two more rounds' worth of requests to
-      // "confirm" a block only deepens it, and every one of those rounds
-      // would report back as a failed search the model could mistake for
-      // evidence that nothing is out there.
-      final canSearch = !searchUnavailable &&
-          searchCount < maxSearches &&
-          round < maxRounds &&
-          ledger.roundsSinceProgress < stallLimit &&
-          ledger.roundsSinceCoverageGrew < stallLimit;
+      final canSearch = _canSearch(
+        ledger: ledger,
+        searchUnavailable: searchUnavailable,
+        searchCount: searchCount,
+        round: round,
+      );
 
+      // The brief has to agree with the request it rides on: once the tool
+      // is withdrawn it says research is closed, instead of inviting the
+      // model to "search only to close a specific [ ] item" on a request
+      // that carries no tool — see ResearchLedger.closedRule.
       final turn = await _streamOneTurn(
         history: history,
         transcript: transcript,
         listener: listener,
         isCancelled: isCancelled,
         toolsEnabled: canSearch,
-        researchBrief: ledger.renderBrief(),
+        researchBrief: ledger.renderBrief(closed: !canSearch),
       );
       allThinking += turn.thinking;
       // Only overwrite when this turn actually said something. lastContent
@@ -464,6 +485,13 @@ class SearchAgent {
             for (final gap in gaps) {
               ledger.openGap(gap);
             }
+            // The gaps just became [ ] items the model is about to be told
+            // to close, so the ledger copy in the transcript and the panel
+            // the user is looking at both show them now — not one search
+            // round later, and never if the model answers without one.
+            ledgerCarrier = _placeLedger(ledgerCarrier, ledger);
+            listener.onLedgerUpdate
+                ?.call(ledger.objective, List<SubGoal>.from(ledger.subGoals));
             // The rejected answer already streamed to the UI, so clear it
             // there — but keep it in lastContent. If the user cancels during
             // the corrective round, an incomplete draft is still far better
@@ -549,7 +577,6 @@ class SearchAgent {
       }
       if (executed.searchUnavailable) searchUnavailable = true;
 
-      _appendLedgerToLastToolMessage(executed.toolMessages, ledger);
       ledger.recordRoundOutcome(
         madeProgress:
             executed.uniqueSearchCount > 0 && executed.anyNonEmptyResults,
@@ -560,6 +587,23 @@ class SearchAgent {
         // down that list as stalled and cuts the run off two rounds in.
         broadenedCoverage: ledger.subGoals.length > subGoalsBefore ||
             ledger.searchedSubGoalCount > searchedBefore,
+      );
+      searchCount += executed.uniqueSearchCount;
+      round++;
+      // Counters are final for this round, so this is the same answer the
+      // top of the next iteration will compute — the transcript copy of
+      // the ledger and the next turn's brief then tell one story.
+      final nextCanSearch = _canSearch(
+        ledger: ledger,
+        searchUnavailable: searchUnavailable,
+        searchCount: searchCount,
+        round: round,
+      );
+      ledgerCarrier = _placeLedger(
+        ledgerCarrier,
+        ledger,
+        target: _ledgerTargetIn(executed.toolMessages),
+        closed: !nextCanSearch,
       );
       listener.onLedgerUpdate
           ?.call(ledger.objective, List<SubGoal>.from(ledger.subGoals));
@@ -581,10 +625,32 @@ class SearchAgent {
       _compactStaleRounds(roundRecords, transcript);
       sourceUrls.addAll(executed.sourceUrls);
       idOffset = executed.nextOffset;
-      searchCount += executed.uniqueSearchCount;
-      round++;
     }
   }
+
+  /// Whether the next turn may search: the backend is answering and no
+  /// budget, round or stall cap has tripped. Computed once per round and
+  /// used at every checkpoint, so a model that keeps emitting tool_calls
+  /// after a cap trips can't force another search round just because it
+  /// ignored toolsEnabled:false on the request.
+  ///
+  /// A throttled backend ends research outright rather than counting
+  /// against the stall limit. Those counters exist to notice a model going
+  /// in circles; spending two more rounds' worth of requests to "confirm" a
+  /// block only deepens it, and every one of those rounds would report back
+  /// as a failed search the model could mistake for evidence that nothing
+  /// is out there.
+  bool _canSearch({
+    required ResearchLedger ledger,
+    required bool searchUnavailable,
+    required int searchCount,
+    required int round,
+  }) =>
+      !searchUnavailable &&
+      searchCount < maxSearches &&
+      round < maxRounds &&
+      ledger.roundsSinceProgress < stallLimit &&
+      ledger.roundsSinceCoverageGrew < stallLimit;
 
   /// Whether to spend a call asking what the drafted answer left out.
   ///
@@ -616,6 +682,40 @@ class SearchAgent {
   /// maxCoverageGaps.
   static const maxGoalSubQuestions = 4;
 
+  /// Asks the goal's clarification question, if it has one and there is
+  /// someone to ask. Returns the question the rest of the run should treat
+  /// as the user's (their picks folded in) plus the one-line note for the
+  /// brief; null only when the run was cancelled while waiting.
+  ///
+  /// Every other failure — no callback, a throw, a skip — lands on the
+  /// question as typed, which is what the run would have used anyway.
+  Future<({String question, String note})?> _clarify(
+    ResearchGoal goal,
+    String userQuestion,
+    bool Function()? isCancelled,
+  ) async {
+    final unclarified = (question: userQuestion, note: '');
+    final clarification = goal.clarification;
+    if (clarification == null || askClarification == null) return unclarified;
+    List<String>? selected;
+    try {
+      selected = await askClarification!(clarification);
+    } catch (_) {
+      selected = const [];
+    }
+    if (selected == null || isCancelled?.call() == true) return null;
+    final picks = [
+      for (final option in selected)
+        if (option.trim().isNotEmpty) option.trim()
+    ];
+    if (picks.isEmpty) return unclarified;
+    return (
+      question: ResearchClarification.clarifiedQuestion(
+          userQuestion, clarification.question, picks),
+      note: ResearchClarification.note(clarification.question, picks),
+    );
+  }
+
   /// Derives the run's goal, falling back to the user's message verbatim.
   ///
   /// Every failure mode lands on that fallback: no callback, a throw, a
@@ -634,6 +734,7 @@ class SearchAgent {
           for (final q in derived.subQuestions)
             if (q.trim().isNotEmpty) q.trim()
         ].take(maxGoalSubQuestions).toList(),
+        clarification: derived.clarification,
       );
     } catch (_) {
       return fallback;
@@ -684,12 +785,11 @@ class SearchAgent {
   /// (preserves the pinned assistant+tool-message shape).
   ///
   /// Safe specifically because the research ledger — rendered fresh and
-  /// re-appended to the CURRENT round's last tool message every round (see
-  /// _appendLedgerToLastToolMessage) — already carries the durable
-  /// compressed "what we learned" independently of this raw text. A round
-  /// that ages out of the raw window also loses whatever stale ledger copy
-  /// had been appended to it while it was current; that's expected, since
-  /// the current round always carries its own fresh one.
+  /// moved onto the CURRENT round's last tool message every round (see
+  /// _placeLedger) — already carries the durable compressed "what we
+  /// learned" independently of this raw text. Only the current round ever
+  /// carries a copy, so compaction never rewrites a message the ledger is
+  /// riding on.
   void _compactStaleRounds(
     List<List<_RoundSearchRecord>> roundRecords,
     List<OllamaMessage> transcript,
@@ -1098,26 +1198,51 @@ class SearchAgent {
     return '';
   }
 
-  /// Appends the rendered ledger to the last web_search tool message this
-  /// round, so the model sees what's already searched/open in its next
-  /// turn — falls back to the last message of any kind if none of this
-  /// round's calls were web_search (e.g. an unknown-tool-only turn).
-  ///
-  /// Invariant: this re-renders and re-appends the ledger onto the CURRENT
-  /// round every round; it is never expected to survive once that round
-  /// ages out and _compactStaleRounds rewrites its message content.
-  static void _appendLedgerToLastToolMessage(
-    List<OllamaMessage> toolMessages,
-    ResearchLedger ledger,
-  ) {
-    if (toolMessages.isEmpty) return;
-    final ledgerText = ledger.render();
-    if (ledgerText.isEmpty) return;
+  /// The message this round's ledger copy rides on: the last web_search
+  /// tool message, falling back to the last message of any kind if none of
+  /// this round's calls were web_search (e.g. an unknown-tool-only turn).
+  /// Null when the round produced no tool message at all.
+  static OllamaMessage? _ledgerTargetIn(List<OllamaMessage> toolMessages) {
+    if (toolMessages.isEmpty) return null;
     var targetIndex =
         toolMessages.lastIndexWhere((m) => m.toolName == 'web_search');
     if (targetIndex == -1) targetIndex = toolMessages.length - 1;
-    toolMessages[targetIndex].content =
-        '${toolMessages[targetIndex].content}\n\n$ledgerText';
+    return toolMessages[targetIndex];
+  }
+
+  /// Moves the transcript's ONE copy of the rendered ledger onto [target]
+  /// (or re-renders it in place on the current carrier when [target] is
+  /// null), returning the new carrier.
+  ///
+  /// One copy, not one per round. The ledger used to be appended to every
+  /// round's last tool message and left there, so by round three the model
+  /// was reading three checklists that disagreed — the oldest still
+  /// showing `[ ]` against items later rounds had ticked, each with its
+  /// own copy of the stopping rule. A stale `[ ]` is an open invitation to
+  /// re-search a closed item, which is the one thing every prompt surface
+  /// in this loop is trying to stop. The previous copy is stripped before
+  /// the fresh one lands; a carrier that _compactStaleRounds has since
+  /// rewritten no longer ends with the suffix and is left alone, since the
+  /// rewrite already dropped it.
+  static _LedgerCarrier? _placeLedger(
+    _LedgerCarrier? current,
+    ResearchLedger ledger, {
+    OllamaMessage? target,
+    bool closed = false,
+  }) {
+    if (current != null &&
+        current.message.content.endsWith(current.suffix)) {
+      final content = current.message.content;
+      current.message.content =
+          content.substring(0, content.length - current.suffix.length);
+    }
+    final message = target ?? current?.message;
+    if (message == null) return null;
+    final ledgerText = ledger.render(closed: closed);
+    if (ledgerText.isEmpty) return null;
+    final suffix = '\n\n$ledgerText';
+    message.content = '${message.content}$suffix';
+    return _LedgerCarrier(message, suffix);
   }
 
   /// Reason for the natural (non-cancelled) stop: whichever cap actually
@@ -1156,6 +1281,16 @@ class SearchAgent {
       reason: reason,
     );
   }
+}
+
+/// Which transcript message currently carries the rendered ledger, and the
+/// exact text appended so it can be stripped again — see
+/// SearchAgent._placeLedger.
+class _LedgerCarrier {
+  final OllamaMessage message;
+  final String suffix;
+
+  const _LedgerCarrier(this.message, this.suffix);
 }
 
 class _TurnAccum {

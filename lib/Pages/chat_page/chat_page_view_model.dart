@@ -648,9 +648,31 @@ class ChatPageViewModel extends ChangeNotifier {
         ledger.terminationReason = reason.name;
         notifyListeners();
       },
+      // The run is now paused on the user. The card renders from this
+      // segment and hands the picks back through [answerClarification].
+      onClarification: (clarification) {
+        _searchSegments.add(ClarificationSegment(
+          question: clarification.question,
+          options: List<String>.unmodifiable(clarification.options),
+        ));
+        notifyListeners();
+      },
     );
 
     return token;
+  }
+
+  /// Whether the current run is paused waiting for the user to answer a
+  /// clarification card.
+  bool get isAwaitingClarification => _chatProvider.isAwaitingClarification;
+
+  /// Resolves a clarification card with the user's picks — empty to
+  /// continue without answering — and resumes the paused run.
+  void answerClarification(ClarificationSegment segment, List<String> selected) {
+    if (segment.isAnswered) return;
+    segment.selected = List<String>.unmodifiable(selected);
+    notifyListeners();
+    _chatProvider.answerClarification(selected);
   }
 
   /// Cap on how much of one source's extracted text gets persisted per
@@ -692,6 +714,11 @@ class ChatPageViewModel extends ChangeNotifier {
   /// card that never finished comes back claiming it searched and found
   /// nothing.
   void _finalizeSearchCards() {
+    // A clarification the run stopped waiting on is closed the same way,
+    // so a reloaded message never shows a card that is still asking.
+    for (final card in _searchSegments.whereType<ClarificationSegment>()) {
+      card.selected ??= const [];
+    }
     for (final card in _searchSegments.whereType<SearchCardSegment>()) {
       if (card.isComplete) continue;
       card.isComplete = true;

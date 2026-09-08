@@ -80,6 +80,16 @@ String encodeSearchSegments(List<MessageSegment> segments) {
         if (segment.terminationReason != null)
           'terminationReason': segment.terminationReason,
       });
+    } else if (segment is ClarificationSegment && segment.question.isNotEmpty) {
+      data.add({
+        'type': 'clarification',
+        'question': segment.question,
+        'options': segment.options,
+        // A card still waiting when the message is saved was never
+        // answered — the run ended first — and is saved as skipped rather
+        // than as a question a reloaded message would appear to be asking.
+        'selected': segment.selected ?? const <String>[],
+      });
     }
   }
   if (data.isEmpty) return '';
@@ -152,6 +162,15 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
           objective: item['objective'] as String? ?? '',
           entries: entries,
           terminationReason: item['terminationReason'] as String?,
+        ));
+      } else if (type == 'clarification') {
+        List<String> strings(dynamic raw) => [
+              for (final v in (raw as List?) ?? const []) v.toString()
+            ];
+        segments.add(ClarificationSegment(
+          question: item['question'] as String? ?? '',
+          options: strings(item['options']),
+          selected: strings(item['selected']),
         ));
       }
     }

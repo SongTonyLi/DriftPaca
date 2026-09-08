@@ -287,9 +287,16 @@ final _malformedCitationForms = <String, RegExp>{
 };
 
 /// How long one (model, probe) cell may run before the sweep abandons it.
-/// Generous — the slowest healthy cell measured was 92s — so tripping this
-/// means the stream stopped, not that the model is thinking.
-const _cellBudget = Duration(minutes: 6);
+/// Six minutes by default — the slowest healthy cell measured was 92s.
+///
+/// Raise it with OR_CELL_MINUTES for a model with a long time-to-first
+/// -token: qwen3.8-flash on Alibaba can spend minutes queued behind
+/// `: OPENROUTER PROCESSING` and then stream reasoning-only deltas for
+/// minutes more, which is slow rather than stalled, and the two look
+/// identical from inside the loop precisely because nothing bounds them.
+final _cellBudget = Duration(
+    minutes:
+        int.tryParse(Platform.environment['OR_CELL_MINUTES'] ?? '') ?? 6);
 
 final _reports = <_RunReport>[];
 

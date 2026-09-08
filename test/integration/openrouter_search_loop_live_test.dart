@@ -186,6 +186,10 @@ class _RunReport {
   final String probe;
 
   String? error;
+
+  /// The cell ran past [_cellBudget] with the loop still waiting on a
+  /// stream that never delivered another chunk.
+  bool hung = false;
   Duration elapsed = Duration.zero;
 
   String objective = '';
@@ -232,6 +236,7 @@ class _RunReport {
         'model': model,
         'probe': probe,
         if (error != null) 'error': error,
+        'hung': hung,
         'elapsedSeconds': elapsed.inMilliseconds / 1000.0,
         'objective': objective,
         'subQuestions': subQuestions,
@@ -281,22 +286,42 @@ final _malformedCitationForms = <String, RegExp>{
   'backticked': RegExp(r'`\[\d+\]`'),
 };
 
+/// How long one (model, probe) cell may run before the sweep abandons it.
+/// Generous — the slowest healthy cell measured was 92s — so tripping this
+/// means the stream stopped, not that the model is thinking.
+const _cellBudget = Duration(minutes: 6);
+
 final _reports = <_RunReport>[];
 
 /// Collects a stream into one string, giving up after [budget]. Mirrors
 /// ChatProvider._collectWithin, which is private.
+///
+/// The deadline is a real [Timer], not a check inside `await for`, for the
+/// reason production's version documents: a stalled request delivers no
+/// chunks by definition, so a per-chunk deadline cannot fire on exactly
+/// the requests it exists to bound. An earlier version of this helper got
+/// that wrong and hung a sweep cell for 17 minutes.
 Future<String?> _collectWithin(
     Stream<OllamaMessage> stream, Duration budget) async {
   final buffer = StringBuffer();
-  final deadline = DateTime.now().add(budget);
-  try {
-    await for (final chunk in stream) {
-      buffer.write(chunk.content);
-      if (DateTime.now().isAfter(deadline)) return null;
-    }
-  } catch (_) {
-    return null;
-  }
+  final finished = Completer<bool>();
+  final timer = Timer(budget, () {
+    if (!finished.isCompleted) finished.complete(false);
+  });
+  final subscription = stream.listen(
+    (chunk) => buffer.write(chunk.content),
+    onError: (_) {
+      if (!finished.isCompleted) finished.complete(false);
+    },
+    onDone: () {
+      if (!finished.isCompleted) finished.complete(true);
+    },
+    cancelOnError: true,
+  );
+  final completed = await finished.future;
+  timer.cancel();
+  await subscription.cancel();
+  if (!completed) return null;
   final text = buffer.toString().trim();
   return text.isEmpty ? null : text;
 }
@@ -390,7 +415,16 @@ Future<_RunReport> _runProbe(String model, _Probe probe) async {
           .searchAndExtract(req.query, excludeUrls: req.excludeUrls),
     );
 
-    final outcome = await agent.run(
+    // Bounded at the CELL, never inside the harness — a research turn is
+    // unbounded and uncancellable by design today (SearchAgent
+    // ._streamOneTurn only evaluates isCancelled when a chunk arrives, and
+    // the OpenRouter streaming request carries no timeout), so wrapping the
+    // turn itself would hide the very behaviour the sweep is measuring.
+    // A cell that trips this is recorded as `hung` and the sweep moves on;
+    // the abandoned future is left dangling, because there is no way to
+    // stop it, which is the finding.
+    final outcome = await agent
+        .run(
       history: [OllamaMessage(probe.question, role: OllamaMessageRole.user)],
       listener: SearchAgentListener(
         onSearchStart: report.queries.add,
@@ -401,7 +435,14 @@ Future<_RunReport> _runProbe(String model, _Probe probe) async {
           report.subQuestions = [for (final g in snapshot) g.query];
         },
       ),
-    );
+    )
+        .timeout(_cellBudget, onTimeout: () {
+      report.hung = true;
+      throw TimeoutException(
+          'no output for ${_cellBudget.inMinutes} minutes — the research '
+          'turn is unbounded and the stop button cannot interrupt it',
+          _cellBudget);
+    });
 
     report.searchCount = outcome.searchCount;
     report.sourceCount = outcome.sourceUrls.length;
@@ -449,7 +490,8 @@ String _matrix(List<_RunReport> reports) {
   buffer.writeln('-' * 108);
   for (final r in reports) {
     final flags = <String>[
-      if (r.error != null) 'ERROR',
+      if (r.hung) 'HUNG',
+      if (r.error != null && !r.hung) 'ERROR',
       if (r.error == null && r.searchCount == 0) 'no-search',
       if (r.missingFacts.isNotEmpty) 'missing:${r.missingFacts.length}',
       if (r.danglingCitations.isNotEmpty)

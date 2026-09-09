@@ -115,6 +115,22 @@ class SubGoal {
   final List<SourceIdRange> ranges = [];
   String? excerpt;
 
+  /// Parts of the user's question the completeness gate says this
+  /// sub-goal's evidence does NOT cover, in the gate's own words — see
+  /// [ResearchLedger.openGap]. Non-empty means reopened: the checklist
+  /// stops ticking this item and quotes the gap instead,
+  /// [ResearchLedger.searchedSubGoalCount] stops counting it as covered
+  /// ground, and SearchAgent._isLedgerBlocked stops refusing searches that
+  /// land on it — until [ResearchLedger.recordEvidence] files new sources
+  /// against it.
+  ///
+  /// Deliberately NOT modelled by flipping [status] back to
+  /// [SubGoalStatus.open]. That status means "a search ran and returned
+  /// something", which is still true; and an open line renders no source
+  /// ids, so a model told to "keep everything you already established"
+  /// would lose sight of the evidence it already has.
+  final List<String> outstandingGaps = [];
+
   SubGoal({
     required this.query,
     required this.normalizedQuery,
@@ -282,11 +298,41 @@ class ResearchLedger {
   /// search budget on a search that never ran. A gap starts at zero.
   ///
   /// Reuses a matching sub-goal when one exists rather than spawning a
-  /// lookalike, and leaves its status and counters alone — a gap naming
-  /// something already searched adds nothing.
+  /// lookalike — but, alone among the lookups here, MUTATES the sub-goal it
+  /// returns: a gap landing on one that has already been searched is filed
+  /// on it as an outstanding gap (see [SubGoal.outstandingGaps]). Callers
+  /// must expect that.
+  ///
+  /// Leaving the hit untouched — on the theory that "a gap naming something
+  /// already searched adds nothing" — is what erased the completeness
+  /// gate's only finding. The gate judged the drafted answer against
+  /// [userQuestion] having read the very sources that search produced and
+  /// said this part is still unaddressed, so on that one path the theory is
+  /// false: the checklist went on ticking the item `[x]` while the gap
+  /// notice riding in the same request ordered a search for wording the
+  /// brief never showed, and SearchAgent._isLedgerBlocked then refused that
+  /// search as a duplicate of the sub-goal whose budget the gap had
+  /// inherited.
+  ///
+  /// [SubGoal.searchCount] > 0 is the exact condition under which reusing
+  /// can hurt: only a searched sub-goal renders `[x]`, and only a searched
+  /// one reaches the ledger-duplicate rules at all. So a gap landing on an
+  /// unsearched sub-goal still files nothing, which keeps the pre-seeded
+  /// checklist path (SearchAgent.run seeds [ResearchGoal.subQuestions]
+  /// through here, before any search has run) byte-identical.
   SubGoal openGap(String question) {
     final existing = findMatch(question);
-    if (existing != null) return existing;
+    if (existing != null) {
+      // Filed even when the gap repeats the sub-goal's own query verbatim:
+      // that is precisely the case _isLedgerBlocked's exact-repeat test
+      // would otherwise refuse.
+      if (existing.searchCount > 0 &&
+          !existing.outstandingGaps
+              .any((g) => _normalize(g) == _normalize(question))) {
+        existing.outstandingGaps.add(question);
+      }
+      return existing;
+    }
     final goal = SubGoal(query: question, normalizedQuery: _normalize(question));
     subGoals.add(goal);
     return goal;
@@ -312,6 +358,10 @@ class ResearchLedger {
   ///
   /// The excerpt still keeps the first one that arrived: it is a single
   /// illustrative quote, and there is no reason to prefer a later search's.
+  ///
+  /// Also closes every gap the completeness gate had filed against [goal]
+  /// (see [openGap]) — landing sources is the only thing the harness can do
+  /// about a reopening, and until they land the sub-goal claims no coverage.
   void recordEvidence(
     SubGoal goal, {
     required int sourceIdStart,
@@ -319,6 +369,13 @@ class ResearchLedger {
     String? excerpt,
   }) {
     goal.status = SubGoalStatus.searched;
+    // New sources ARE the harness acting on a reopening — all it can know
+    // (see [SubGoalStatus]) — so the item ticks again, counts as covered
+    // ground again, and the per-sub-goal budget applies to it again.
+    // Deliberately not cleared when a corrective search comes back empty:
+    // this is only called for non-empty results, so a gap nothing was found
+    // for stays visible as a [ ] the closed brief can point the answer at.
+    goal.outstandingGaps.clear();
     final range = SourceIdRange(sourceIdStart, sourceIdEnd);
     if (!goal.ranges.contains(range)) goal.ranges.add(range);
     if (goal.excerpt == null && excerpt != null && excerpt.isNotEmpty) {
@@ -326,10 +383,21 @@ class ResearchLedger {
     }
   }
 
-  /// How many sub-goals have been searched at least once — half of
-  /// SearchAgent's "did this round cover new ground" check.
-  int get searchedSubGoalCount =>
-      subGoals.where((g) => g.status == SubGoalStatus.searched).length;
+  /// How many sub-goals have been searched at least once AND still stand as
+  /// covered ground — half of SearchAgent's "did this round cover new
+  /// ground" check.
+  ///
+  /// A reopened sub-goal ([SubGoal.outstandingGaps]) is excluded on
+  /// purpose: it is the one the completeness gate has just said its own
+  /// evidence does not cover. Counting it would make the single corrective
+  /// round the harness itself demanded register as covering nothing new —
+  /// so a run that obeyed the gate, searched the gap and closed it would
+  /// still trip the stall counter and be reported as `unproductiveRounds`,
+  /// blaming the model for a round the harness ordered.
+  int get searchedSubGoalCount => subGoals
+      .where((g) =>
+          g.status == SubGoalStatus.searched && g.outstandingGaps.isEmpty)
+      .length;
 
   /// Updates both stall counters: [roundsSinceProgress] resets on a
   /// productive round and increments otherwise; [roundsSinceCoverageGrew]
@@ -399,10 +467,15 @@ class ResearchLedger {
     if (subGoals.isNotEmpty) {
       buffer
         ..writeln()
+        // "[ ] means it is still open" rather than the older "nothing has
+        // been searched for it yet": a reopened item (see [openGap]) is
+        // unticked precisely because a search DID run and the gate judged
+        // its evidence insufficient, and a legend saying otherwise would
+        // contradict the very line it is introducing.
         ..writeln('Checklist — [x] means a search returned sources for it, '
-            '[ ] means nothing has been searched for it yet:');
+            '[ ] means it is still open:');
       for (final goal in subGoals) {
-        buffer.writeln(_checklistLine(goal));
+        buffer.writeln(_checklistLine(goal, closed: closed));
       }
     }
 
@@ -418,7 +491,10 @@ class ResearchLedger {
   String render({bool closed = false}) =>
       subGoals.isEmpty ? '' : renderBrief(closed: closed);
 
-  static String _checklistLine(SubGoal goal) {
+  static String _checklistLine(SubGoal goal, {required bool closed}) {
+    if (goal.outstandingGaps.isNotEmpty) {
+      return _reopenedLine(goal, closed: closed);
+    }
     if (goal.status != SubGoalStatus.searched) return '- [ ] "${goal.query}"';
     final count = goal.ranges.fold<int>(0, (sum, r) => sum + r.count);
     final ids = goal.ranges.map((r) => _chainedIds(r.start, r.end)).join();
@@ -427,6 +503,47 @@ class ResearchLedger {
         : '';
     return '- [x] "${goal.query}" -> $count source${count == 1 ? '' : 's'}, '
         'see $ids.$excerptPart';
+  }
+
+  /// The checklist line for a sub-goal the completeness gate reopened (see
+  /// [SubGoal.outstandingGaps]): unticked, worded as the GATE worded the
+  /// gap, and still carrying the ids the earlier search gathered.
+  ///
+  /// Both halves are load-bearing. Rendering the sub-goal's `[x]` line
+  /// instead is what handed the corrective turn a brief claiming full
+  /// coverage — "An [x] item counts as covered" in the same request as
+  /// "Search for them now", about wording that appeared nowhere on the
+  /// checklist. Dropping the id range would be the mirror-image mistake:
+  /// those sources are real, and the gap notice tells the model to "keep
+  /// everything you already established".
+  ///
+  /// The excerpt is deliberately left off. It is scraped page text, and the
+  /// one line the model is being told to act on is the last place to
+  /// re-inject a chunk of somebody's web page.
+  ///
+  /// A sub-goal whose searches all came back empty has no ranges, so its
+  /// line is the gap alone: there is no evidence to carry forward, and the
+  /// gate's wording is the more useful of the two phrasings to hand a model
+  /// that is about to search again.
+  ///
+  /// [closed] swaps the instruction, never the finding: on a request that
+  /// carries no tool, "search for it specifically" is exactly the
+  /// contradiction [closedRule] exists to remove.
+  static String _reopenedLine(SubGoal goal, {required bool closed}) {
+    final gaps = goal.outstandingGaps.map((g) => '"$g"').join(' / ');
+    final buffer = StringBuffer('- [ ] $gaps — the drafted answer did not '
+        'cover this');
+    buffer.write(closed
+        ? ' and nothing since has settled it; say plainly in the answer '
+            'that this part is unverified.'
+        : '; search for it specifically.');
+    if (goal.ranges.isNotEmpty) {
+      final count = goal.ranges.fold<int>(0, (sum, r) => sum + r.count);
+      final ids = goal.ranges.map((r) => _chainedIds(r.start, r.end)).join();
+      buffer.write(' Searching "${goal.query}" already returned $count '
+          'source${count == 1 ? '' : 's'}, see $ids — they did not settle it.');
+    }
+    return buffer.toString();
   }
 
   static String _chainedIds(int start, int end) {

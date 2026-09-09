@@ -94,9 +94,148 @@ void main() {
 
       expect(gap, same(searched));
       expect(ledger.subGoals, hasLength(1));
-      // Reusing must not quietly re-open something already searched, nor
-      // bill it a second search.
+      // Reusing must not bill a second search...
       expect(searched.searchCount, 1);
+      // ...and must still record the gap, or the checklist goes on implying
+      // coverage the completeness gate has just rejected.
+      expect(searched.outstandingGaps, ['Jalen Brunson college']);
+    });
+  });
+
+  group('ResearchLedger.openGap on a searched sub-goal', () {
+    /// A sub-goal searched once, with three sources filed against it — the
+    /// shape every gate gap lands on when its wording groups (>= 0.40
+    /// trigram) onto ground the run has already covered.
+    ResearchLedger seeded() {
+      final ledger = ResearchLedger(objective: 'find the GDP');
+      final goal = ledger.upsert('Vietnam GDP 2024');
+      ledger.recordEvidence(goal,
+          sourceIdStart: 1, sourceIdEnd: 3, excerpt: 'GDP grew 5%');
+      return ledger;
+    }
+
+    test('files the gap on the sub-goal and renders one unticked line for it',
+        () {
+      final ledger = seeded();
+      final goal = ledger.subGoals.single;
+
+      final filed = ledger.openGap('Vietnam GDP 2024 in US dollars');
+
+      expect(filed, same(goal), reason: 'no lookalike is spawned beside it');
+      expect(goal.outstandingGaps, ['Vietnam GDP 2024 in US dollars']);
+      // Everything the earlier search established is untouched: the gate
+      // rejected the ANSWER's coverage, not the sources.
+      expect(goal.searchCount, 1);
+      expect(goal.status, SubGoalStatus.searched);
+      expect(goal.ranges, [const SourceIdRange(1, 3)]);
+      expect(goal.excerpt, 'GDP grew 5%');
+
+      final rendered = ledger.render();
+      expect(rendered, contains('- [ ] "Vietnam GDP 2024 in US dollars"'));
+      expect(rendered, contains('search for it specifically'));
+      expect(rendered, isNot(contains('- [x]')),
+          reason: 'nothing may claim this ground is covered while the gate '
+              'says it is not');
+      // The evidence is still cited, because the gap notice riding in the
+      // same request tells the model to keep what it already established.
+      expect(rendered, contains('Searching "Vietnam GDP 2024" already '
+          'returned 3 sources, see [1][2][3]'));
+      expect(rendered, isNot(contains('GDP grew 5%')),
+          reason: 'the excerpt is scraped page text, and the one line the '
+              'model is being told to act on is the last place to re-inject '
+              'a chunk of somebody\'s web page');
+    });
+
+    test('the closed brief states the gap without ordering a search', () {
+      final ledger = seeded();
+      ledger.openGap('Vietnam GDP 2024 in US dollars');
+
+      final brief = ledger.renderBrief(closed: true);
+
+      expect(brief, contains('- [ ] "Vietnam GDP 2024 in US dollars"'));
+      expect(brief, isNot(contains('search for it specifically')),
+          reason: 'on a request that carries no tool, ordering a search is '
+              'exactly the contradiction ResearchLedger.closedRule exists to '
+              'remove');
+      expect(brief, contains('say plainly in the answer that this part is '
+          'unverified'));
+    });
+
+    test('a reopened sub-goal stops counting as covered ground until '
+        'evidence lands', () {
+      final ledger = seeded();
+      expect(ledger.searchedSubGoalCount, 1);
+
+      final goal = ledger.openGap('Vietnam GDP 2024 in US dollars');
+      expect(ledger.searchedSubGoalCount, 0,
+          reason: 'otherwise the one corrective round the harness itself '
+              'demanded registers as covering nothing new, and the run that '
+              'obeyed the gate is reported as unproductiveRounds');
+
+      ledger.recordEvidence(goal, sourceIdStart: 9, sourceIdEnd: 10);
+      expect(ledger.searchedSubGoalCount, 1);
+    });
+
+    test('recordEvidence closes every outstanding gap and the item ticks '
+        'again', () {
+      final ledger = seeded();
+      final goal = ledger.openGap('Vietnam GDP 2024 in US dollars');
+      ledger.openGap('Vietnam GDP 2024 growth rate');
+      expect(goal.outstandingGaps, hasLength(2));
+
+      ledger.recordEvidence(goal, sourceIdStart: 9, sourceIdEnd: 10);
+
+      expect(goal.outstandingGaps, isEmpty);
+      final rendered = ledger.render();
+      expect(rendered, contains('- [x] "Vietnam GDP 2024"'));
+      expect(rendered, contains('5 sources'),
+          reason: 'and the reopening cost none of the accumulated evidence');
+    });
+
+    test('two gaps on one sub-goal are both quoted, and a repeat is deduped',
+        () {
+      final ledger = seeded();
+      final goal = ledger.openGap('Vietnam GDP 2024 in US dollars');
+      ledger.openGap('Vietnam GDP 2024 growth rate');
+      ledger.openGap('vietnam  GDP 2024 IN US dollars');
+
+      expect(goal.outstandingGaps, [
+        'Vietnam GDP 2024 in US dollars',
+        'Vietnam GDP 2024 growth rate',
+      ], reason: 'a list, not an overwrite — the gate may report up to '
+          'maxCoverageGaps parts of one question — and deduped on the same '
+          'normalization findMatch uses');
+      final rendered = ledger.render();
+      expect(rendered, contains('"Vietnam GDP 2024 in US dollars" / '
+          '"Vietnam GDP 2024 growth rate"'));
+    });
+
+    test('a gap worded exactly like the sub-goal\'s query is still filed', () {
+      // This is precisely the case SearchAgent._isLedgerBlocked's
+      // exact-repeat test would otherwise refuse: skipping it here would
+      // leave the harness ordering a search it then rejects as a byte-for-
+      // byte duplicate.
+      final ledger = seeded();
+      final goal = ledger.openGap('Vietnam GDP 2024');
+
+      expect(goal.outstandingGaps, ['Vietnam GDP 2024']);
+      expect(ledger.render(), contains('- [ ] "Vietnam GDP 2024"'));
+    });
+
+    test('a gap landing on a never-searched sub-goal files nothing', () {
+      // The pre-seeded checklist shape: SearchAgent.run opens every
+      // ResearchGoal.subQuestion through openGap before any search exists,
+      // and none of them may start claiming the drafted answer missed
+      // something when there is no draft yet.
+      final ledger = ResearchLedger(objective: 'find the GDP');
+      ledger.openGap('Vietnam GDP 2024');
+      final again = ledger.openGap('Vietnam GDP 2024 figures');
+
+      expect(ledger.subGoals, hasLength(1));
+      expect(again.outstandingGaps, isEmpty);
+      expect(again.searchCount, 0);
+      expect(ledger.render(), contains('- [ ] "Vietnam GDP 2024"'));
+      expect(ledger.render(), isNot(contains('drafted answer')));
     });
   });
 

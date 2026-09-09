@@ -6,6 +6,7 @@ import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
+import 'package:llamaseek/Utils/text_similarity.dart';
 import 'package:llamaseek/Utils/text_splitter.dart';
 
 final history = [
@@ -1852,6 +1853,130 @@ void main() {
       expect(executed, hasLength(2));
       expect(executed.last, 'which college did Jalen Brunson attend');
       expect(outcome.searchCount, 2);
+    });
+
+    // Three phrasings of one question. The first two group onto a single
+    // sub-goal and spend its budget; the gate's gap then groups onto that
+    // same, already-searched sub-goal — the case the `searchCount == 0`
+    // guard above cannot reach.
+    const grouped1 = 'Vietnam GDP 2024 forecast';
+    const grouped2 = 'Vietnam GDP 2024 estimate';
+    const groupedGap = 'Vietnam GDP forecast for next year';
+
+    test('a gap that lands on an already-searched sub-goal is still searched',
+        () async {
+      // Measured preconditions, asserted so they cannot rot: every phrasing
+      // is at or above ResearchLedger._groupingThreshold (0.40) against the
+      // first, so findMatch calls them one sub-goal, and below
+      // _ledgerDupeSimilarityThreshold (0.75), so nothing is refused as a
+      // near-verbatim rephrasing. Only the per-sub-goal budget could — and
+      // by the time the gate files its gap, that budget is spent.
+      for (final q in [grouped2, groupedGap]) {
+        final score = trigramJaccard(grouped1, q);
+        expect(score, greaterThanOrEqualTo(0.40), reason: '"$q" scored $score');
+        expect(score, lessThan(0.75), reason: '"$q" scored $score');
+      }
+
+      final requests = <SearchAgentRequest>[];
+      final executed = <String>[];
+      final skipped = <String>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 10,
+        perSubGoalBudget: 2,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk(grouped1)]);
+          if (turn == 2) return Stream.fromIterable([searchChunk(grouped2)]);
+          if (turn == 3) {
+            return Stream.fromIterable([answerChunk('GDP was X [1][2]')]);
+          }
+          // Does exactly what _gapNotice ordered.
+          if (turn == 4) return Stream.fromIterable([searchChunk(groupedGap)]);
+          return Stream.fromIterable([answerChunk('GDP was X, and next year Y')]);
+        },
+        assessCoverage: (req) async => [groupedGap],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onSearchStart: executed.add,
+          onSearchSkipped: (q, r) => skipped.add(q),
+        ),
+      );
+
+      expect(skipped, isEmpty,
+          reason: 'the sub-goal had spent its whole per-sub-goal budget, but '
+              'while a gate gap is outstanding it holds no evidence the gate '
+              'accepted — so there is nothing for the duplicate rules to '
+              'refuse the corrective search as');
+      expect(executed, orderedEquals([grouped1, grouped2, groupedGap]));
+      expect(requests[3].researchBrief, contains('- [ ] "$groupedGap"'),
+          reason: 'and the brief riding on that same request finally agrees '
+              'with the gap notice instead of showing the ground as [x]');
+      expect(outcome.reason, SearchTerminationReason.converged,
+          reason: 'closing the gap grew searchedSubGoalCount, so the round '
+              'the harness itself demanded reset the stall counter rather '
+              'than advancing it');
+      expect(outcome.searchCount, 3);
+    });
+
+    test('a corrective search that finds nothing leaves the gap open and '
+        'still ends the run', () async {
+      // The bypass has to be bounded by something, or a gap nothing can be
+      // found for buys an unlimited supply of searches on one sub-goal.
+      // Nothing found means no progress, so the stall limit ends the run —
+      // and the gap stays on the checklist so the answer can say which part
+      // could not be verified.
+      final requests = <SearchAgentRequest>[];
+      final executed = <String>[];
+      final snapshots = <List<SubGoal>>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 10,
+        perSubGoalBudget: 2,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk(grouped1)]);
+          if (turn == 2) return Stream.fromIterable([searchChunk(grouped2)]);
+          if (turn == 3) {
+            return Stream.fromIterable([answerChunk('GDP was X [1][2]')]);
+          }
+          if (turn == 4) return Stream.fromIterable([searchChunk(groupedGap)]);
+          return Stream.fromIterable(
+              [answerChunk('GDP was X; next year could not be established')]);
+        },
+        search: (req) async =>
+            req.query == groupedGap ? [] : [hit('https://example.com/${req.query}')],
+        assessCoverage: (req) async => [groupedGap],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onSearchStart: executed.add,
+          onLedgerUpdate: (objective, snapshot) => snapshots.add(snapshot),
+        ),
+      );
+
+      expect(executed, orderedEquals([grouped1, grouped2, groupedGap]),
+          reason: 'the corrective search ran; it just came back empty');
+      expect(snapshots.last.single.outstandingGaps, [groupedGap],
+          reason: 'recordEvidence is only called for non-empty results, so a '
+              'gap nothing was found for stays outstanding');
+      final closingBrief = requests.last.researchBrief;
+      expect(closingBrief, contains('- [ ] "$groupedGap"'),
+          reason: 'so the closed brief still names the part that could not be '
+              'verified, which is what the answer is asked to say plainly');
+      expect(closingBrief, isNot(contains('search for it specifically')),
+          reason: 'but never orders a search on a request that carries no '
+              'tool — the contradiction ResearchLedger.closedRule exists to '
+              'remove');
+      expect(outcome.reason, SearchTerminationReason.unproductiveRounds,
+          reason: 'an empty corrective round makes no progress, so the stall '
+              'limit ends the run instead of the bypass looping on it');
+      expect(turn, 5, reason: 'and it ends promptly, not eventually');
     });
 
     test('accepts a complete answer after exactly one gate call', () async {

@@ -1224,6 +1224,12 @@ class SearchAgent {
   /// because a single similarity threshold can't reliably tell a
   /// legitimate refinement from a duplicate (measured near-duplicate and
   /// refinement query pairs score within a few hundredths of each other).
+  ///
+  /// Two shapes are exempt outright, both of them the completeness gate's
+  /// corrective round: a sub-goal the gate opened and nobody has searched,
+  /// and a searched sub-goal the gate has REOPENED. Neither holds evidence
+  /// the gate accepted, so nothing aimed at them can be a duplicate of
+  /// anything.
   bool _isLedgerBlocked(String query, SubGoal matched) {
     // Nothing has been searched for this sub-goal, so there is no duplicate
     // to refuse. This is not hypothetical: the completeness gate opens a
@@ -1234,6 +1240,20 @@ class SearchAgent {
     // told the model "That search found nothing new either" about a search
     // that never happened. Requiring a prior search closes both.
     if (matched.searchCount == 0) return false;
+    // The same self-contradiction, one case over. A gap the gate filed onto
+    // an ALREADY-searched sub-goal (ResearchLedger.openGap) inherits that
+    // sub-goal's spent budget and its wording, so every test below would
+    // refuse the search _gapNotice has just ordered the model to run — the
+    // exact-repeat test included, whenever the gate echoes the query's own
+    // words. While a gap is outstanding this sub-goal holds no evidence the
+    // gate accepted, so there is nothing here to be a duplicate OF.
+    //
+    // Bounded, not a hole in the budget: at most maxCoverageGaps gaps from
+    // at most maxCoverageChecks gate call per run, at most roundBatchCap
+    // searches a round, and ResearchLedger.recordEvidence closes the gap the
+    // moment sources land. A corrective search that keeps coming back empty
+    // never sets `madeProgress`, so stallLimit ends the run as before.
+    if (matched.outstandingGaps.isNotEmpty) return false;
     if (matched.normalizedQuery == _normalizeQuery(query)) return true;
     // Nothing here needs to know about years, versions or quarters. A
     // query naming a different instance never reaches this function,

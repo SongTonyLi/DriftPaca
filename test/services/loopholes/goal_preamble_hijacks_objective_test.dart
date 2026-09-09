@@ -1,26 +1,41 @@
-/// Offline probe: a prose preamble line before the `GOAL:` line becomes the
-/// run's objective, and the model's real GOAL line is silently discarded.
+/// Regression: an explicit `GOAL:` line is the run's objective, whatever
+/// courtesy prose the model wrote above it.
 ///
 /// `parseResearchGoal` (lib/Utils/research_goal.dart) walks the reply line by
-/// line. Its last statement is `statement ??= _clean(trimmed)` — the
-/// deliberate "bare sentence with no GOAL prefix" tolerance documented at
-/// lines 19-24 and pinned by test/utils/research_goal_test.dart:21. Because
-/// it fires on the FIRST non-empty, non-bullet, non-GOAL, non-CLARIFY line, a
-/// courtesy preamble ("Sure! Here is the research brief:") claims the
-/// statement slot; the real `GOAL:` line that follows hits `statement ??=` at
-/// line 49, which is then a no-op.
+/// line, and its bare-sentence tolerance — the documented "a reply that never
+/// labels its goal is still usable" fallback, pinned by
+/// test/utils/research_goal_test.dart — used to fill the SAME single
+/// `statement` slot as the `GOAL:` branch. With one slot filled by whichever
+/// candidate came first, a courtesy preamble ("Sure! Here is the research
+/// brief:") always claimed it, and the real `GOAL:` line below was discarded
+/// by a `statement ??=` that had become a no-op. The parser defended against a
+/// BULLET preamble (bullets before any statement are ignored) but nothing
+/// defended against a prose one — an asymmetry, not a trade-off.
 ///
-/// The parser explicitly defends against a BULLET preamble (line 72,
-/// `if (statement == null) continue;`, pinned by research_goal_test.dart:103)
-/// but nothing defends against a prose one — the asymmetry these tests pin.
+/// The parser now keeps two slots, the first labelled `GOAL:` line and the
+/// tolerated bare line, and resolves them by authority once the whole reply is
+/// read: the label wins wherever it appears, in the same spirit as a bare
+/// `NONE` winning outright in `parseCoverageGaps`. Bullets collected under a
+/// bare statement are discarded when a `GOAL:` line supersedes it — they were
+/// the preamble's checklist, not the brief's — while a model merely restating
+/// its own `GOAL:` line keeps the first goal and its bullets.
 ///
-/// Nothing downstream recovers: SearchAgent._deriveGoal only falls back to the
-/// user's question when the statement is EMPTY, so the preamble becomes
-/// ResearchLedger.objective, which renderBrief() writes as `Goal: <preamble>`
-/// into every turn's system prompt (ChatProvider concatenates the brief onto
-/// the system prompt) directly above stoppingRule's "Stop searching and write
-/// the answer as soon as your sources cover the goal above" — and is also what
-/// onLedgerUpdate hands the UI as the run's research goal.
+/// Why the parse is the last line of defence (nothing downstream re-checks
+/// it): `SearchAgent._deriveGoal` (search_agent.dart:730) falls back to the
+/// user's question only when the statement is EMPTY, so a non-empty preamble
+/// sailed through into `ResearchLedger.objective` (search_agent.dart:369-372).
+/// `renderBrief()` writes that as `Goal: <objective>`
+/// (research_ledger.dart:390-393) directly above stoppingRule's "Stop
+/// searching and write the answer as soon as your sources cover the goal
+/// above", and ChatProvider concatenates the whole brief onto the SYSTEM
+/// prompt of every turn (chat_provider.dart:1159-1166) — so the run's written
+/// finish line was one the model could satisfy without researching anything.
+/// The same objective is what `onLedgerUpdate` hands the UI as the user's
+/// research goal.
+///
+/// Each integration assertion below is paired with the identical run minus the
+/// preamble, so any difference is attributable to that one prose line and
+/// nothing else in the harness.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -44,57 +59,78 @@ const _preamble = 'Sure! Here is the research brief:';
 const _userQuestion = "What was Vietnam's GDP in 2024?";
 
 void main() {
-  group('parseResearchGoal: a prose preamble outranks the real GOAL line', () {
-    test('the preamble becomes the statement and the GOAL text is dropped',
+  group('parseResearchGoal: an explicit GOAL line outranks a prose preamble',
+      () {
+    test('the GOAL line becomes the statement and the preamble is dropped',
         () {
       final goal = parseResearchGoal(_replyWithPreamble);
 
       expect(goal, isNotNull,
-          reason: 'the reply parsed fine — this is not a rejection path, so '
-              'no caller ever learns the goal was mangled');
-      expect(goal!.statement, _preamble,
-          reason: 'research_goal.dart:78 claimed the statement slot for the '
-              'courtesy line, so research_goal.dart:49 (`statement ??=`) was '
-              'a no-op when the real GOAL line arrived');
-      expect(goal.statement, isNot(contains('Vietnam')),
-          reason: 'the model\'s actual objective is gone from the statement '
-              'entirely — not truncated, not appended, discarded');
+          reason: 'the reply parses — the fix ranks the two candidates, it '
+              'does not reject replies that have a preamble');
+      expect(goal!.statement, _realGoal,
+          reason: 'the labelled GOAL line wins wherever it appears, so the '
+              'run is aimed at what the model actually derived');
+      expect(goal.statement, isNot(contains('Sure!')),
+          reason: 'the courtesy line is not the objective, not even '
+              'prepended to it — it is discarded outright');
       expect(goal.subQuestions, ['Vietnam 2024 nominal GDP'],
-          reason: 'the bullets after the GOAL line were still accepted, so '
-              'the run gets a real checklist under a meaningless goal — the '
-              'reply was parsed, not rejected');
+          reason: 'the bullet follows the GOAL line, so it is still the '
+              'brief\'s checklist — outranking the preamble must not cost '
+              'the run its sub-questions');
     });
 
     test('the same reply WITHOUT the preamble parses correctly', () {
-      // The control: nothing about the GOAL line, the bullet, or the
-      // trailing newline is at fault. One extra prose line is the whole
-      // difference.
+      // Kept as a duplicate-by-design control: the preamble is now inert
+      // rather than causal, and this is what proves it. If ranking ever
+      // regresses to first-match, only the test above fails and this one
+      // still passes — the pair localises the failure.
       final goal = parseResearchGoal(_replyWithPreamble
           .split('\n')
           .where((l) => l.trim() != _preamble)
           .join('\n'));
 
       expect(goal!.statement, _realGoal,
-          reason: 'removing only the preamble recovers the correct goal, '
-              'isolating the preamble line as the cause');
+          reason: 'the reply with and without the preamble parse '
+              'identically; one extra prose line changes nothing');
     });
 
-    test('a BULLET preamble is defended against, prose is not', () {
-      // research_goal.dart:72 skips bullets seen before any statement, so
-      // the identical reply with the preamble written as a bullet keeps the
-      // real goal. That guard exists; its prose twin does not.
+    test('a bullet preamble and a prose preamble are both defended against',
+        () {
+      // The bullet guard (bullets before any statement are ignored) always
+      // existed; the prose one did not, and that asymmetry was the bug.
       final bulletPreamble =
           parseResearchGoal('- $_preamble\nGOAL: $_realGoal\n- Vietnam 2024 '
               'nominal GDP');
+      final prosePreamble =
+          parseResearchGoal('$_preamble\nGOAL: $_realGoal\n- Vietnam 2024 '
+              'nominal GDP');
 
       expect(bulletPreamble!.statement, _realGoal,
-          reason: 'the bullet form is handled, which shows the prose form '
-              'losing the goal is an unintended asymmetry rather than a '
-              'documented trade-off');
+          reason: 'the bullet form was always handled');
+      expect(prosePreamble!.statement, _realGoal,
+          reason: 'and the prose form now is too — the same lead-in cannot '
+              'take the goal just because the model did not bullet it');
+    });
+
+    test('bullets under the preamble do not join the real goal\'s checklist',
+        () {
+      // Every sub-question becomes a checklist item the stopping rule then
+      // obliges the model to close, so a bullet the preamble invented is a
+      // search the run would feel bound to run.
+      final goal = parseResearchGoal(
+          '$_preamble\n- a bullet belonging to the preamble\n'
+          'GOAL: $_realGoal\n- Vietnam 2024 nominal GDP');
+
+      expect(goal!.statement, _realGoal);
+      expect(goal.subQuestions, ['Vietnam 2024 nominal GDP'],
+          reason: 'the superseded statement takes its bullets with it; the '
+              'checklist belongs to the goal in force, not to the prose the '
+              'GOAL line replaced');
     });
   });
 
-  group('the preamble reaches the ledger, the system prompt and the UI', () {
+  group('the real goal reaches the ledger, the system prompt and the UI', () {
     /// Drives a real SearchAgent with a stubbed derivation (no network, no
     /// model) and returns the research briefs handed to each turn plus every
     /// objective published to the UI via onLedgerUpdate.
@@ -139,70 +175,73 @@ void main() {
       return (briefs: briefs, published: published);
     }
 
-    test('every turn\'s brief says `Goal: <preamble>`, never the real goal',
+    test('every turn\'s brief says `Goal: <real goal>`, never the preamble',
         () async {
       final run = await runWith(_replyWithPreamble);
 
       expect(run.briefs, isNotEmpty);
       for (final brief in run.briefs) {
-        expect(brief, contains('Goal: $_preamble'),
-            reason: 'ResearchLedger.renderBrief wrote the preamble as the '
-                'run\'s goal; ChatProvider appends this whole block to the '
-                'SYSTEM prompt of the turn');
-        expect(brief, isNot(contains(_realGoal)),
-            reason: 'the model\'s real objective appears nowhere in the '
-                'brief — the written finish line the ResearchGoal feature '
-                'exists to provide has been replaced by meaningless prose');
+        expect(brief, contains('Goal: $_realGoal'),
+            reason: 'ResearchLedger.renderBrief writes the objective as the '
+                'run\'s goal, and ChatProvider appends this whole block to '
+                'the SYSTEM prompt of every turn');
+        expect(brief, isNot(contains(_preamble)),
+            reason: 'the courtesy line never reaches the model\'s context, '
+                'on the first turn or any later one');
         expect(brief, contains(ResearchLedger.stoppingRule),
-            reason: 'and the stopping rule sits directly below it, telling '
-                'the model to stop "as soon as your sources cover the goal '
-                'above" — pointing at the preamble');
+            reason: 'and the stopping rule still sits directly below it, '
+                'telling the model to stop "as soon as your sources cover '
+                'the goal above" — which is what makes the Goal line '
+                'load-bearing rather than decorative');
       }
     });
 
     test('control: the identical run minus the preamble carries the real goal',
         () async {
-      // Proves the two assertions above are not vacuous — the same fake
-      // stream, the same fake search, one prose line fewer, and both the
-      // system-prompt brief and the UI objective are correct.
+      // Proves the assertions above are not vacuous — the same fake stream,
+      // the same fake search, one prose line fewer, same outcome.
       final run = await runWith('GOAL: $_realGoal\n- Vietnam 2024 nominal GDP');
 
       expect(run.briefs.first, contains('Goal: $_realGoal'),
-          reason: 'the brief CAN carry the real goal; the preamble is what '
-              'stops it');
+          reason: 'the brief carries the real goal with or without a '
+              'preamble above the GOAL line');
       expect(run.published.last, _realGoal,
-          reason: 'and the UI CAN show the real goal');
+          reason: 'and so does the UI');
     });
 
-    test('the UI is handed the preamble as the run\'s research goal',
-        () async {
+    test('the UI is handed the real goal, never the preamble', () async {
       final run = await runWith(_replyWithPreamble);
 
       expect(run.published, isNotEmpty);
-      expect(run.published.last, _preamble,
-          reason: 'onLedgerUpdate published ledger.objective, so the '
-              'research panel shows the user "$_preamble" where their '
-              'research goal belongs');
-      expect(run.published, isNot(contains(_realGoal)),
-          reason: 'the real goal was never published at any point in the run');
+      expect(run.published.last, _realGoal,
+          reason: 'onLedgerUpdate publishes ledger.objective, so the '
+              'research panel shows the user the goal their question was '
+              'turned into');
+      expect(run.published, isNot(contains(_preamble)),
+          reason: 'the preamble is published at no point in the run, not '
+              'even before the first ledger update replaces it');
     });
 
-    test('SearchAgent\'s fallback-to-the-user\'s-question never engages',
-        () async {
-      // _deriveGoal (search_agent.dart:730) only falls back when the derived
-      // statement is EMPTY. A non-empty preamble sails straight through, so
-      // the safety net built for exactly this situation does not fire.
+    test('the fallback to the user\'s question engages only on an empty '
+        'statement', () async {
+      // _deriveGoal falls back to the user's question when the derived
+      // statement is EMPTY. It correctly stays out of the way here because a
+      // usable goal was recovered — not because a preamble slipped past it.
       final withPreamble = await runWith(_replyWithPreamble);
+      expect(withPreamble.published.last, _realGoal,
+          reason: 'the derived goal was usable, so nothing degraded');
+      expect(withPreamble.published.last, isNot(_preamble),
+          reason: 'and what survived is the goal, not the courtesy line');
       expect(withPreamble.published.last, isNot(_userQuestion),
-          reason: 'the run did not degrade to the user\'s own question, '
-              'which would have been a correct objective — it adopted the '
-              'preamble instead');
+          reason: 'the safety net did not have to fire — recovering the real '
+              'goal is strictly better than degrading to the raw question');
 
       final blank = await runWith('GOAL:\n');
       expect(blank.published.last, _userQuestion,
-          reason: 'the fallback demonstrably works when the statement is '
-              'empty, so it is the non-empty preamble specifically that '
-              'slips past it');
+          reason: 'an empty GOAL label still claims the statement slot and '
+              'still yields a null parse, so the fallback fires — ranking '
+              'the label first must not open a path from an empty label to '
+              'some later line of the reply');
     });
   });
 }

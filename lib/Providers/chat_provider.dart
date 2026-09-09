@@ -20,6 +20,7 @@ import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Utils/coverage_gaps.dart';
+import 'package:llamaseek/Utils/goal_derivation_context.dart';
 import 'package:llamaseek/Utils/research_goal.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
@@ -117,9 +118,22 @@ A refusal is a complete answer. If the draft declines a part because it would be
 /// to a question nobody asked. Biased hard against asking, for the same
 /// reason the gate is biased toward NONE — a question the user did not
 /// need is a run that stalls on a card.
+///
+/// The context paragraph is what lets that bias hold up in a real chat.
+/// The call used to see the one message and nothing else, so it asked
+/// "which Mercury?" of a user who had spent four turns on the planet, and
+/// could make nothing at all of "and its moons?" — every referent the
+/// message leaned on was out of frame, and the card asked the user to
+/// repeat what they had just said. The message now arrives with the
+/// earlier turns and what is remembered about the user (see
+/// renderGoalDerivationContext), and the instruction is explicit about
+/// their standing: they resolve the message, they never replace it, and a
+/// clarification they already answer is not asked.
 @visibleForTesting
 String goalDerivationInstruction() => '''
 You turn a chat message into a research brief for a web-search agent.
+
+The message may arrive with context above it: earlier turns of the conversation, a summary of turns before those, and notes on what is remembered about the user. The brief is for the final message only. Use the context to work out what the message refers to — what "it", "that one", "the second option", "my model" or a bare name means — and write the resolved reading into the GOAL in plain terms, so the agent can search for it without the conversation. Never brief an earlier message, and never add a topic from the context that the final message does not ask about.
 
 Reply in exactly this shape, and nothing else:
 GOAL: <one sentence naming what has to be found out>
@@ -135,7 +149,7 @@ CLARIFY: <one short question to the user>
 [ ] <a concrete reading>
 [ ] <another concrete reading>
 
-Almost no messages need this. Ask only when a careful reader genuinely could not tell which of several specific things is meant. Never ask about scope, depth, format, or preferences, and never ask something a quick search would settle. 2 to 4 options, each a specific, distinct thing, in the user's own words where possible.
+Almost no messages need this. Ask only when a careful reader genuinely could not tell which of several specific things is meant. Never ask about scope, depth, format, or preferences, and never ask something a quick search would settle. Never ask what the context already answers: if the earlier turns or the notes on the user settle which thing is meant, that reading goes into the GOAL and there is no CLARIFY. When you do ask, the options are the readings a careful reader of the whole conversation would still be torn between, likeliest first. 2 to 4 options, each a specific, distinct thing, in the user's own words where possible.
 
 Keep the user's own wording for names, numbers, dates and entities, and write in the language the user wrote in.
 
@@ -913,6 +927,26 @@ class ChatProvider extends ChangeNotifier {
   @visibleForTesting
   static Duration goalDerivationBudget = const Duration(seconds: 20);
 
+  /// How long the goal call waits for each stage of memory preparation
+  /// before briefing the question with whatever has arrived.
+  ///
+  /// Applied per stage, not in total: the stored stage is a local read and
+  /// clears in milliseconds, so in practice this bounds the retrieval
+  /// model's call. Short by design — the retrieval pass is already running
+  /// for the first turn, which still gets its full result; the goal call
+  /// merely stops waiting for it, and loses at most the remembered notes.
+  @visibleForTesting
+  static Duration goalContextBudget = const Duration(seconds: 5);
+
+  /// [future]'s value, or [fallback] if it has not settled within [budget]
+  /// or fails. The original keeps running for whoever else awaits it.
+  static Future<T> _settleWithin<T>(
+      Future<T> future, Duration budget, T fallback) {
+    return future
+        .timeout(budget, onTimeout: () => fallback)
+        .catchError((Object _) => fallback);
+  }
+
   /// How long the completeness gate may take before the run stops waiting on
   /// it and keeps the answer it already has.
   ///
@@ -1007,30 +1041,48 @@ class ChatProvider extends ChangeNotifier {
     final history = List<OllamaMessage>.from(_messages);
     bool cancelled() => !_activeChatStreams.containsKey(associatedChat.id);
 
-    // Goal derivation is isolated from memory. Prepare the first turn's
-    // memory concurrently so the two model calls overlap instead of making
-    // the user wait for retrieval after the research goal appears.
-    final memoryPreparation = () async {
+    // Memory is prepared in two stages that the goal call and the first
+    // turn share. The stored stage (the conversation summary and the
+    // profile) is a local read; the retrieval stage asks a model which
+    // remembered topics bear on these turns, and can take seconds. The
+    // goal call wants both — a clarification is only worth asking when
+    // nothing already in hand settles it, and what is in hand lives here —
+    // but it waits for each only up to [goalContextBudget] and then goes
+    // with whatever has arrived. The first turn awaits the whole thing, as
+    // it always did; nothing here is computed twice.
+    final storedMemory = () async {
       final (conversationMemory, profile) = await (
         _memoryService.getConversationMemory(associatedChat.id),
         associatedChat.isIncognito
             ? Future<AgentMemory?>.value(null)
             : _memoryService.getAgentMemory(),
       ).wait;
-      final relevantContext = associatedChat.isIncognito || cancelled()
+      return (conversationMemory: conversationMemory, profile: profile);
+    }();
+    final relevantMemory = () async {
+      final stored = await storedMemory;
+      return associatedChat.isIncognito || cancelled()
           ? ''
           : await _memoryService.selectRelevantContext(
               history,
-              conversationSummary: conversationMemory?.summary,
+              conversationSummary: stored.conversationMemory?.summary,
             );
+    }();
+    final memoryPreparation = () async {
+      final stored = await storedMemory;
+      final relevantContext = await relevantMemory;
       return (
-        conversationMemory: conversationMemory,
-        profile: profile,
+        conversationMemory: stored.conversationMemory,
+        profile: stored.profile,
         relevantContext: relevantContext,
       );
     }();
-    // Install an error handler now: the first turn awaits this same future
-    // and propagates failures, but cancellation may mean it never gets there.
+    // Install error handlers now: the first turn awaits the combined future
+    // and propagates failures, but cancellation may mean it never gets
+    // there — and the goal call reads the stages through a timeout, which
+    // never observes the originals' errors.
+    storedMemory.ignore();
+    relevantMemory.ignore();
     memoryPreparation.ignore();
 
     final origPrompt = associatedChat.systemPrompt ?? '';
@@ -1088,10 +1140,30 @@ class ChatProvider extends ChangeNotifier {
       minRawRounds: transcriptLimits.minRawRounds,
       turnIdleBudget: researchTurnIdleBudget,
       deriveGoal: (userQuestion) async {
-        // Isolated for the same reason the coverage gate is: one message
-        // in, one brief out, with no memory, no history and no tools. This
-        // call decides what the whole run is aimed at, and anything else in
-        // context is a chance for it to drift off the question.
+        // Still a tool-less call of its own, kept out of the research
+        // transcript — but no longer blind to the chat it is briefing.
+        // Isolation was meant to stop the brief drifting off the question;
+        // in practice a call that could not see the previous turn asked
+        // the user which "Mercury" they meant four turns into a chat about
+        // the planet, and had no referent at all for "and its moons?".
+        // So the context goes in as labelled context in the user turn
+        // (see renderGoalDerivationContext), bounded in size, with the
+        // message it is briefing last and named as such — not as history
+        // for the model to continue, and not through the memory injection
+        // the answering turn gets, whose framing is about personalising an
+        // answer rather than reading a question.
+        //
+        // Each memory stage is waited for only briefly: the goal call is
+        // the first thing the run does, and a retrieval model that is slow
+        // today should cost it the notes, not the start of the research.
+        final stored = await _settleWithin(
+          storedMemory,
+          goalContextBudget,
+          (conversationMemory: null, profile: null),
+        );
+        final relevantContext =
+            await _settleWithin(relevantMemory, goalContextBudget, '');
+        if (cancelled()) return null;
         final goalChat = OllamaChat(
           id: associatedChat.id,
           model: associatedChat.model,
@@ -1100,9 +1172,18 @@ class ChatProvider extends ChangeNotifier {
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );
+        final context = renderGoalDerivationContext(
+          history: history,
+          conversationMemory: stored.conversationMemory,
+          profile: stored.profile,
+          relevantContext: relevantContext,
+        );
         final reply = await _collectWithin(
           _ollamaService.chatStream(
-            [OllamaMessage(userQuestion, role: OllamaMessageRole.user)],
+            [
+              OllamaMessage(goalDerivationMessage(userQuestion, context),
+                  role: OllamaMessageRole.user)
+            ],
             chat: goalChat,
           ),
           goalDerivationBudget,

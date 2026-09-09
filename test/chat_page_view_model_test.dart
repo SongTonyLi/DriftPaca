@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -254,6 +255,74 @@ void main() {
       );
 
       expect(result, isFalse);
+    });
+
+    group('while a run is paused on its clarification card', () {
+      // The card is opened the way SearchAgent opens it: through the
+      // onClarification callback of a run in flight, so the live segments
+      // hold an unanswered ClarificationSegment when the user types.
+      Future<ClarificationSegment> pauseOnCard() async {
+        viewModel.acceptWebSearchConsent();
+        fakeChatProvider.setCurrentChat(createTestChat('chat-1'));
+        viewModel.setTextFieldValue('Tell me about Mercury');
+        final paused = Completer<void>();
+        fakeChatProvider.duringSendPrompt = () => paused.future;
+        final send = viewModel.sendMessage(
+          onModelSelectionRequired: () async {},
+          onServerNotConfigured: () {},
+        );
+        await Future.microtask(() {});
+        fakeChatProvider.capturedOnClarification!(const ResearchClarification(
+          question: 'Which Mercury?',
+          options: ['The planet', 'The element'],
+        ));
+        fakeChatProvider.setIsStreaming(true);
+        fakeChatProvider.awaitingClarification = true;
+        addTearDown(() async {
+          paused.complete();
+          await send;
+        });
+        return viewModel.searchSegments.whereType<ClarificationSegment>().single;
+      }
+
+      test('a message typed in the prompt bar answers the card in the user\'s own words', () async {
+        final card = await pauseOnCard();
+        viewModel.setTextFieldValue('  the Freddie one  ');
+
+        final result = await viewModel.sendMessage(
+          onModelSelectionRequired: () async {},
+          onServerNotConfigured: () {},
+        );
+
+        expect(result, isTrue);
+        expect(fakeChatProvider.answeredClarification, ['the Freddie one'],
+            reason: 'the typed text is the answer, trimmed, not a new prompt');
+        expect(card.selected, ['the Freddie one'],
+            reason: 'the card records it like a pick');
+        expect(viewModel.hasText, isFalse, reason: 'the prompt bar is cleared');
+        expect(fakeChatProvider.lastSentPrompt, 'Tell me about Mercury',
+            reason: 'no second prompt was sent');
+      });
+
+      test('an already-answered card is not answered again from the prompt bar', () async {
+        final card = await pauseOnCard();
+        viewModel.answerClarification(card, const ['The planet']);
+        fakeChatProvider.answeredClarification = null;
+        // The provider still says a run is paused (say, a stale flag);
+        // with no open card there is nothing to answer, and the ordinary
+        // streaming guard applies.
+        fakeChatProvider.awaitingClarification = true;
+        viewModel.setTextFieldValue('the Freddie one');
+
+        final result = await viewModel.sendMessage(
+          onModelSelectionRequired: () async {},
+          onServerNotConfigured: () {},
+        );
+
+        expect(result, isFalse);
+        expect(fakeChatProvider.answeredClarification, isNull);
+        expect(card.selected, ['The planet']);
+      });
     });
 
     test('should call onServerNotConfigured when server not configured', () async {
@@ -769,6 +838,21 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   void Function(String objective, List<SubGoal> snapshot)? capturedOnLedgerUpdate;
   void Function(String query, String reason)? capturedOnSearchSkipped;
   void Function(SearchTerminationReason reason)? capturedOnResearchDone;
+  void Function(ResearchClarification clarification)? capturedOnClarification;
+
+  /// Whether a run is paused on a clarification card, as the view model
+  /// reads it; and what it handed back when the card was answered.
+  bool awaitingClarification = false;
+  List<String>? answeredClarification;
+
+  @override
+  bool get isAwaitingClarification => awaitingClarification;
+
+  @override
+  void answerClarification(List<String> selected) {
+    answeredClarification = selected;
+    awaitingClarification = false;
+  }
 
   void setMessages(List<OllamaMessage> messages) {
     _messages = messages;
@@ -868,6 +952,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     capturedOnLedgerUpdate = onLedgerUpdate;
     capturedOnSearchSkipped = onSearchSkipped;
     capturedOnResearchDone = onResearchDone;
+    capturedOnClarification = onClarification;
   }
 
   @override

@@ -236,6 +236,9 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   bool get isCurrentChatThinking => false;
 
   @override
+  bool get isAwaitingClarification => false;
+
+  @override
   OllamaException? get currentChatError => null;
 
   @override

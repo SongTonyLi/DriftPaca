@@ -386,6 +386,20 @@ class ChatPageViewModel extends ChangeNotifier {
     required Future<void> Function() onModelSelectionRequired,
     required void Function() onServerNotConfigured,
   }) async {
+    // A run paused on its clarification card is streaming as far as the
+    // guard below is concerned, so what the user types here used to go
+    // nowhere — under a prompt bar whose hint said to answer the question
+    // above. Typed while the card is open, the message IS the answer: it
+    // goes to the card as the user's own words, exactly as the card's own
+    // field would send it, and the run resumes.
+    if (hasText && isAwaitingClarification) {
+      final card = _openClarification();
+      if (card != null) {
+        answerClarification(card, [_takeTextFieldValue().trim()]);
+        return true;
+      }
+    }
+
     // Early return if nothing to send or currently streaming/searching
     if (!hasText || isStreaming || _isSearching) {
       return false;
@@ -666,8 +680,15 @@ class ChatPageViewModel extends ChangeNotifier {
   /// clarification card.
   bool get isAwaitingClarification => _chatProvider.isAwaitingClarification;
 
-  /// Resolves a clarification card with the user's picks — empty to
-  /// continue without answering — and resumes the paused run.
+  /// The card the current run is paused on, if the live segments hold one.
+  ClarificationSegment? _openClarification() => _searchSegments
+      .whereType<ClarificationSegment>()
+      .where((card) => !card.isAnswered)
+      .lastOrNull;
+
+  /// Resolves a clarification card with the user's answer — ticked options
+  /// and/or their own typed words, empty to continue without answering —
+  /// and resumes the paused run.
   void answerClarification(ClarificationSegment segment, List<String> selected) {
     if (segment.isAnswered) return;
     segment.selected = List<String>.unmodifiable(selected);

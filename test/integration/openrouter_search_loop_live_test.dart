@@ -32,6 +32,12 @@
 ///   OR_MODELS           comma-separated OpenRouter model ids (default: the
 ///                       four in [_defaultModels])
 ///   OR_PROBES           comma-separated probe ids (default: all of them)
+///   OR_CELL_MINUTES     backstop per (model, probe) cell; must stay well
+///                       above OR_TURN_IDLE_SECONDS (default: 6)
+///   OR_TURN_IDLE_SECONDS
+///                       SearchAgent.turnIdleBudget for the sweep — how long
+///                       a turn may deliver nothing before the agent ends it
+///                       (default: SearchAgent.defaultTurnIdleBudget)
 ///   OR_REPORT           where to write the JSON report
 ///                       (default: build/search_loop_sweep.json)
 @Timeout(Duration(hours: 2))
@@ -190,8 +196,10 @@ class _RunReport {
 
   String? error;
 
-  /// The cell ran past [_cellBudget] with the loop still waiting on a
-  /// stream that never delivered another chunk.
+  /// The cell backstop fired — meaning the agent's OWN turn deadline
+  /// ([SearchAgent.turnIdleBudget]) did not end the run first. That is
+  /// itself the failure, not a measurement: a stalled provider is supposed
+  /// to come back as `reason: stalled` inside the harness.
   bool hung = false;
   Duration elapsed = Duration.zero;
 
@@ -290,16 +298,30 @@ final _malformedCitationForms = <String, RegExp>{
 };
 
 /// How long one (model, probe) cell may run before the sweep abandons it.
-/// Six minutes by default — the slowest healthy cell measured was 92s.
+/// A BACKSTOP that must never fire: the agent bounds its own silent turns
+/// now ([_turnIdleBudget]), so a cell that trips this has outlived the
+/// deadline that was supposed to end it, and the assertion below fails it.
 ///
-/// Raise it with OR_CELL_MINUTES for a model with a long time-to-first
-/// -token: qwen3.8-flash on Alibaba can spend minutes queued behind
+/// Six minutes by default. The only constraint that matters is that it stays
+/// comfortably above the turn budget — a run may legitimately spend several
+/// slow-but-alive turns, and each one gets its own idle window. Raise it with
+/// OR_CELL_MINUTES for a model with a long time-to-first-token:
+/// qwen3.8-flash on Alibaba can spend minutes queued behind
 /// `: OPENROUTER PROCESSING` and then stream reasoning-only deltas for
-/// minutes more, which is slow rather than stalled, and the two look
-/// identical from inside the loop precisely because nothing bounds them.
+/// minutes more, which is slow rather than stalled — the agent's idle
+/// deadline is re-armed by every delta and so tells those apart.
 final _cellBudget = Duration(
     minutes:
         int.tryParse(Platform.environment['OR_CELL_MINUTES'] ?? '') ?? 6);
+
+/// The turn deadline the sweep runs the agent with, mirrored from
+/// production's default rather than re-derived. Lower it with
+/// OR_TURN_IDLE_SECONDS to make a stalling provider surface as
+/// `reason: stalled` sooner.
+final _turnIdleBudget = Duration(
+    seconds: int.tryParse(
+            Platform.environment['OR_TURN_IDLE_SECONDS'] ?? '') ??
+        SearchAgent.defaultTurnIdleBudget.inSeconds);
 
 final _reports = <_RunReport>[];
 
@@ -355,6 +377,7 @@ Future<_RunReport> _runProbe(String model, _Probe probe) async {
       // undivided defaults here — mirrored rather than re-derived.
       transcriptBudgetChars: SearchAgent.defaultTranscriptBudgetChars,
       minRawRounds: SearchAgent.defaultMinRawRounds,
+      turnIdleBudget: _turnIdleBudget,
       deriveGoal: (userQuestion) async {
         final goalChat = OllamaChat(
           model: model,
@@ -425,14 +448,17 @@ Future<_RunReport> _runProbe(String model, _Probe probe) async {
           .searchAndExtract(req.query, excludeUrls: req.excludeUrls),
     );
 
-    // Bounded at the CELL, never inside the harness — a research turn is
-    // unbounded and uncancellable by design today (SearchAgent
-    // ._streamOneTurn only evaluates isCancelled when a chunk arrives, and
-    // the OpenRouter streaming request carries no timeout), so wrapping the
-    // turn itself would hide the very behaviour the sweep is measuring.
-    // A cell that trips this is recorded as `hung` and the sweep moves on;
-    // the abandoned future is left dangling, because there is no way to
-    // stop it, which is the finding.
+    // A BACKSTOP, not the sweep's real bound. The agent ends its own silent
+    // turns now (SearchAgent.turnIdleBudget, wired above), so a provider
+    // that opens a stream and goes quiet comes back here as an ordinary
+    // outcome with `reason: stalled` — measured rather than waited out.
+    //
+    // This `.timeout` is kept only to stop one pathological cell eating the
+    // whole sweep, and it is expected never to fire: a cell that trips it is
+    // recorded as `hung` and asserted against below, because it means the
+    // in-harness deadline failed. The abandoned future is still left
+    // dangling, which is exactly why tripping this is a regression and not a
+    // measurement.
     final outcome = await agent
         .run(
       history: [OllamaMessage(probe.question, role: OllamaMessageRole.user)],
@@ -449,8 +475,9 @@ Future<_RunReport> _runProbe(String model, _Probe probe) async {
         .timeout(_cellBudget, onTimeout: () {
       report.hung = true;
       throw TimeoutException(
-          'no output for ${_cellBudget.inMinutes} minutes — the research '
-          'turn is unbounded and the stop button cannot interrupt it',
+          'the run outlived its own turn deadline — '
+          'SearchAgent.turnIdleBudget (${_turnIdleBudget.inSeconds}s) did '
+          'not fire inside ${_cellBudget.inMinutes} minutes',
           _cellBudget);
     });
 
@@ -502,6 +529,7 @@ String _matrix(List<_RunReport> reports) {
     final flags = <String>[
       if (r.hung) 'HUNG',
       if (r.error != null && !r.hung) 'ERROR',
+      if (r.reason == 'stalled') 'stalled',
       if (r.error == null && r.searchCount == 0) 'no-search',
       if (r.missingFacts.isNotEmpty) 'missing:${r.missingFacts.length}',
       if (r.danglingCitations.isNotEmpty)
@@ -588,7 +616,18 @@ void main() {
           // Per-cell assertions. Kept few and behavioural — the sweep's
           // value is the report, and a cell that fails should mean the loop
           // genuinely misbehaved for this model, not that a fact moved.
+          // Asserted before `error`, which the backstop's TimeoutException
+          // also sets: "run threw" would be the true but useless account of
+          // a cell whose real fault is that nothing inside the harness ended
+          // it.
+          expect(report.hung, isFalse,
+              reason: 'the cell backstop fired — the agent failed to end its '
+                  'own stalled turn, so a silent provider still hangs the '
+                  'run instead of returning reason: stalled');
           expect(report.error, isNull, reason: 'run threw');
+          // Unchanged on purpose: a genuinely silent provider now trips
+          // these one turn budget after it goes quiet, with
+          // reason: stalled, instead of holding the sweep for 16 minutes.
           expect(report.cancelled, isFalse);
           expect(report.answer.trim(), isNotEmpty,
               reason: 'run produced no answer at all');

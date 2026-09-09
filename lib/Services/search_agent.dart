@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
@@ -110,10 +112,10 @@ class SearchAgentListener {
 
 /// Why a SearchAgent run stopped. Checked in this precedence when several
 /// conditions are true simultaneously: [cancelled] (an external stop
-/// request) beats every convergence/cap reason; among those,
-/// [searchUnavailable] beats [roundCapReached] beats [hardCapReached] beats
-/// [unproductiveRounds] beats [converged] (the natural "model just
-/// answered" stop with nothing else tripped) — see
+/// request) beats [stalled] beats every convergence/cap reason; among
+/// those, [searchUnavailable] beats [roundCapReached] beats
+/// [hardCapReached] beats [unproductiveRounds] beats [converged] (the
+/// natural "model just answered" stop with nothing else tripped) — see
 /// SearchAgent._terminationReason.
 ///
 /// [searchUnavailable] outranks the caps because it describes the world
@@ -121,6 +123,11 @@ class SearchAgentListener {
 /// that is why the run ended, whatever counter happens to also be at its
 /// limit. Reporting a cap there would tell the user the run was cut short
 /// for cost when in fact no research was possible at all.
+///
+/// [cancelled] and [stalled] are decided in run() straight off the turn
+/// rather than by _terminationReason, because neither is a fact about the
+/// budgets: both say the turn never finished, so no cap can have been the
+/// reason it ended.
 enum SearchTerminationReason {
   converged,
   unproductiveRounds,
@@ -130,6 +137,16 @@ enum SearchTerminationReason {
   /// The search backend refused to run queries — rate limited or serving an
   /// anti-bot challenge. No further searches were attempted.
   searchUnavailable,
+
+  /// The turn delivered nothing for [SearchAgent.turnIdleBudget] — a
+  /// provider that opened a stream and then went quiet.
+  ///
+  /// The run keeps everything it already had and does NOT retry the turn: a
+  /// request that has just been silent for minutes will not answer faster on
+  /// a second ask, and the wait is the defect. Distinct from [cancelled]
+  /// even though both set `SearchAgentOutcome.cancelled` — the user did not
+  /// stop this run, the provider did, and the banner has to say so.
+  stalled,
   cancelled,
 }
 
@@ -138,6 +155,15 @@ class SearchAgentOutcome {
   final String thinking;
   final Map<int, String> sourceUrls;
   final int searchCount;
+
+  /// "This run did not finish normally — do not treat [content] as a
+  /// completed answer, and drop a bubble that has nothing in it."
+  ///
+  /// NOT a record of user intent. It is true both when the user pressed
+  /// stop and when the provider went silent
+  /// ([SearchTerminationReason.stalled]), because ChatProvider needs the
+  /// same cleanup for both. Code that actually cares WHO ended the run must
+  /// read [reason].
   final bool cancelled;
   final SearchTerminationReason reason;
 
@@ -269,6 +295,34 @@ class SearchAgent {
   /// infinite loop with extra steps.
   static const defaultMaxCoverageChecks = 1;
 
+  /// How long a research turn may deliver NOTHING before the run gives up
+  /// on it and ends as [SearchTerminationReason.stalled].
+  ///
+  /// An IDLE deadline, re-armed on every chunk — never a total one. A turn
+  /// still emitting reasoning deltas is slow, not stalled, and a reasoning
+  /// model working through a long draft can legitimately stream for many
+  /// minutes; a total cap would truncate exactly those answers. What is
+  /// being bounded is silence.
+  ///
+  /// This loop is the only layer that can tell the two apart, which is why
+  /// the deadline lives here and not on the socket. OpenRouter keeps a slow
+  /// request alive with `: OPENROUTER PROCESSING` comment frames — real
+  /// bytes arriving on the connection, so a transport-level idle timeout
+  /// sees a healthy stream — and [OpenRouterCodec.decodeSseJson] drops them
+  /// before they can become chunks, so the loop sees total silence. A
+  /// timeout on the HTTP send would fire on the wrong cases and miss this
+  /// one.
+  ///
+  /// Three minutes, sized off the slow-but-alive cases rather than the
+  /// healthy ones: the slowest healthy cell in the 2026-09-08 model sweep
+  /// took 92s for a whole run, observed time-to-first-token behind those
+  /// keep-alives can pass 90s on its own, and a cold local Ollama model
+  /// holds the response open while it loads — a minute or more before its
+  /// first token, all of it inside this window. The 200ms cancellation poll
+  /// in [_streamOneTurn], not a tight deadline, is what keeps an ordinary
+  /// slow turn bearable: the user can always stop it.
+  static const defaultTurnIdleBudget = Duration(seconds: 180);
+
   final Stream<OllamaMessage> Function(SearchAgentRequest) streamTurn;
   final Future<List<WebSearchResult>> Function(SearchAgentSearchRequest) search;
 
@@ -316,6 +370,10 @@ class SearchAgent {
   final int transcriptBudgetChars;
   final int minRawRounds;
 
+  /// See [defaultTurnIdleBudget]. Injectable so tests can prove the
+  /// deadline exists in milliseconds instead of minutes.
+  final Duration turnIdleBudget;
+
   SearchAgent({
     required this.streamTurn,
     required this.search,
@@ -330,6 +388,7 @@ class SearchAgent {
     this.perSubGoalBudget = defaultPerSubGoalBudget,
     this.transcriptBudgetChars = defaultTranscriptBudgetChars,
     this.minRawRounds = defaultMinRawRounds,
+    this.turnIdleBudget = defaultTurnIdleBudget,
   });
 
   Future<SearchAgentOutcome> run({
@@ -441,6 +500,26 @@ class SearchAgent {
       if (turn.cancelled) {
         return _outcome(lastContent, allThinking, sourceUrls, searchCount, true,
             reason: SearchTerminationReason.cancelled, listener: listener);
+      }
+
+      // Checked after cancellation, so a stop that lands while the provider
+      // is silent still reports as the user's stop.
+      //
+      // Ends the run rather than retrying the turn: a provider that has been
+      // quiet for minutes will not answer faster on a second ask, and the
+      // wait is what makes this a defect. Everything already established
+      // survives — searchCount and sourceUrls hold every completed round,
+      // and lastContent was updated from turn.content above, so prose
+      // streamed before the silence is kept exactly as a cancelled run keeps
+      // it.
+      //
+      // `cancelled: true` is deliberate: ChatProvider reads that flag as
+      // "this run did not finish normally, drop an empty bubble", which is
+      // precisely what a stalled run needs. The distinct `reason` is what
+      // carries the honest explanation to the user.
+      if (turn.stalled) {
+        return _outcome(lastContent, allThinking, sourceUrls, searchCount, true,
+            reason: SearchTerminationReason.stalled, listener: listener);
       }
 
       final hasTools = turn.toolCalls.isNotEmpty && canSearch;
@@ -882,15 +961,111 @@ class SearchAgent {
       researchBrief: researchBrief,
     );
 
-    await for (final chunk in streamTurn(request)) {
-      if (isCancelled?.call() == true) {
-        accum.cancelled = true;
-        return accum;
-      }
-      _ingestChunk(chunk, accum, listener);
+    // Opened before either timer is armed: if a streamTurn implementation
+    // fails outright rather than returning a stream, that throw must leave
+    // no timers behind to fire into a run nobody is waiting on.
+    final turnStream = streamTurn(request);
+
+    // Consumed with listen() and a Completer rather than `await for`,
+    // because `await for` ties BOTH liveness checks to chunk arrival: the
+    // stop button could only be read when a chunk came in, and there was no
+    // deadline at all. A provider that opened the stream and went quiet
+    // therefore ran neither check, and the run waited forever with the stop
+    // button doing nothing (audit finding #1). This is the same shape — and
+    // for the same reasons — as ChatProvider._collectWithin, which already
+    // bounds the goal and gate calls.
+    //
+    // A `break` inside `await for` could not have fixed it either: that
+    // desugars to awaiting the subscription's cancel(), which on a stalled
+    // async* generator blocks on precisely the silence being escaped.
+    final finished = Completer<_TurnEnd>();
+
+    // Re-armed on every chunk, so the budget measures SILENCE, not total
+    // turn length — see [turnIdleBudget]. Armed before listening as well,
+    // so the wait for the first chunk (time-to-first-token, plus whatever
+    // the caller's generator does before it yields, e.g. ChatProvider's
+    // memory preparation) is inside the window rather than unbounded.
+    Timer? idle;
+    void armIdle() {
+      idle?.cancel();
+      idle = Timer(turnIdleBudget, () {
+        if (!finished.isCompleted) finished.complete(_TurnEnd.stalled);
+      });
     }
-    if (isCancelled?.call() == true) accum.cancelled = true;
-    return accum;
+
+    armIdle();
+    // Polled rather than checked only on arriving chunks, for the reason
+    // _collectWithin documents: a stalled request delivers no chunks by
+    // definition, so a per-chunk check cannot fire on exactly the requests
+    // the user is most likely to be stopping. Skipped entirely when there
+    // is no callback to ask — a poll that can never complete anything is
+    // just a timer.
+    final cancelPoll = isCancelled == null
+        ? null
+        : Timer.periodic(const Duration(milliseconds: 200), (_) {
+            if (isCancelled() && !finished.isCompleted) {
+              finished.complete(_TurnEnd.cancelled);
+            }
+          });
+
+    final subscription = turnStream.listen(
+      (chunk) {
+        // The turn is already decided (stalled, or stopped): a chunk that
+        // raced the timer must not mutate the accumulator behind the
+        // outcome that was already settled on.
+        if (finished.isCompleted) return;
+        if (isCancelled?.call() == true) {
+          finished.complete(_TurnEnd.cancelled);
+          // Deliberately NOT ingested. A chunk that arrives after the user
+          // pressed stop is discarded rather than appended, so a cancelled
+          // turn cannot overwrite the answer already in hand.
+          return;
+        }
+        armIdle();
+        try {
+          _ingestChunk(chunk, accum, listener);
+        } catch (error, stackTrace) {
+          // Listener callbacks can throw (ChatProvider's ensureBubble /
+          // notifyListeners run in here). Under `await for` such a throw
+          // propagated out of run() to the caller's error handling; inside
+          // a raw listen it would instead become an unhandled async error
+          // and the run would hang. Routing it through the Completer keeps
+          // the old contract.
+          if (!finished.isCompleted) finished.completeError(error, stackTrace);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        // Stream errors must keep reaching the caller unchanged: this is
+        // how an OllamaException from the transport (a 401, a 404, an
+        // OpenRouter error frame) becomes ChatProvider's error banner
+        // instead of a silently empty answer.
+        if (!finished.isCompleted) finished.completeError(error, stackTrace);
+      },
+      onDone: () {
+        if (!finished.isCompleted) finished.complete(_TurnEnd.done);
+      },
+      cancelOnError: true,
+    );
+
+    try {
+      final end = await finished.future;
+      // Cancellation is re-read on the way out for the same reason the old
+      // post-loop check existed: a stop that landed while the last chunks
+      // were draining still ends the run as cancelled.
+      accum.cancelled =
+          end == _TurnEnd.cancelled || isCancelled?.call() == true;
+      accum.stalled = end == _TurnEnd.stalled && !accum.cancelled;
+      return accum;
+    } finally {
+      idle?.cancel();
+      cancelPoll?.cancel();
+      // Not awaited, deliberately — the same rule _collectWithin follows.
+      // Cancelling an async* generator only takes effect at its next
+      // suspension point, so awaiting this would hang on exactly the stall
+      // the deadline exists to escape. The teardown still happens; the run
+      // just stops waiting for it.
+      subscription.cancel().ignore();
+    }
   }
 
   void _ingestChunk(
@@ -1426,8 +1601,18 @@ class _TurnAccum {
   bool answerStarted = false;
   bool cancelled = false;
 
+  /// The turn produced nothing for [SearchAgent.turnIdleBudget] and was
+  /// abandoned. Never set together with [cancelled] — a user stop that
+  /// lands during a stall reads as the stop, since that is the truer
+  /// account of why the run ended.
+  bool stalled = false;
+
   _TurnAccum({required this.toolsEnabled});
 }
+
+/// How one turn's stream ended. [stalled] is the case that did not exist
+/// before: the stream neither closed nor delivered anything.
+enum _TurnEnd { done, cancelled, stalled }
 
 enum _PlanKind {
   unique,

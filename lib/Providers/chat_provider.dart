@@ -928,6 +928,17 @@ class ChatProvider extends ChangeNotifier {
   @visibleForTesting
   static Duration coverageGateBudget = const Duration(seconds: 30);
 
+  /// How long a research turn may go silent before the run abandons it —
+  /// see [SearchAgent.defaultTurnIdleBudget] for why it is an idle deadline,
+  /// why it belongs to the turn loop rather than the HTTP request, and how
+  /// the default was sized.
+  ///
+  /// The third of the three budgets a run is made of: the goal call, the
+  /// gate call, and the research turns in between. This one was missing,
+  /// and it is the one that covers most of the wall-clock.
+  @visibleForTesting
+  static Duration researchTurnIdleBudget = SearchAgent.defaultTurnIdleBudget;
+
   /// Accumulates [stream]'s content, giving up after [budget] or as soon as
   /// [isCancelled] fires, and cancelling the request either way.
   ///
@@ -1075,6 +1086,7 @@ class ChatProvider extends ChangeNotifier {
       maxSearches: maxSearches,
       transcriptBudgetChars: transcriptLimits.transcriptBudgetChars,
       minRawRounds: transcriptLimits.minRawRounds,
+      turnIdleBudget: researchTurnIdleBudget,
       deriveGoal: (userQuestion) async {
         // Isolated for the same reason the coverage gate is: one message
         // in, one brief out, with no memory, no history and no tools. This
@@ -1319,6 +1331,20 @@ class ChatProvider extends ChangeNotifier {
         (streamingMessage!.thinking ?? '').isEmpty) {
       _messages.remove(streamingMessage);
       notifyListeners();
+      // A stall is not a stop: nobody asked for this run to end, so ending
+      // it silently would turn the old infinite spinner into an equally
+      // baffling nothing-at-all. Raised as an OllamaException so it lands in
+      // _initializeChatStream's existing error handler, which records it as
+      // this chat's error banner and clears _activeChatStreams in its
+      // `finally` — the same treatment a dead connection already gets.
+      //
+      // Only on the empty path. A stall that arrived after some prose was
+      // streamed keeps that prose (below), and replacing a partial answer
+      // with an error would take back something the user can already read.
+      if (outcome.reason == SearchTerminationReason.stalled) {
+        throw OllamaException('${associatedChat.model} stopped responding. '
+            'Check your connection and try again.');
+      }
       return null;
     }
 

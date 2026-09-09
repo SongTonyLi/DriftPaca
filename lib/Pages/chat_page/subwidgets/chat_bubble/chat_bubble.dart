@@ -1113,6 +1113,16 @@ class _TerminationBanner extends StatelessWidget {
           text: 'Stopped — the search engine is rate-limiting requests; '
               'the answer may be incomplete',
         );
+      case 'stalled':
+        // Deliberately not "Cancelled", even though the outcome carries the
+        // same cancelled flag: the user did not stop this run, the model
+        // stopped answering. Telling them they cancelled something they
+        // never touched is worse than saying nothing.
+        return (
+          icon: Icons.cloud_off_outlined,
+          text: 'Stopped — the model stopped responding; the answer may be '
+              'incomplete',
+        );
       case 'cancelled':
         return (icon: Icons.cancel_outlined, text: 'Cancelled');
       default:

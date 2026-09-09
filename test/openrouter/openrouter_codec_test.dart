@@ -203,6 +203,114 @@ void main() {
     });
   });
 
+  group('OpenRouterCodec.errorFrom', () {
+    // The only thing that tells a 200 response carrying a provider failure
+    // apart from a completion — see errorFrom's contract. Both directions
+    // matter: a missed error is reported to the user as a finished answer
+    // (audit finding #12), and a false positive kills a working stream.
+    test('extracts the numeric code and the provider message', () {
+      final error = OpenRouterCodec.errorFrom({
+        'error': {'code': 429, 'message': 'rate limited'}
+      });
+      expect(error, isNotNull);
+      expect(error!.code, 429,
+          reason: 'a numeric code is what lets the failure be formatted like '
+              'the same code arriving as an HTTP status');
+      expect(error.message, 'rate limited');
+    });
+
+    test('names the upstream provider the failure came from', () {
+      final error = OpenRouterCodec.errorFrom({
+        'error': {
+          'code': 502,
+          'message': 'Provider returned error',
+          'metadata': {'provider_name': 'Together'},
+        }
+      });
+      expect(error!.message, 'Provider returned error (Together)',
+          reason: 'OpenRouter relays many providers, and which one broke is '
+              'the difference between retrying and changing models');
+    });
+
+    test('falls back through metadata.raw, then type, then a generic line',
+        () {
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': {
+            'code': 400,
+            'metadata': {'raw': 'context length exceeded'},
+          }
+        })!.message,
+        'context length exceeded',
+      );
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': {'type': 'server_error'}
+        })!.message,
+        'server_error',
+      );
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': {'unexpected': 'shape'}
+        })!.message,
+        'The provider reported an error.',
+        reason: 'a non-empty error object with no wording anyone recognizes '
+            'is still a failure — the presence of the key is the signal, and '
+            'returning null here would reopen the hole',
+      );
+    });
+
+    test('accepts a bare string error', () {
+      final error = OpenRouterCodec.errorFrom({'error': 'upstream exploded'});
+      expect(error!.code, isNull);
+      expect(error.message, 'upstream exploded');
+    });
+
+    test('keeps a non-numeric code out of the HTTP formatting', () {
+      final error = OpenRouterCodec.errorFrom({
+        'error': {'code': 'insufficient_quota', 'message': 'out of credits'}
+      });
+      expect(error!.code, isNull,
+          reason: 'there is no HTTP status to format against, so the caller '
+              'must report the provider text on its own rather than invent '
+              'a status line');
+      expect(error.message, 'out of credits');
+    });
+
+    test('is null for the shapes healthy chunks actually carry', () {
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': null,
+          'choices': [
+            {
+              'delta': {'content': 'Hi'}
+            }
+          ],
+        }),
+        isNull,
+        reason: 'OpenAI-compatible providers put a null error key on ordinary '
+            'chunks; treating that as a failure would kill every stream',
+      );
+      expect(OpenRouterCodec.errorFrom({'error': const <String, dynamic>{}}),
+          isNull,
+          reason: 'an empty object says nothing went wrong, same as null');
+      expect(OpenRouterCodec.errorFrom({'error': '   '}), isNull);
+      expect(
+        OpenRouterCodec.errorFrom({
+          'model': 'openai/gpt-4o',
+          'choices': [
+            {
+              'message': {'content': 'Hi there'},
+              'finish_reason': 'stop',
+            }
+          ],
+        }),
+        isNull,
+        reason: 'an ordinary completion has no error key at all',
+      );
+    });
+  });
+
   group('OpenRouterCodec.parseCompletion', () {
     test('reads a non-stream chat completion', () {
       final message = OpenRouterCodec.parseCompletion({
@@ -338,6 +446,177 @@ void main() {
       expect(
         assembler.build().single.arguments['query'],
         'current weather Bellevue WA',
+      );
+    });
+
+    // The tests below pin the identity rules the assembler falls back on
+    // when a provider omits `index`. It used to have only one — append to
+    // the highest slot seen so far — which merged every parallel call onto
+    // slot 0 and concatenated their argument JSON into one junk query
+    // (audit finding #11).
+
+    test('index-less calls are separated by id', () {
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'id': 'call_a',
+          'function': {'name': 'web_search', 'arguments': '{"query":"one"}'},
+        },
+        {
+          'id': 'call_b',
+          'function': {'name': 'web_search', 'arguments': '{"query":"two"}'},
+        },
+      ]);
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['one', 'two'],
+        reason: 'an unseen id announces a NEW call, so two parallel calls '
+            'stay two calls even with no `index` to key them by',
+      );
+    });
+
+    test('fragments of one index-less call are joined by id', () {
+      const full = '{"query":"current weather Bellevue WA"}';
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'id': 'call_1',
+          'function': {'name': 'web_search', 'arguments': ''},
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'id': 'call_1',
+          'function': {'arguments': full.substring(0, 10)},
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'id': 'call_1',
+          'function': {'arguments': full.substring(10)},
+        },
+      ]);
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1),
+          reason: 'a repeated id is the SAME call, so its fragments rejoin '
+              'rather than opening a call per chunk');
+      expect(calls.single.arguments['query'], 'current weather Bellevue WA');
+    });
+
+    test('a nameless argument fragment continues the call being streamed',
+        () {
+      // Neither `index` nor `id` anywhere: the only defensible target for
+      // a nameless fragment is the call currently being streamed, which is
+      // the shape this class was written for.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'name': 'web_search',
+          'arguments': '{"query":"a',
+        },
+      ]);
+      assembler.addDeltas([
+        {'arguments': 'bc"}'},
+      ]);
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1));
+      expect(calls.single.arguments['query'], 'abc');
+    });
+
+    test('a named entry starts a new call once the previous one is finished',
+        () {
+      // Same absence of identity, but this entry names a function and the
+      // open call already decodes — it is an announcement, not a
+      // continuation, and merging the two would glue their arguments.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'name': 'web_search',
+          'arguments': '{"query":"a"}',
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'name': 'web_search',
+          'arguments': '{"query":"b"}',
+        },
+      ]);
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['a', 'b'],
+      );
+    });
+
+    test('a complete message payload replaces accumulated fragments', () {
+      // A `message.tool_calls` array is finished calls, not fragments — the
+      // shape a proxy that streams a whole message (or a growing snapshot
+      // of one) sends. Appending it to what the deltas already hold would
+      // concatenate each call's arguments with a copy of itself.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'id': 'call_1',
+          'function': {'name': 'web_search', 'arguments': '{"query":"Belle'},
+        },
+      ]);
+      assembler.addFromCompletionJson({
+        'choices': [
+          {
+            'message': {
+              'role': 'assistant',
+              'tool_calls': [
+                {
+                  'id': 'call_1',
+                  'function': {
+                    'name': 'web_search',
+                    'arguments': '{"query":"Bellevue WA weather"}',
+                  },
+                },
+              ],
+            },
+            'finish_reason': 'tool_calls',
+          },
+        ],
+      });
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1));
+      expect(calls.single.arguments['query'], 'Bellevue WA weather',
+          reason: 'the finished call is authoritative; the half-streamed '
+              'fragment it supersedes is discarded, not prepended');
+    });
+
+    test('a message payload with an empty tool_calls array leaves fragments '
+        'alone', () {
+      // An empty array says nothing about calls the deltas are still
+      // building, so it must not clear them.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {
+            'name': 'web_search',
+            'arguments': '{"query":"Bellevue WA weather"}',
+          },
+        },
+      ]);
+      assembler.addFromCompletionJson({
+        'choices': [
+          {
+            'message': {'role': 'assistant', 'tool_calls': <dynamic>[]},
+            'finish_reason': 'stop',
+          },
+        ],
+      });
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['Bellevue WA weather'],
       );
     });
   });

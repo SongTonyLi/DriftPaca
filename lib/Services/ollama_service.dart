@@ -851,6 +851,31 @@ class OllamaService {
     }
   }
 
+  /// The exception a decoded OpenRouter payload's top-level `error` deserves,
+  /// or null when the payload is an ordinary completion.
+  ///
+  /// The status-code guards below are the transport's only other failure
+  /// detector, and OpenRouter reports anything that goes wrong AFTER the
+  /// response has begun on an HTTP **200** — as a `data:` frame mid-stream, or
+  /// as a 200 body for a non-streamed call. Nothing read that key, so the
+  /// failure was parsed as an empty assistant turn and the research loop
+  /// reported it as a converged, blank answer (audit finding #12).
+  ///
+  /// Formatting a numeric code through [HttpErrorFormatter] is the point: a
+  /// mid-stream 429 must read exactly like an HTTP-429 429, so which side of
+  /// the stream start the provider failed on stops deciding whether the user
+  /// learns their request failed. A non-numeric code (OpenRouter also sends
+  /// string codes such as `insufficient_quota`) has no status to format
+  /// against, so the provider's own words are reported instead.
+  static OllamaException? _openRouterError(Map<String, dynamic> json) {
+    final error = OpenRouterCodec.errorFrom(json);
+    if (error == null) return null;
+    final code = error.code;
+    return OllamaException(code == null
+        ? 'OpenRouter error: ${error.message}'
+        : HttpErrorFormatter.formatHttpError(code, body: error.message));
+  }
+
   Future<OllamaMessage> _openRouterCompletionFromResponse(
     http.Response response,
     String model,
@@ -871,9 +896,13 @@ class OllamaService {
     if (jsonBody is! Map) {
       throw OllamaException('Unexpected OpenRouter response.');
     }
-    return OpenRouterCodec.parseCompletion(
-      Map<String, dynamic>.from(jsonBody),
-    );
+    final map = Map<String, dynamic>.from(jsonBody);
+    // A 200 body can still be a failure report — see [_openRouterError]. This
+    // covers generate() and _openRouterChat(), so titling and every other
+    // non-streamed call fails loudly instead of returning an empty message.
+    final error = _openRouterError(map);
+    if (error != null) throw error;
+    return OpenRouterCodec.parseCompletion(map);
   }
 
   Stream<OllamaMessage> _processOpenRouterStream(Stream<List<int>> stream) async* {
@@ -918,6 +947,15 @@ class OllamaService {
   ) {
     final json = OpenRouterCodec.decodeSseJson(line);
     if (json == null) return OpenRouterCodec.parseSseLine(line);
+    // Ordered before the assembler on purpose. An error frame carries no
+    // choices today, so folding it in would be a no-op — but that is a
+    // property of the frame, not a guarantee, and a malformed one must never
+    // seed a tool-call slot that the trailing build() would hand out as a
+    // real call. Throwing from this synchronous helper surfaces as an error
+    // event on _processOpenRouterStream's async* body and ends the stream,
+    // which is exactly what a non-200 status already does.
+    final error = _openRouterError(json);
+    if (error != null) throw error;
     assembler.addFromCompletionJson(json);
     final message = OpenRouterCodec.parseCompletion(json);
     if (message.done == true) {

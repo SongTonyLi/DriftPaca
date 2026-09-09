@@ -83,7 +83,8 @@ Today's date: $today.''';
 /// spends rounds and can talk a good answer into being rewritten. So the
 /// bar is an explicitly asked-for thing that is absent, not a thing that
 /// could be elaborated.
-String _coverageGateInstruction() => '''
+@visibleForTesting
+String coverageGateInstruction() => '''
 You check whether a draft answer addresses everything the question asked.
 
 List ONLY parts of the question the draft leaves genuinely unanswered — including any part the draft itself admits it could not establish. One per line, phrased as the missing thing, with no other commentary.
@@ -116,7 +117,8 @@ A refusal is a complete answer. If the draft declines a part because it would be
 /// to a question nobody asked. Biased hard against asking, for the same
 /// reason the gate is biased toward NONE — a question the user did not
 /// need is a run that stalls on a card.
-String _goalDerivationInstruction() => '''
+@visibleForTesting
+String goalDerivationInstruction() => '''
 You turn a chat message into a research brief for a web-search agent.
 
 Reply in exactly this shape, and nothing else:
@@ -830,13 +832,22 @@ class ChatProvider extends ChangeNotifier {
 
       // Build search context and extract source URLs
       final newSearchContext = WebSearchService.formatResultsAsContext(searchResults);
-      _interceptedSourceUrls = {};
-      final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
-      for (final match in urlPattern.allMatches(newSearchContext)) {
-        final id = int.tryParse(match.group(1)!);
-        final url = match.group(2);
-        if (id != null && url != null) _interceptedSourceUrls![id] = url;
-      }
+      // The id->URL map is read from the result objects, never re-derived
+      // from the formatted blob. That blob embeds scraped page bodies
+      // between the <source> headers, so scanning it for
+      // `<source id="N" name="...">` also matched headers a PAGE had
+      // written inside its own body — and with a plain map write the last
+      // match for an id won, so a page could repoint citation [1] at a URL
+      // that appeared nowhere in the results and the user tapped a citation
+      // attributed to Wikipedia straight into it. (A benign URL containing
+      // a `"` mis-mapped through that regex too: it read back the
+      // &quot;-escaped form.) This is the same authoritative mapping the
+      // native-tool path already consumes via
+      // SearchAgentListener.onSearchComplete. Both calls take the same list
+      // at the default idOffset, so the ids line up exactly; if this path
+      // ever accumulates rounds, the offset has to be threaded to BOTH.
+      _interceptedSourceUrls =
+          WebSearchService.sourceUrlsFromResults(searchResults);
 
       // Recursive call: re-stream with search context, reusing same message
       debugPrint('[SEARCH] Starting Call 2 with ${newSearchContext.length} chars context');
@@ -916,6 +927,17 @@ class ChatProvider extends ChangeNotifier {
   /// gate failure already falls back on (see SearchAgent._assessGaps).
   @visibleForTesting
   static Duration coverageGateBudget = const Duration(seconds: 30);
+
+  /// How long a research turn may go silent before the run abandons it —
+  /// see [SearchAgent.defaultTurnIdleBudget] for why it is an idle deadline,
+  /// why it belongs to the turn loop rather than the HTTP request, and how
+  /// the default was sized.
+  ///
+  /// The third of the three budgets a run is made of: the goal call, the
+  /// gate call, and the research turns in between. This one was missing,
+  /// and it is the one that covers most of the wall-clock.
+  @visibleForTesting
+  static Duration researchTurnIdleBudget = SearchAgent.defaultTurnIdleBudget;
 
   /// Accumulates [stream]'s content, giving up after [budget] or as soon as
   /// [isCancelled] fires, and cancelling the request either way.
@@ -1064,6 +1086,7 @@ class ChatProvider extends ChangeNotifier {
       maxSearches: maxSearches,
       transcriptBudgetChars: transcriptLimits.transcriptBudgetChars,
       minRawRounds: transcriptLimits.minRawRounds,
+      turnIdleBudget: researchTurnIdleBudget,
       deriveGoal: (userQuestion) async {
         // Isolated for the same reason the coverage gate is: one message
         // in, one brief out, with no memory, no history and no tools. This
@@ -1073,7 +1096,7 @@ class ChatProvider extends ChangeNotifier {
           id: associatedChat.id,
           model: associatedChat.model,
           title: associatedChat.title,
-          systemPrompt: _goalDerivationInstruction(),
+          systemPrompt: goalDerivationInstruction(),
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );
@@ -1123,7 +1146,7 @@ class ChatProvider extends ChangeNotifier {
           id: associatedChat.id,
           model: associatedChat.model,
           title: associatedChat.title,
-          systemPrompt: _coverageGateInstruction(),
+          systemPrompt: coverageGateInstruction(),
           options: associatedChat.options,
           isIncognito: associatedChat.isIncognito,
         );
@@ -1195,86 +1218,106 @@ class ChatProvider extends ChangeNotifier {
       },
     );
 
-    final outcome = await agent.run(
-      history: history,
-      isCancelled: cancelled,
-      listener: SearchAgentListener(
-        onThinking: (delta) {
-          final msg = ensureBubble();
-          if (seenSearch) {
-            final modelPart = modelThinkingFromCombined(msg.thinking ?? '');
-            msg.thinking = mergeSearchThinking(
-              searchThinking: lastSearchThinking,
-              modelThinking: modelPart + delta,
-            );
-          } else {
-            msg.thinking = (msg.thinking ?? '') + delta;
-          }
-          touch();
-        },
-        onSearchThinking: (thinking) {
-          seenSearch = true;
-          lastSearchThinking = thinking;
-          _webSearchThinkingCallback?.call(thinking);
-          ensureBubble().thinking = '$thinking$searchThinkingSeparator';
-          touch();
-        },
-        onSearchStart: (query) {
-          ensureBubble();
-          _webSearchCallback?.call(query);
-          _webSearchQueryUpdateCallback?.call(query);
-          touch(force: true);
-        },
-        onSearchComplete: (results, sourceUrls) {
-          // sourceUrls is the exact id->URL map SearchAgent computed for
-          // this call — consuming it directly retires the id-offset
-          // counter this file used to track in parallel (see the audited
-          // double-tracked citation-offset bug).
-          liveSourceUrls.addAll(sourceUrls);
-          _webSearchCompleteCallback?.call(results);
-          touch(force: true);
-        },
-        onAnswerStart: () {
-          ensureBubble();
-          _webSearchAnswerStartCallback?.call();
-          touch(force: true);
-        },
-        onContent: (delta) {
-          final msg = ensureBubble();
-          msg.content += delta;
-          if (liveSourceUrls.isNotEmpty) {
-            msg.content =
-                replaceCitationsWithLinks(msg.content, liveSourceUrls);
-          }
-          touch();
-        },
-        onResetContent: () {
-          if (streamingMessage != null) {
-            streamingMessage!.content = '';
+    final SearchAgentOutcome outcome;
+    try {
+      outcome = await agent.run(
+        history: history,
+        isCancelled: cancelled,
+        listener: SearchAgentListener(
+          onThinking: (delta) {
+            final msg = ensureBubble();
+            if (seenSearch) {
+              final modelPart = modelThinkingFromCombined(msg.thinking ?? '');
+              msg.thinking = mergeSearchThinking(
+                searchThinking: lastSearchThinking,
+                modelThinking: modelPart + delta,
+              );
+            } else {
+              msg.thinking = (msg.thinking ?? '') + delta;
+            }
+            touch();
+          },
+          onSearchThinking: (thinking) {
+            seenSearch = true;
+            lastSearchThinking = thinking;
+            _webSearchThinkingCallback?.call(thinking);
+            ensureBubble().thinking = '$thinking$searchThinkingSeparator';
+            touch();
+          },
+          onSearchStart: (query) {
+            ensureBubble();
+            _webSearchCallback?.call(query);
+            _webSearchQueryUpdateCallback?.call(query);
             touch(force: true);
-          }
-        },
-        onSearchSkipped: (query, reason) {
-          _webSearchSkippedCallback?.call(query, reason);
-          touch(force: true);
-        },
-        onLedgerUpdate: (objective, snapshot) {
-          // The bubble has to exist for the panel to land anywhere: search
-          // segments are handed to the index-0 message, and until this the
-          // index-0 message is the user's own. SearchAgent now opens the
-          // ledger before the goal-derivation request rather than after it,
-          // so this is the first callback of a run — earlier than any
-          // thinking or content token, which is the whole point.
-          ensureBubble();
-          _webSearchLedgerUpdateCallback?.call(objective, snapshot);
-          touch(force: true);
-        },
-        onResearchDone: (reason) {
-          _webSearchResearchDoneCallback?.call(reason);
-          touch(force: true);
-        },
-      ),
-    );
+          },
+          onSearchComplete: (results, sourceUrls) {
+            // sourceUrls is the exact id->URL map SearchAgent computed for
+            // this call — consuming it directly retires the id-offset
+            // counter this file used to track in parallel (see the audited
+            // double-tracked citation-offset bug).
+            liveSourceUrls.addAll(sourceUrls);
+            _webSearchCompleteCallback?.call(results);
+            touch(force: true);
+          },
+          onAnswerStart: () {
+            ensureBubble();
+            _webSearchAnswerStartCallback?.call();
+            touch(force: true);
+          },
+          onContent: (delta) {
+            final msg = ensureBubble();
+            msg.content += delta;
+            if (liveSourceUrls.isNotEmpty) {
+              msg.content =
+                  replaceCitationsWithLinks(msg.content, liveSourceUrls);
+            }
+            touch();
+          },
+          onResetContent: () {
+            if (streamingMessage != null) {
+              streamingMessage!.content = '';
+              touch(force: true);
+            }
+          },
+          onSearchSkipped: (query, reason) {
+            _webSearchSkippedCallback?.call(query, reason);
+            touch(force: true);
+          },
+          onLedgerUpdate: (objective, snapshot) {
+            // The bubble has to exist for the panel to land anywhere: search
+            // segments are handed to the index-0 message, and until this the
+            // index-0 message is the user's own. SearchAgent now opens the
+            // ledger before the goal-derivation request rather than after it,
+            // so this is the first callback of a run — earlier than any
+            // thinking or content token, which is the whole point.
+            ensureBubble();
+            _webSearchLedgerUpdateCallback?.call(objective, snapshot);
+            touch(force: true);
+          },
+          onResearchDone: (reason) {
+            _webSearchResearchDoneCallback?.call(reason);
+            touch(force: true);
+          },
+        ),
+      );
+    } catch (_) {
+      // A run that throws has no outcome, so none of the cleanup below it
+      // runs — and the bubble opened by onLedgerUpdate before the first token
+      // would be left on screen rendering a research panel that never
+      // receives a termination reason, next to the error banner. Same
+      // predicate as the cancelled cleanup below: drop the bubble only when
+      // the turn produced no content and no thinking at all, so a partially
+      // streamed answer is never taken away from the user. Nothing is
+      // persisted either way — _initializeChatStream's `on OllamaException`
+      // handler records the error and leaves ollamaMessage null.
+      if (streamingMessage != null &&
+          streamingMessage!.content.isEmpty &&
+          (streamingMessage!.thinking ?? '').isEmpty) {
+        _messages.remove(streamingMessage);
+        streamingMessage = null;
+      }
+      rethrow;
+    }
 
     // Stopped before the model said anything at all. The bubble exists from
     // the ledger's first update (see onLedgerUpdate above), well ahead of
@@ -1288,6 +1331,20 @@ class ChatProvider extends ChangeNotifier {
         (streamingMessage!.thinking ?? '').isEmpty) {
       _messages.remove(streamingMessage);
       notifyListeners();
+      // A stall is not a stop: nobody asked for this run to end, so ending
+      // it silently would turn the old infinite spinner into an equally
+      // baffling nothing-at-all. Raised as an OllamaException so it lands in
+      // _initializeChatStream's existing error handler, which records it as
+      // this chat's error banner and clears _activeChatStreams in its
+      // `finally` — the same treatment a dead connection already gets.
+      //
+      // Only on the empty path. A stall that arrived after some prose was
+      // streamed keeps that prose (below), and replacing a partial answer
+      // with an error would take back something the user can already read.
+      if (outcome.reason == SearchTerminationReason.stalled) {
+        throw OllamaException('${associatedChat.model} stopped responding. '
+            'Check your connection and try again.');
+      }
       return null;
     }
 

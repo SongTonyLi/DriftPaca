@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
@@ -109,10 +112,10 @@ class SearchAgentListener {
 
 /// Why a SearchAgent run stopped. Checked in this precedence when several
 /// conditions are true simultaneously: [cancelled] (an external stop
-/// request) beats every convergence/cap reason; among those,
-/// [searchUnavailable] beats [roundCapReached] beats [hardCapReached] beats
-/// [unproductiveRounds] beats [converged] (the natural "model just
-/// answered" stop with nothing else tripped) — see
+/// request) beats [stalled] beats every convergence/cap reason; among
+/// those, [searchUnavailable] beats [roundCapReached] beats
+/// [hardCapReached] beats [unproductiveRounds] beats [converged] (the
+/// natural "model just answered" stop with nothing else tripped) — see
 /// SearchAgent._terminationReason.
 ///
 /// [searchUnavailable] outranks the caps because it describes the world
@@ -120,6 +123,11 @@ class SearchAgentListener {
 /// that is why the run ended, whatever counter happens to also be at its
 /// limit. Reporting a cap there would tell the user the run was cut short
 /// for cost when in fact no research was possible at all.
+///
+/// [cancelled] and [stalled] are decided in run() straight off the turn
+/// rather than by _terminationReason, because neither is a fact about the
+/// budgets: both say the turn never finished, so no cap can have been the
+/// reason it ended.
 enum SearchTerminationReason {
   converged,
   unproductiveRounds,
@@ -129,6 +137,16 @@ enum SearchTerminationReason {
   /// The search backend refused to run queries — rate limited or serving an
   /// anti-bot challenge. No further searches were attempted.
   searchUnavailable,
+
+  /// The turn delivered nothing for [SearchAgent.turnIdleBudget] — a
+  /// provider that opened a stream and then went quiet.
+  ///
+  /// The run keeps everything it already had and does NOT retry the turn: a
+  /// request that has just been silent for minutes will not answer faster on
+  /// a second ask, and the wait is the defect. Distinct from [cancelled]
+  /// even though both set `SearchAgentOutcome.cancelled` — the user did not
+  /// stop this run, the provider did, and the banner has to say so.
+  stalled,
   cancelled,
 }
 
@@ -137,6 +155,15 @@ class SearchAgentOutcome {
   final String thinking;
   final Map<int, String> sourceUrls;
   final int searchCount;
+
+  /// "This run did not finish normally — do not treat [content] as a
+  /// completed answer, and drop a bubble that has nothing in it."
+  ///
+  /// NOT a record of user intent. It is true both when the user pressed
+  /// stop and when the provider went silent
+  /// ([SearchTerminationReason.stalled]), because ChatProvider needs the
+  /// same cleanup for both. Code that actually cares WHO ended the run must
+  /// read [reason].
   final bool cancelled;
   final SearchTerminationReason reason;
 
@@ -268,6 +295,34 @@ class SearchAgent {
   /// infinite loop with extra steps.
   static const defaultMaxCoverageChecks = 1;
 
+  /// How long a research turn may deliver NOTHING before the run gives up
+  /// on it and ends as [SearchTerminationReason.stalled].
+  ///
+  /// An IDLE deadline, re-armed on every chunk — never a total one. A turn
+  /// still emitting reasoning deltas is slow, not stalled, and a reasoning
+  /// model working through a long draft can legitimately stream for many
+  /// minutes; a total cap would truncate exactly those answers. What is
+  /// being bounded is silence.
+  ///
+  /// This loop is the only layer that can tell the two apart, which is why
+  /// the deadline lives here and not on the socket. OpenRouter keeps a slow
+  /// request alive with `: OPENROUTER PROCESSING` comment frames — real
+  /// bytes arriving on the connection, so a transport-level idle timeout
+  /// sees a healthy stream — and [OpenRouterCodec.decodeSseJson] drops them
+  /// before they can become chunks, so the loop sees total silence. A
+  /// timeout on the HTTP send would fire on the wrong cases and miss this
+  /// one.
+  ///
+  /// Three minutes, sized off the slow-but-alive cases rather than the
+  /// healthy ones: the slowest healthy cell in the 2026-09-08 model sweep
+  /// took 92s for a whole run, observed time-to-first-token behind those
+  /// keep-alives can pass 90s on its own, and a cold local Ollama model
+  /// holds the response open while it loads — a minute or more before its
+  /// first token, all of it inside this window. The 200ms cancellation poll
+  /// in [_streamOneTurn], not a tight deadline, is what keeps an ordinary
+  /// slow turn bearable: the user can always stop it.
+  static const defaultTurnIdleBudget = Duration(seconds: 180);
+
   final Stream<OllamaMessage> Function(SearchAgentRequest) streamTurn;
   final Future<List<WebSearchResult>> Function(SearchAgentSearchRequest) search;
 
@@ -315,6 +370,10 @@ class SearchAgent {
   final int transcriptBudgetChars;
   final int minRawRounds;
 
+  /// See [defaultTurnIdleBudget]. Injectable so tests can prove the
+  /// deadline exists in milliseconds instead of minutes.
+  final Duration turnIdleBudget;
+
   SearchAgent({
     required this.streamTurn,
     required this.search,
@@ -329,6 +388,7 @@ class SearchAgent {
     this.perSubGoalBudget = defaultPerSubGoalBudget,
     this.transcriptBudgetChars = defaultTranscriptBudgetChars,
     this.minRawRounds = defaultMinRawRounds,
+    this.turnIdleBudget = defaultTurnIdleBudget,
   });
 
   Future<SearchAgentOutcome> run({
@@ -358,9 +418,12 @@ class SearchAgent {
     }
     final goal = await _deriveGoal(userQuestion);
     // Asked before the ledger exists, because the answer changes what the
-    // ledger is judged against: the instance detection and the
-    // completeness gate both read userQuestion as ground truth, and a
-    // choice the user made explicitly belongs in that ground truth.
+    // ledger is judged against: a choice the user made explicitly belongs
+    // in the ground truth. Its two halves go to different places, and that
+    // is the whole point of splitting the record. The options they TICKED
+    // join the instance split, because the user endorsed those strings.
+    // The composed question — their picks under the derivation model's own
+    // clarification prose — goes only to the completeness gate below.
     final clarified = await _clarify(goal, userQuestion, isCancelled);
     if (clarified == null) {
       return _outcome('', '', sourceUrls, 0, true,
@@ -368,7 +431,14 @@ class SearchAgent {
     }
     final ledger = ResearchLedger(
       objective: goal.statement,
-      userQuestion: clarified.question,
+      // Verbatim, always — see ResearchLedger.userQuestion. Handing it the
+      // clarified composition instead made every digit and name in the
+      // model's clarification question an instance "the user named", so a
+      // model permuting quarter labels out of that question opened a
+      // sub-goal and a fresh search budget for each permutation and the
+      // stall counter never fired.
+      userQuestion: userQuestion,
+      clarificationPicks: clarified.picks,
       clarification: clarified.note,
     );
     for (final question in goal.subQuestions) {
@@ -432,6 +502,26 @@ class SearchAgent {
             reason: SearchTerminationReason.cancelled, listener: listener);
       }
 
+      // Checked after cancellation, so a stop that lands while the provider
+      // is silent still reports as the user's stop.
+      //
+      // Ends the run rather than retrying the turn: a provider that has been
+      // quiet for minutes will not answer faster on a second ask, and the
+      // wait is what makes this a defect. Everything already established
+      // survives — searchCount and sourceUrls hold every completed round,
+      // and lastContent was updated from turn.content above, so prose
+      // streamed before the silence is kept exactly as a cancelled run keeps
+      // it.
+      //
+      // `cancelled: true` is deliberate: ChatProvider reads that flag as
+      // "this run did not finish normally, drop an empty bubble", which is
+      // precisely what a stalled run needs. The distinct `reason` is what
+      // carries the honest explanation to the user.
+      if (turn.stalled) {
+        return _outcome(lastContent, allThinking, sourceUrls, searchCount, true,
+            reason: SearchTerminationReason.stalled, listener: listener);
+      }
+
       final hasTools = turn.toolCalls.isNotEmpty && canSearch;
       if (!hasTools) {
         // Dropping `tools` from the request is not enough to make a model
@@ -441,6 +531,12 @@ class SearchAgent {
         // run already established. It has to be told, in the transcript,
         // that research is closed. Once only: if it still says nothing we
         // take what we have rather than loop.
+        //
+        // Reached only when the model genuinely produced no prose:
+        // _ingestChunk no longer manufactures an empty turn out of a
+        // withdrawn turn's trailing tool call, so a turn that answered and
+        // then asked to search anyway keeps its answer here and leaves this
+        // one-shot rescue unspent for the blank turn it was written for.
         if (turn.content.isEmpty && turn.toolCalls.isNotEmpty && !forcedAnswer) {
           forcedAnswer = true;
           transcript.add(OllamaMessage(
@@ -475,12 +571,17 @@ class SearchAgent {
           coverageChecks: coverageChecks,
         )) {
           coverageChecks++;
-          // Judged against what the user actually typed, never the derived
-          // restatement: "did this answer my question" has exactly one
-          // ground truth, and a paraphrase that quietly dropped a clause
-          // would make the gate blind to precisely the omission it exists
-          // to catch.
-          final gaps = await _assessGaps(ledger.userQuestion, turn.content);
+          // Judged against what the user actually typed plus what they
+          // clarified, never the derived restatement: "did this answer my
+          // question" has exactly one ground truth, and a paraphrase that
+          // quietly dropped a clause would make the gate blind to
+          // precisely the omission it exists to catch.
+          //
+          // This string carries the model's own clarification question on
+          // purpose — the gate reads prose and needs the refined reading
+          // spelled out — which is exactly why it is not what the ledger
+          // splits instances on (see ResearchLedger.clarificationPicks).
+          final gaps = await _assessGaps(clarified.question, turn.content);
           if (gaps.isNotEmpty) {
             for (final gap in gaps) {
               ledger.openGap(gap);
@@ -509,9 +610,13 @@ class SearchAgent {
             //
             // Content only. No thinking (re-feeding the reasoning that
             // produced the omission argues for repeating it) and no
-            // toolCalls — safe because `hasTools` is false here and
-            // _ingestChunk guarantees a turn with tool calls has empty
-            // content, so nothing dangling can be introduced.
+            // toolCalls — safe because the gate only runs while
+            // `canSearch` is true, so a turn carrying tool calls would have
+            // `hasTools` true and never reach this branch at all, and
+            // nothing dangling can be introduced. (_ingestChunk's "a turn
+            // with tool calls has empty content" rule now holds only for
+            // tools-enabled turns, so it is no longer what makes this
+            // safe.)
             transcript.add(OllamaMessage(
               turn.content,
               role: OllamaMessageRole.assistant,
@@ -683,18 +788,25 @@ class SearchAgent {
   static const maxGoalSubQuestions = 4;
 
   /// Asks the goal's clarification question, if it has one and there is
-  /// someone to ask. Returns the question the rest of the run should treat
-  /// as the user's (their picks folded in) plus the one-line note for the
-  /// brief; null only when the run was cancelled while waiting.
+  /// someone to ask. Returns the completeness gate's ground truth (the
+  /// user's question with their picks folded in), the one-line note for
+  /// the brief, and the picks themselves; null only when the run was
+  /// cancelled while waiting.
+  ///
+  /// The picks travel separately from the composed [question] on purpose:
+  /// only they are the user's, and only they may reach the ledger's
+  /// instance split — see [ResearchLedger.clarificationPicks].
   ///
   /// Every other failure — no callback, a throw, a skip — lands on the
-  /// question as typed, which is what the run would have used anyway.
-  Future<({String question, String note})?> _clarify(
+  /// question as typed with no picks, which is what the run would have
+  /// used anyway.
+  Future<({String question, String note, List<String> picks})?> _clarify(
     ResearchGoal goal,
     String userQuestion,
     bool Function()? isCancelled,
   ) async {
-    final unclarified = (question: userQuestion, note: '');
+    final unclarified =
+        (question: userQuestion, note: '', picks: const <String>[]);
     final clarification = goal.clarification;
     if (clarification == null || askClarification == null) return unclarified;
     List<String>? selected;
@@ -713,6 +825,7 @@ class SearchAgent {
       question: ResearchClarification.clarifiedQuestion(
           userQuestion, clarification.question, picks),
       note: ResearchClarification.note(clarification.question, picks),
+      picks: picks,
     );
   }
 
@@ -839,7 +952,7 @@ class SearchAgent {
     required bool toolsEnabled,
     String researchBrief = '',
   }) async {
-    final accum = _TurnAccum();
+    final accum = _TurnAccum(toolsEnabled: toolsEnabled);
     final request = SearchAgentRequest(
       history: history,
       transcript: List<OllamaMessage>.from(transcript),
@@ -848,15 +961,111 @@ class SearchAgent {
       researchBrief: researchBrief,
     );
 
-    await for (final chunk in streamTurn(request)) {
-      if (isCancelled?.call() == true) {
-        accum.cancelled = true;
-        return accum;
-      }
-      _ingestChunk(chunk, accum, listener);
+    // Opened before either timer is armed: if a streamTurn implementation
+    // fails outright rather than returning a stream, that throw must leave
+    // no timers behind to fire into a run nobody is waiting on.
+    final turnStream = streamTurn(request);
+
+    // Consumed with listen() and a Completer rather than `await for`,
+    // because `await for` ties BOTH liveness checks to chunk arrival: the
+    // stop button could only be read when a chunk came in, and there was no
+    // deadline at all. A provider that opened the stream and went quiet
+    // therefore ran neither check, and the run waited forever with the stop
+    // button doing nothing (audit finding #1). This is the same shape — and
+    // for the same reasons — as ChatProvider._collectWithin, which already
+    // bounds the goal and gate calls.
+    //
+    // A `break` inside `await for` could not have fixed it either: that
+    // desugars to awaiting the subscription's cancel(), which on a stalled
+    // async* generator blocks on precisely the silence being escaped.
+    final finished = Completer<_TurnEnd>();
+
+    // Re-armed on every chunk, so the budget measures SILENCE, not total
+    // turn length — see [turnIdleBudget]. Armed before listening as well,
+    // so the wait for the first chunk (time-to-first-token, plus whatever
+    // the caller's generator does before it yields, e.g. ChatProvider's
+    // memory preparation) is inside the window rather than unbounded.
+    Timer? idle;
+    void armIdle() {
+      idle?.cancel();
+      idle = Timer(turnIdleBudget, () {
+        if (!finished.isCompleted) finished.complete(_TurnEnd.stalled);
+      });
     }
-    if (isCancelled?.call() == true) accum.cancelled = true;
-    return accum;
+
+    armIdle();
+    // Polled rather than checked only on arriving chunks, for the reason
+    // _collectWithin documents: a stalled request delivers no chunks by
+    // definition, so a per-chunk check cannot fire on exactly the requests
+    // the user is most likely to be stopping. Skipped entirely when there
+    // is no callback to ask — a poll that can never complete anything is
+    // just a timer.
+    final cancelPoll = isCancelled == null
+        ? null
+        : Timer.periodic(const Duration(milliseconds: 200), (_) {
+            if (isCancelled() && !finished.isCompleted) {
+              finished.complete(_TurnEnd.cancelled);
+            }
+          });
+
+    final subscription = turnStream.listen(
+      (chunk) {
+        // The turn is already decided (stalled, or stopped): a chunk that
+        // raced the timer must not mutate the accumulator behind the
+        // outcome that was already settled on.
+        if (finished.isCompleted) return;
+        if (isCancelled?.call() == true) {
+          finished.complete(_TurnEnd.cancelled);
+          // Deliberately NOT ingested. A chunk that arrives after the user
+          // pressed stop is discarded rather than appended, so a cancelled
+          // turn cannot overwrite the answer already in hand.
+          return;
+        }
+        armIdle();
+        try {
+          _ingestChunk(chunk, accum, listener);
+        } catch (error, stackTrace) {
+          // Listener callbacks can throw (ChatProvider's ensureBubble /
+          // notifyListeners run in here). Under `await for` such a throw
+          // propagated out of run() to the caller's error handling; inside
+          // a raw listen it would instead become an unhandled async error
+          // and the run would hang. Routing it through the Completer keeps
+          // the old contract.
+          if (!finished.isCompleted) finished.completeError(error, stackTrace);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        // Stream errors must keep reaching the caller unchanged: this is
+        // how an OllamaException from the transport (a 401, a 404, an
+        // OpenRouter error frame) becomes ChatProvider's error banner
+        // instead of a silently empty answer.
+        if (!finished.isCompleted) finished.completeError(error, stackTrace);
+      },
+      onDone: () {
+        if (!finished.isCompleted) finished.complete(_TurnEnd.done);
+      },
+      cancelOnError: true,
+    );
+
+    try {
+      final end = await finished.future;
+      // Cancellation is re-read on the way out for the same reason the old
+      // post-loop check existed: a stop that landed while the last chunks
+      // were draining still ends the run as cancelled.
+      accum.cancelled =
+          end == _TurnEnd.cancelled || isCancelled?.call() == true;
+      accum.stalled = end == _TurnEnd.stalled && !accum.cancelled;
+      return accum;
+    } finally {
+      idle?.cancel();
+      cancelPoll?.cancel();
+      // Not awaited, deliberately — the same rule _collectWithin follows.
+      // Cancelling an async* generator only takes effect at its next
+      // suspension point, so awaiting this would hang on exactly the stall
+      // the deadline exists to escape. The teardown still happens; the run
+      // just stops waiting for it.
+      subscription.cancel().ignore();
+    }
   }
 
   void _ingestChunk(
@@ -866,7 +1075,26 @@ class SearchAgent {
   ) {
     if (chunk.toolCalls != null && chunk.toolCalls!.isNotEmpty) {
       accum.toolCalls.addAll(chunk.toolCalls!);
-      if (accum.streamedContent) {
+      // Discard the prose that preceded the call ONLY while the tool is
+      // live. That is the "preamble, then search" case: the search really
+      // is about to run, so the prose was throat-clearing. On a
+      // tools-withdrawn turn the call cannot run at all — run()'s
+      // `hasTools` folds in `canSearch`, and the request carried no tools
+      // for the model to call in the first place — and the turn was
+      // briefed with ResearchLedger.closedRule ("Write the answer now"),
+      // so the prose IS the answer. Deleting it wiped a finished, cited
+      // reply off the user's screen and left run() with nothing but a
+      // blank message to return: the very failure the forced-answer path
+      // below it exists to prevent, reached with the answer in hand.
+      //
+      // The trade-off, taken deliberately: a model that really does emit a
+      // preamble on a closed turn now has that preamble returned as its
+      // answer, because run()'s forced-answer rescue keys on
+      // `turn.content.isEmpty`. Rescuing those too would mean blanking the
+      // bubble before the retry — reintroducing the exact "answer renders,
+      // then vanishes" symptom — and, since onContent appends, gluing two
+      // answers together in the UI. A thin reply beats a blank one.
+      if (accum.toolsEnabled && accum.streamedContent) {
         listener.onResetContent?.call();
         accum.content = '';
         accum.streamedContent = false;
@@ -880,7 +1108,13 @@ class SearchAgent {
       listener.onThinking?.call(thinking);
     }
 
-    if (chunk.content.isNotEmpty && accum.toolCalls.isEmpty) {
+    // The same rule, for content arriving AFTER a call: while the tool is
+    // live, a turn that has called it is a search turn and its prose is
+    // dropped, but a withdrawn turn keeps everything it streams, whichever
+    // side of the refused call it arrives on — models emit the two orders
+    // interchangeably.
+    if (chunk.content.isNotEmpty &&
+        (!accum.toolsEnabled || accum.toolCalls.isEmpty)) {
       if (!accum.answerStarted) {
         listener.onAnswerStart?.call();
         accum.answerStarted = true;
@@ -889,6 +1123,39 @@ class SearchAgent {
       listener.onContent?.call(chunk.content);
       accum.streamedContent = true;
     }
+  }
+
+  /// The text offered to [selectSupportingExcerpt] for one result, in the
+  /// same precedence [WebSearchService.formatResultsAsContext] uses to
+  /// decide what the model is actually shown: the chunks when the page was
+  /// chunked, else the whole page, else the snippet.
+  ///
+  /// A page and the chunks it was split into are NEVER both offered. They
+  /// used to be, and the ranking could not survive it: [queryCoverage] is
+  /// asymmetric containment with only the QUERY's trigram count in the
+  /// denominator, so a text can never score below any of its own
+  /// substrings. The whole page therefore won every ranking it entered —
+  /// and since candidates are pooled across all of a round's results and
+  /// ties break toward the earlier candidate, a 200,000-char page
+  /// saturating at 1.0 meant the stored evidence degenerated to the
+  /// opening characters of the FIRST result whatever it said: on a
+  /// reference page, its navigation sidebar.
+  ///
+  /// Dropping the whole page when chunks exist costs nothing in practice:
+  /// production chunks are always `splitText(pageContent, chunkSize: 1500,
+  /// overlap: 200)` (web_search_service.dart:177-185), so any phrase up to
+  /// the 200-char overlap survives intact inside some chunk.
+  @visibleForTesting
+  static List<String> excerptCandidates(WebSearchResult r) {
+    final chunks = r.chunks;
+    final page = r.pageContent;
+    return <String>[
+      if (chunks != null && chunks.isNotEmpty)
+        ...chunks
+      else if (page != null && page.isNotEmpty)
+        page,
+      r.snippet,
+    ].where((c) => c.trim().isNotEmpty).toList();
   }
 
   Future<_SearchExec> _executeToolCalls(
@@ -963,13 +1230,9 @@ class SearchAgent {
       visited.addAll(results.map((r) => r.url));
       if (results.isNotEmpty) {
         anyNonEmptyResults = true;
-        final candidates = <String?>[
-          for (final r in results) ...[
-            ...?r.chunks,
-            r.pageContent,
-            r.snippet,
-          ],
-        ].whereType<String>().toList();
+        final candidates = [
+          for (final r in results) ...excerptCandidates(r),
+        ];
         ledger.recordEvidence(
           p.subGoal!,
           sourceIdStart: offset + 1,
@@ -1159,6 +1422,12 @@ class SearchAgent {
   /// because a single similarity threshold can't reliably tell a
   /// legitimate refinement from a duplicate (measured near-duplicate and
   /// refinement query pairs score within a few hundredths of each other).
+  ///
+  /// Two shapes are exempt outright, both of them the completeness gate's
+  /// corrective round: a sub-goal the gate opened and nobody has searched,
+  /// and a searched sub-goal the gate has REOPENED. Neither holds evidence
+  /// the gate accepted, so nothing aimed at them can be a duplicate of
+  /// anything.
   bool _isLedgerBlocked(String query, SubGoal matched) {
     // Nothing has been searched for this sub-goal, so there is no duplicate
     // to refuse. This is not hypothetical: the completeness gate opens a
@@ -1169,17 +1438,32 @@ class SearchAgent {
     // told the model "That search found nothing new either" about a search
     // that never happened. Requiring a prior search closes both.
     if (matched.searchCount == 0) return false;
+    // The same self-contradiction, one case over. A gap the gate filed onto
+    // an ALREADY-searched sub-goal (ResearchLedger.openGap) inherits that
+    // sub-goal's spent budget and its wording, so every test below would
+    // refuse the search _gapNotice has just ordered the model to run — the
+    // exact-repeat test included, whenever the gate echoes the query's own
+    // words. While a gap is outstanding this sub-goal holds no evidence the
+    // gate accepted, so there is nothing here to be a duplicate OF.
+    //
+    // Bounded, not a hole in the budget: at most maxCoverageGaps gaps from
+    // at most maxCoverageChecks gate call per run, at most roundBatchCap
+    // searches a round, and ResearchLedger.recordEvidence closes the gap the
+    // moment sources land. A corrective search that keeps coming back empty
+    // never sets `madeProgress`, so stallLimit ends the run as before.
+    if (matched.outstandingGaps.isNotEmpty) return false;
     if (matched.normalizedQuery == _normalizeQuery(query)) return true;
-    // Nothing here needs to know about years, versions or quarters. A
-    // query naming a different instance never reaches this function,
-    // because ResearchLedger.findMatch refuses to call it the same
-    // sub-goal in the first place (see namesADifferentInstance) — so
-    // `matched` is always the same instance as [query], and comparing
-    // their string shape means what it says again. Discriminating here
-    // instead would have let the search run while still filing its
-    // evidence under the first instance's sub-goal, which is where the
-    // per-sub-goal budget and the stall counter then truncated a
-    // four-part question to three.
+    // Nothing here needs to know about years, versions, quarters or the
+    // names of the things asked about. A query naming an instance
+    // `matched` does not have never reaches this function, because
+    // ResearchLedger.findMatch refuses to call it the same sub-goal in the
+    // first place (see ResearchLedger._isDifferentRequestedInstance) — so
+    // `matched` names a superset of [query]'s instances, i.e. [query] is
+    // at most a narrowing of it, and comparing their string shape means
+    // what it says again. Discriminating here instead would have let the
+    // search run while still filing its evidence under the first
+    // instance's sub-goal, which is where the per-sub-goal budget and the
+    // stall counter then truncated a four-part question to three.
     if (trigramJaccard(query, matched.query) >=
         _ledgerDupeSimilarityThreshold) {
       return true;
@@ -1294,13 +1578,41 @@ class _LedgerCarrier {
 }
 
 class _TurnAccum {
+  /// Whether THIS turn's request actually carried the search tool. Mirrors
+  /// [SearchAgentRequest.toolsEnabled], which ChatProvider turns straight
+  /// into `tools:` / `tools: null` on the wire.
+  ///
+  /// Load-bearing in [SearchAgent._ingestChunk]: a tool call only means
+  /// "preamble, then search" while the tool is live. Once it has been
+  /// withdrawn, run() refuses the call outright and the turn was briefed
+  /// with ResearchLedger.closedRule, so prose streamed alongside a refused
+  /// call is the answer rather than throat-clearing ahead of a search.
+  ///
+  /// The contract that makes this safe is that the flag truthfully
+  /// describes what is on the wire: a streamTurn that attached the tool
+  /// regardless of [SearchAgentRequest.toolsEnabled] would re-enable the
+  /// discard exactly where it is wrong.
+  final bool toolsEnabled;
+
   String thinking = '';
   String content = '';
   final toolCalls = <OllamaToolCall>[];
   bool streamedContent = false;
   bool answerStarted = false;
   bool cancelled = false;
+
+  /// The turn produced nothing for [SearchAgent.turnIdleBudget] and was
+  /// abandoned. Never set together with [cancelled] — a user stop that
+  /// lands during a stall reads as the stop, since that is the truer
+  /// account of why the run ended.
+  bool stalled = false;
+
+  _TurnAccum({required this.toolsEnabled});
 }
+
+/// How one turn's stream ended. [stalled] is the case that did not exist
+/// before: the stream neither closed nor delivered anything.
+enum _TurnEnd { done, cancelled, stalled }
 
 enum _PlanKind {
   unique,

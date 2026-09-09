@@ -6,6 +6,8 @@ import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
+import 'package:llamaseek/Utils/text_similarity.dart';
+import 'package:llamaseek/Utils/text_splitter.dart';
 
 final history = [
   OllamaMessage('What is Vietnam GDP?', role: OllamaMessageRole.user),
@@ -532,6 +534,65 @@ void main() {
         everyElement(SubGoalStatus.searched));
     expect(snapshot.map((g) => g.sourceIdStart).toSet().length, 4,
         reason: 'each year must carry its own evidence, not share 2021\'s');
+  });
+
+  test('four cities the user named are four sub-goals, so none is refused', () async {
+    // The same truncation as the four-years case above, on a question with
+    // no digits anywhere in it to split on. "current population of <city>"
+    // scores 0.58-0.67 against itself city for city — far above the 0.40
+    // grouping threshold and indistinguishable, by string shape alone,
+    // from one question reworded four times. Grouped, the four lookups
+    // shared one perSubGoalBudget (so the fourth city was refused as a
+    // ledgerDupe before it reached a search engine), the refused round
+    // covered no new ground (so roundsSinceCoverageGrew ended the run as
+    // unproductive), and the single checklist line named Tokyo while
+    // citing every city's sources.
+    const queries = [
+      'current population of Tokyo',
+      'current population of Delhi',
+      'current population of Shanghai',
+      'current population of São Paulo',
+    ];
+    // The user names all four cities, which is what licenses splitting
+    // them — see ResearchLedger._isDifferentRequestedInstance.
+    final asked = [
+      OllamaMessage('What is the current population of Tokyo, Delhi, '
+          'Shanghai and São Paulo? Give the figure for each.',
+          role: OllamaMessageRole.user),
+    ];
+    final executed = <String>[];
+    final skipped = <String>[];
+    var snapshot = <SubGoal>[];
+    var turn = 0;
+    await agent(
+      maxSearches: 15,
+      streamTurn: (req) {
+        turn++;
+        if (turn <= queries.length) {
+          return Stream.fromIterable([searchChunk(queries[turn - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async =>
+          [hit('https://example.com/${Uri.encodeComponent(req.query)}')],
+    ).run(
+      history: asked,
+      listener: SearchAgentListener(
+        onSearchStart: executed.add,
+        onSearchSkipped: (query, reason) => skipped.add(query),
+        onLedgerUpdate: (objective, goals) => snapshot = goals,
+      ),
+    );
+
+    expect(executed, queries);
+    expect(skipped, isEmpty,
+        reason: 'the fourth city used to arrive with the sub-goal\'s budget '
+            'already spent and be refused as a near-duplicate of Tokyo');
+    expect(snapshot.length, 4);
+    expect(snapshot.map((g) => g.status), everyElement(SubGoalStatus.searched));
+    expect(snapshot.map((g) => g.sourceIdStart).toSet().length, 4,
+        reason: 'each city must carry its own evidence, not have all four '
+            'cities\' sources piled onto Tokyo\'s line');
   });
 
   test('a cross-round exact-duplicate query gets a non-empty tool message', () async {
@@ -1431,6 +1492,73 @@ void main() {
       // original — it has one ground truth, and the user just refined it.
       expect(assessed.single.objective, startsWith('What is Vietnam GDP?'));
       expect(assessed.single.objective, contains('The team'));
+      expect(assessed.single.objective, contains('Which Mercury?'),
+          reason: 'the gate reads prose and needs the model\'s own question '
+              'spelled out to make sense of "The team" — narrowing the '
+              'ledger\'s instance source must not narrow this');
+    });
+
+    test('the picks reach the instance split, the model\'s question does not',
+        () async {
+      // The wiring, end to end and through the real _clarify: the ledger
+      // is handed the options the user TICKED and the verbatim message,
+      // never the composed question. Nothing else in this file observes
+      // grouping, so this is what catches run() quietly going back to
+      // passing the composed string — every other clarification test
+      // watches the brief or the gate, and both of those are unchanged by
+      // the fix.
+      final lagos = [
+        OllamaMessage('What was the population of Lagos?',
+            role: OllamaMessageRole.user),
+      ];
+      const queries = ['Lagos population 2023', 'Lagos population 2024'];
+
+      Future<List<String>> subGoalsFor(List<String> picks) async {
+        var turn = 0;
+        final subGoals = <String>[];
+        await SearchAgent(
+          streamTurn: (req) {
+            turn++;
+            if (turn <= queries.length) {
+              return Stream.fromIterable([searchChunk(queries[turn - 1])]);
+            }
+            return Stream.fromIterable([answerChunk('done')]);
+          },
+          search: (req) async =>
+              [hit('https://example.com/${Uri.encodeComponent(req.query)}')],
+          deriveGoal: (_) async => const ResearchGoal(
+            statement: 'The population of Lagos in the years the user means',
+            clarification: ResearchClarification(
+              // Enumerates its options inside the question, which
+              // goalDerivationInstruction's "which time period" framing
+              // invites — this is the prose that must not become instances.
+              question: 'Which years — 2023, 2024 or 2025?',
+              options: ['2023', '2024', '2025'],
+            ),
+          ),
+          askClarification: (_) async => picks,
+        ).run(
+          history: lagos,
+          listener: SearchAgentListener(
+            onLedgerUpdate: (_, snapshot) {
+              subGoals
+                ..clear()
+                ..addAll(snapshot.map((g) => g.query));
+            },
+          ),
+        );
+        return subGoals;
+      }
+
+      expect(await subGoalsFor(const ['2023']), hasLength(1),
+          reason: '2024 and 2025 appear only in the model\'s clarification '
+              'question, so a re-ask carrying 2024 is the model varying the '
+              'year on its own and groups onto the one sub-goal — where '
+              'splitting would hand it a second search budget and make the '
+              'round look like it broadened coverage');
+      expect(await subGoalsFor(const ['2023', '2024']), hasLength(2),
+          reason: 'but a user who ticked both years asked two questions, and '
+              'each needs its own sub-goal, budget and checklist line');
     });
 
     test('a skip proceeds on the goal alone', () async {
@@ -1549,6 +1677,101 @@ void main() {
       expect(outcome.content, isEmpty);
       // 1 search turn + 1 withdrawn turn + exactly 1 forced-answer retry.
       expect(turn, 3, reason: 'the forced-answer turn must fire only once');
+    });
+
+    // The rescue above is for a withdrawn turn that says NOTHING. A withdrawn
+    // turn that answers and then asks to search anyway needs the opposite
+    // treatment: the request carried no tools, so the call cannot run and the
+    // prose is not a preamble to anything — it is the answer. _ingestChunk
+    // gates its content discard on _TurnAccum.toolsEnabled for exactly this.
+    test('a withdrawn turn that answers AND asks to search keeps its answer',
+        () async {
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk(distinctTopics[0])]);
+          }
+          return Stream.fromIterable([
+            answerChunk('answer from what I have'),
+            searchChunk(distinctTopics[1]),
+          ]);
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(requests[1].toolsEnabled, isFalse,
+          reason: 'the budget was spent on turn 1, so turn 2 carries no '
+              'web_search tool and the call it emits anyway is guaranteed to '
+              'be refused');
+      expect(outcome.content, 'answer from what I have',
+          reason: 'a refused call must not delete the prose that arrived '
+              'with it — that prose is a finished answer being thrown away');
+      expect(outcome.reason, SearchTerminationReason.hardCapReached);
+      expect(turn, 2,
+          reason: 'and no forced-answer retry is needed, because turn.content '
+              'is no longer empty: the one-shot rescue stays unspent for the '
+              'prose-free turn above');
+    });
+
+    test(
+        'a withdrawn turn that asks to search BEFORE answering keeps its '
+        'answer too', () async {
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk(distinctTopics[0])]);
+          }
+          // The other order, which models emit interchangeably: the refused
+          // call first, the answer after it.
+          return Stream.fromIterable([
+            searchChunk(distinctTopics[1]),
+            answerChunk('answer from what I have'),
+          ]);
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.content, 'answer from what I have',
+          reason: 'the rule is order-independent: _ingestChunk\'s '
+              '`accum.toolCalls.isEmpty` guard, which drops content arriving '
+              'after a call, is gated on toolsEnabled as well');
+      expect(turn, 2);
+    });
+
+    test('onResetContent is never fired by a refused tool call', () async {
+      var resets = 0;
+      var turn = 0;
+
+      await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk(distinctTopics[0])]);
+          }
+          return Stream.fromIterable([
+            answerChunk('answer from what I have'),
+            searchChunk(distinctTopics[1]),
+          ]);
+        },
+      ).run(
+        history: history,
+        listener: SearchAgentListener(onResetContent: () => resets++),
+      );
+
+      expect(resets, 0,
+          reason: 'ChatProvider wires onResetContent to '
+              'streamingMessage!.content = \'\', so a reset here is the user '
+              'watching a complete, cited answer render and then vanish. A '
+              'call that can never run is no reason to blank the bubble.');
     });
   });
 
@@ -1756,6 +1979,130 @@ void main() {
       expect(executed, hasLength(2));
       expect(executed.last, 'which college did Jalen Brunson attend');
       expect(outcome.searchCount, 2);
+    });
+
+    // Three phrasings of one question. The first two group onto a single
+    // sub-goal and spend its budget; the gate's gap then groups onto that
+    // same, already-searched sub-goal — the case the `searchCount == 0`
+    // guard above cannot reach.
+    const grouped1 = 'Vietnam GDP 2024 forecast';
+    const grouped2 = 'Vietnam GDP 2024 estimate';
+    const groupedGap = 'Vietnam GDP forecast for next year';
+
+    test('a gap that lands on an already-searched sub-goal is still searched',
+        () async {
+      // Measured preconditions, asserted so they cannot rot: every phrasing
+      // is at or above ResearchLedger._groupingThreshold (0.40) against the
+      // first, so findMatch calls them one sub-goal, and below
+      // _ledgerDupeSimilarityThreshold (0.75), so nothing is refused as a
+      // near-verbatim rephrasing. Only the per-sub-goal budget could — and
+      // by the time the gate files its gap, that budget is spent.
+      for (final q in [grouped2, groupedGap]) {
+        final score = trigramJaccard(grouped1, q);
+        expect(score, greaterThanOrEqualTo(0.40), reason: '"$q" scored $score');
+        expect(score, lessThan(0.75), reason: '"$q" scored $score');
+      }
+
+      final requests = <SearchAgentRequest>[];
+      final executed = <String>[];
+      final skipped = <String>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 10,
+        perSubGoalBudget: 2,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk(grouped1)]);
+          if (turn == 2) return Stream.fromIterable([searchChunk(grouped2)]);
+          if (turn == 3) {
+            return Stream.fromIterable([answerChunk('GDP was X [1][2]')]);
+          }
+          // Does exactly what _gapNotice ordered.
+          if (turn == 4) return Stream.fromIterable([searchChunk(groupedGap)]);
+          return Stream.fromIterable([answerChunk('GDP was X, and next year Y')]);
+        },
+        assessCoverage: (req) async => [groupedGap],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onSearchStart: executed.add,
+          onSearchSkipped: (q, r) => skipped.add(q),
+        ),
+      );
+
+      expect(skipped, isEmpty,
+          reason: 'the sub-goal had spent its whole per-sub-goal budget, but '
+              'while a gate gap is outstanding it holds no evidence the gate '
+              'accepted — so there is nothing for the duplicate rules to '
+              'refuse the corrective search as');
+      expect(executed, orderedEquals([grouped1, grouped2, groupedGap]));
+      expect(requests[3].researchBrief, contains('- [ ] "$groupedGap"'),
+          reason: 'and the brief riding on that same request finally agrees '
+              'with the gap notice instead of showing the ground as [x]');
+      expect(outcome.reason, SearchTerminationReason.converged,
+          reason: 'closing the gap grew searchedSubGoalCount, so the round '
+              'the harness itself demanded reset the stall counter rather '
+              'than advancing it');
+      expect(outcome.searchCount, 3);
+    });
+
+    test('a corrective search that finds nothing leaves the gap open and '
+        'still ends the run', () async {
+      // The bypass has to be bounded by something, or a gap nothing can be
+      // found for buys an unlimited supply of searches on one sub-goal.
+      // Nothing found means no progress, so the stall limit ends the run —
+      // and the gap stays on the checklist so the answer can say which part
+      // could not be verified.
+      final requests = <SearchAgentRequest>[];
+      final executed = <String>[];
+      final snapshots = <List<SubGoal>>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 10,
+        perSubGoalBudget: 2,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk(grouped1)]);
+          if (turn == 2) return Stream.fromIterable([searchChunk(grouped2)]);
+          if (turn == 3) {
+            return Stream.fromIterable([answerChunk('GDP was X [1][2]')]);
+          }
+          if (turn == 4) return Stream.fromIterable([searchChunk(groupedGap)]);
+          return Stream.fromIterable(
+              [answerChunk('GDP was X; next year could not be established')]);
+        },
+        search: (req) async =>
+            req.query == groupedGap ? [] : [hit('https://example.com/${req.query}')],
+        assessCoverage: (req) async => [groupedGap],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(
+          onSearchStart: executed.add,
+          onLedgerUpdate: (objective, snapshot) => snapshots.add(snapshot),
+        ),
+      );
+
+      expect(executed, orderedEquals([grouped1, grouped2, groupedGap]),
+          reason: 'the corrective search ran; it just came back empty');
+      expect(snapshots.last.single.outstandingGaps, [groupedGap],
+          reason: 'recordEvidence is only called for non-empty results, so a '
+              'gap nothing was found for stays outstanding');
+      final closingBrief = requests.last.researchBrief;
+      expect(closingBrief, contains('- [ ] "$groupedGap"'),
+          reason: 'so the closed brief still names the part that could not be '
+              'verified, which is what the answer is asked to say plainly');
+      expect(closingBrief, isNot(contains('search for it specifically')),
+          reason: 'but never orders a search on a request that carries no '
+              'tool — the contradiction ResearchLedger.closedRule exists to '
+              'remove');
+      expect(outcome.reason, SearchTerminationReason.unproductiveRounds,
+          reason: 'an empty corrective round makes no progress, so the stall '
+              'limit ends the run instead of the bypass looping on it');
+      expect(turn, 5, reason: 'and it ends promptly, not eventually');
     });
 
     test('accepts a complete answer after exactly one gate call', () async {
@@ -2058,6 +2405,151 @@ void main() {
       // backend outage.
       expect(outcome.searchCount, 2);
       expect(outcome.reason, isNot(SearchTerminationReason.searchUnavailable));
+    });
+  });
+
+  group('SearchAgent.excerptCandidates', () {
+    // The ledger's supporting excerpt is ranked by queryCoverage, which is
+    // asymmetric containment: a text can never score below any of its own
+    // substrings. Offering a page AND the chunks it was split into as
+    // siblings therefore guaranteed the page won, and the excerpt became
+    // its first 220 characters — a reference page's navigation sidebar.
+    // This helper is the precedence rule that prevents that, and it is the
+    // same one formatResultsAsContext uses to pick what the model is shown.
+    test('offers the chunks and the snippet, never the page beside them', () {
+      final result = WebSearchResult(
+        title: 'T',
+        snippet: 'the snippet',
+        url: 'https://example.invalid/a',
+        pageContent: 'first chunk second chunk',
+        chunks: const ['first chunk', 'second chunk'],
+      );
+
+      expect(SearchAgent.excerptCandidates(result),
+          ['first chunk', 'second chunk', 'the snippet']);
+      expect(SearchAgent.excerptCandidates(result),
+          isNot(contains(result.pageContent)),
+          reason: 'the superset of the chunks must not compete with them');
+    });
+
+    test('falls back to the whole page when nothing was chunked', () {
+      for (final chunks in <List<String>?>[null, const []]) {
+        final result = WebSearchResult(
+          title: 'T',
+          snippet: 'the snippet',
+          url: 'https://example.invalid/a',
+          pageContent: 'the whole page',
+          chunks: chunks,
+        );
+        expect(SearchAgent.excerptCandidates(result),
+            ['the whole page', 'the snippet'],
+            reason: 'with chunks == $chunks there is no finer text to rank, '
+                'so dropping the page would throw the evidence away');
+      }
+    });
+
+    test('falls back to the snippet alone, and drops blank candidates', () {
+      final noContent = WebSearchResult(
+        title: 'T',
+        snippet: 'the snippet',
+        url: 'https://example.invalid/a',
+      );
+      expect(SearchAgent.excerptCandidates(noContent), ['the snippet']);
+
+      final blanks = WebSearchResult(
+        title: 'T',
+        snippet: '   ',
+        url: 'https://example.invalid/a',
+        chunks: const ['', '  ', 'real text'],
+      );
+      expect(SearchAgent.excerptCandidates(blanks), ['real text'],
+          reason: 'selectSupportingExcerpt skips blanks anyway; keeping them '
+              'out of the list keeps the ranking honest about how many '
+              'candidates a source actually offered');
+    });
+  });
+
+  group('the excerpt recorded for a real round', () {
+    const answer =
+        'The mill closed in 1974 after the last waterwheel was dismantled.';
+    const query = 'mill closed 1974 waterwheel dismantled';
+
+    /// A page shaped like a real extraction: site chrome at the top, the
+    /// answering sentence several thousand characters down, more prose
+    /// after it.
+    String longPage() {
+      final chrome = List.filled(
+        6,
+        'Skip to main content Navigation menu Sign in Create account '
+            'Contents Random page Donate Tools.',
+      ).join(' ');
+      final filler = List.filled(
+        14,
+        'The archive holds letters, ledgers and photographs donated by '
+            'local families over several decades.',
+      ).join(' ');
+      final more = List.filled(
+        14,
+        'Volunteers catalogue the collection on weekends throughout the '
+            'year and publish a newsletter.',
+      ).join(' ');
+      return '$chrome\n\n$filler\n\n$filler $answer\n\n$more';
+    }
+
+    test('quotes the answering passage, not the head of the page', () async {
+      final page = longPage();
+      final result = WebSearchResult(
+        title: 'Local history archive',
+        snippet: 'An archive of local history material.',
+        url: 'https://example.invalid/archive',
+        pageContent: page,
+        // Exactly what WebSearchService.searchAndExtract sets.
+        chunks: splitText(page, chunkSize: 1500, overlap: 200),
+      );
+      expect(result.chunks!.length, greaterThan(1),
+          reason: 'the fixture has to be long enough to be chunked at all');
+
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+      await agent(
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk(query)]);
+          return Stream.fromIterable([answerChunk('done [1]')]);
+        },
+        search: (_) async => [result],
+      ).run(history: history, listener: const SearchAgentListener());
+
+      final brief = requests.last.researchBrief;
+      expect(brief, contains(answer),
+          reason: 'the ledger line the model re-reads every turn carries the '
+              'sentence that made this source win');
+      expect(brief, isNot(contains(page.substring(0, 220))),
+          reason: 'and not the first 220 characters of the document, which '
+              'for a page with site chrome on top is navigation furniture');
+
+      final line = brief
+          .split('\n')
+          .firstWhere((l) => l.startsWith('- [x]'), orElse: () => '');
+      final quoted =
+          RegExp(r'Excerpt: <untrusted-excerpt>(.*)</untrusted-excerpt>$')
+              .firstMatch(line)!
+              .group(1)!;
+      final verbatim = quoted
+          .replaceAll(RegExp(r'^\.\.\.'), '')
+          .replaceAll(RegExp(r'\.\.\.$'), '');
+      // Still asserted against the RAW chunks: _checklistLine folds the
+      // excerpt onto one line so page text cannot open a checklist line of
+      // its own, and that fold is its only licence to differ from the
+      // stored bytes — for this fixture it changes nothing, which is the
+      // point. A failure here means the rendering started rewriting
+      // evidence rather than framing it.
+      expect(result.chunks!.any((c) => c.contains(verbatim)), isTrue,
+          reason: 'the excerpt is a verbatim window of one of the chunks the '
+              'model was shown, so the ledger and the sources agree');
+      expect(verbatim.length, lessThanOrEqualTo(220),
+          reason: 'one checklist line stays bounded however long the page is');
     });
   });
 }

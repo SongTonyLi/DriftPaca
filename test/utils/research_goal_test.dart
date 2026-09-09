@@ -21,7 +21,9 @@ GOAL: Establish when TikTok typically opens new-grad offer negotiations
     test('accepts a bare statement with no GOAL prefix', () {
       // The prompt asks for the prefix but nothing enforces it, and
       // discarding an otherwise-usable brief over a missing label would
-      // cost the run its goal for no reason.
+      // cost the run its goal for no reason. This is a FALLBACK for a reply
+      // that never labels its goal, not a competitor to the label — see
+      // 'a GOAL line outranks a prose preamble above it' below.
       final goal = parseResearchGoal('Find Vietnam\'s 2024 GDP\n* GDP 2024');
 
       expect(goal!.statement, "Find Vietnam's 2024 GDP");
@@ -111,11 +113,70 @@ GOAL: Find the current price of gold
       expect(goal.subQuestions, ['gold spot price today']);
     });
 
+    test('a GOAL line outranks a prose preamble above it', () {
+      // The derivation prompt says "No preamble, no explanation, no closing
+      // remarks", and a chatty model writes one anyway. Read first-match,
+      // that courtesy line became the run's objective and the real goal was
+      // discarded; the label now wins wherever it appears.
+      final goal = parseResearchGoal('''
+Sure! Here is the research brief:
+GOAL: Find the current price of gold
+- gold spot price today
+''');
+
+      expect(goal!.statement, 'Find the current price of gold');
+      expect(goal.subQuestions, ['gold spot price today']);
+    });
+
+    test('bullets written under a preamble are dropped when a GOAL line '
+        'follows', () {
+      // A superseded statement takes its bullets with it, for the same
+      // reason bullets before any statement are ignored: each one becomes a
+      // checklist item the stopping rule obliges the model to close.
+      final goal = parseResearchGoal('''
+Here you go:
+- a bullet the model invented
+GOAL: Find the current price of gold
+- gold spot price today
+''');
+
+      expect(goal!.statement, 'Find the current price of gold');
+      expect(goal.subQuestions, ['gold spot price today']);
+    });
+
+    test('the bare-statement tolerance still wins when no GOAL line exists',
+        () {
+      // The tolerance was demoted to a fallback, not removed — and within
+      // that fallback the FIRST bare line is still the statement, so a
+      // qualifier written under it does not displace it.
+      final goal = parseResearchGoal(
+          'Find Vietnam\'s 2024 GDP\nnominal, in USD\n* GDP 2024');
+
+      expect(goal!.statement, "Find Vietnam's 2024 GDP");
+      expect(goal.subQuestions, ['GDP 2024']);
+    });
+
     test('keeps the first GOAL line when the model restates itself', () {
       final goal = parseResearchGoal(
           'GOAL: first framing\nGOAL: second, worse framing');
 
       expect(goal!.statement, 'first framing');
+    });
+
+    test('a restated GOAL line does not discard the first goal\'s bullets',
+        () {
+      // Superseding a statement drops the bullets collected under it, which
+      // is right for a preamble and wrong for a restatement: the second GOAL
+      // line is not in force, so it must take nothing with it.
+      final goal = parseResearchGoal('''
+GOAL: first framing
+- first sub-question
+GOAL: second, worse framing
+- second sub-question
+''');
+
+      expect(goal!.statement, 'first framing');
+      expect(goal.subQuestions, ['first sub-question', 'second sub-question']);
     });
 
     test('strips wrapping quotes and tolerates a fullwidth colon', () {
@@ -135,6 +196,10 @@ GOAL: Find the current price of gold
       expect(parseResearchGoal(''), isNull);
       expect(parseResearchGoal('   \n\n  '), isNull);
       expect(parseResearchGoal('GOAL:'), isNull);
+      // An empty label still claims the statement, even over a preamble it
+      // came after: a run aimed at the user's own question (SearchAgent's
+      // fallback for a null parse) beats one aimed at "Sure! Here you go:".
+      expect(parseResearchGoal('Sure! Here you go:\nGOAL:'), isNull);
     });
   });
 }

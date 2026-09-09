@@ -143,4 +143,37 @@ void main() {
       'gdp vietnam',
     );
   });
+
+  test('JSON-shaped arguments that do not decode produce no query', () {
+    // Two parallel calls glued together by a stream assembler that could
+    // not tell them apart, and a call truncated mid-stream. Both used to
+    // come back as {query: <the raw text>}, which sent the literal JSON to
+    // a search engine, spent one of the run's search slots on it and filed
+    // it in the research ledger as a sub-goal that had been researched
+    // (audit finding #11). No query means SearchAgent skips the call
+    // visibly instead.
+    expect(
+      OllamaToolCall.parseArguments('{"query":"a"}{"query":"b"}'),
+      isEmpty,
+      reason: 'concatenated argument objects are wreckage, not a query',
+    );
+    expect(
+      OllamaToolCall.parseArguments('{"query":"popul'),
+      isEmpty,
+      reason: 'truncated argument JSON is wreckage too — searching it '
+          'would report a half-written query as researched',
+    );
+    expect(
+      OllamaToolCall.parseArguments('[{"query":"a"}]'),
+      isEmpty,
+      reason: 'the same holds for an array-shaped payload that carries no '
+          'arguments map',
+    );
+    expect(
+      OllamaToolCall.parseArguments('current weather Bellevue WA')['query'],
+      'current weather Bellevue WA',
+      reason: 'a model that sends a bare query string instead of JSON is '
+          'still understood — only JSON-shaped text is held to decoding',
+    );
+  });
 }

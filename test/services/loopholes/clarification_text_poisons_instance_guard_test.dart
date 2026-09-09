@@ -13,6 +13,13 @@
 /// typed, and `_isDifferentRequestedInstance` hard-skips any sub-goal
 /// lacking it.
 ///
+/// The channel is wider than digits: `_requestedInstances` also reads the
+/// capitalised names out of `userQuestion` (see `properNounTokens`), so the
+/// model's clarification question contributes any names it happens to use
+/// on exactly the same terms. That does not change the defect these tests
+/// document — it is the model's prose reaching ground truth at all, not
+/// which tokens are read out of it once it gets there.
+///
 /// These tests are offline: fake `streamTurn`, fake `search`, fake
 /// `deriveGoal`, fake `askClarification`. No network, no model.
 library;

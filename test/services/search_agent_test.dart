@@ -536,6 +536,65 @@ void main() {
         reason: 'each year must carry its own evidence, not share 2021\'s');
   });
 
+  test('four cities the user named are four sub-goals, so none is refused', () async {
+    // The same truncation as the four-years case above, on a question with
+    // no digits anywhere in it to split on. "current population of <city>"
+    // scores 0.58-0.67 against itself city for city — far above the 0.40
+    // grouping threshold and indistinguishable, by string shape alone,
+    // from one question reworded four times. Grouped, the four lookups
+    // shared one perSubGoalBudget (so the fourth city was refused as a
+    // ledgerDupe before it reached a search engine), the refused round
+    // covered no new ground (so roundsSinceCoverageGrew ended the run as
+    // unproductive), and the single checklist line named Tokyo while
+    // citing every city's sources.
+    const queries = [
+      'current population of Tokyo',
+      'current population of Delhi',
+      'current population of Shanghai',
+      'current population of São Paulo',
+    ];
+    // The user names all four cities, which is what licenses splitting
+    // them — see ResearchLedger._isDifferentRequestedInstance.
+    final asked = [
+      OllamaMessage('What is the current population of Tokyo, Delhi, '
+          'Shanghai and São Paulo? Give the figure for each.',
+          role: OllamaMessageRole.user),
+    ];
+    final executed = <String>[];
+    final skipped = <String>[];
+    var snapshot = <SubGoal>[];
+    var turn = 0;
+    await agent(
+      maxSearches: 15,
+      streamTurn: (req) {
+        turn++;
+        if (turn <= queries.length) {
+          return Stream.fromIterable([searchChunk(queries[turn - 1])]);
+        }
+        return Stream.fromIterable([answerChunk('done')]);
+      },
+      search: (req) async =>
+          [hit('https://example.com/${Uri.encodeComponent(req.query)}')],
+    ).run(
+      history: asked,
+      listener: SearchAgentListener(
+        onSearchStart: executed.add,
+        onSearchSkipped: (query, reason) => skipped.add(query),
+        onLedgerUpdate: (objective, goals) => snapshot = goals,
+      ),
+    );
+
+    expect(executed, queries);
+    expect(skipped, isEmpty,
+        reason: 'the fourth city used to arrive with the sub-goal\'s budget '
+            'already spent and be refused as a near-duplicate of Tokyo');
+    expect(snapshot.length, 4);
+    expect(snapshot.map((g) => g.status), everyElement(SubGoalStatus.searched));
+    expect(snapshot.map((g) => g.sourceIdStart).toSet().length, 4,
+        reason: 'each city must carry its own evidence, not have all four '
+            'cities\' sources piled onto Tokyo\'s line');
+  });
+
   test('a cross-round exact-duplicate query gets a non-empty tool message', () async {
     final requests = <SearchAgentRequest>[];
     var turn = 0;

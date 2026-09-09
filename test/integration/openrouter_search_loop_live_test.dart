@@ -115,12 +115,15 @@ const _probes = <_Probe>[
       ['washington'],
     ],
   ),
-  // The sharpest structural probe. Four entities, no digits anywhere in the
-  // question, so ResearchLedger._isDifferentRequestedInstance has nothing to
-  // split on and every "population of <city>" query trigram-matches the last
-  // one. See test/services/search_loop_loophole_test.dart for the offline
-  // proof that these collapse onto ONE sub-goal with searchCount 4 against a
-  // per-sub-goal budget of 3.
+  // The sharpest structural probe. Four entities and no digits anywhere in
+  // the question, so every "population of <city>" query trigram-matches the
+  // last one and nothing in the string shape separates four cities from one
+  // question reworded four times. What separates them is that the user NAMED
+  // all four: ResearchLedger._isDifferentRequestedInstance reads the
+  // capitalised names out of the question alongside the digit-runs it has
+  // always read, so each city opens its own sub-goal with its own
+  // per-sub-goal budget and its own checklist line. See
+  // test/services/search_loop_loophole_test.dart for the offline proof.
   _Probe(
     id: 'breadth',
     targets: 'ledger sub-goal grouping, the per-sub-goal budget, and the '

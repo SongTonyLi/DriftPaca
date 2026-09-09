@@ -125,6 +125,107 @@ void main() {
     });
   });
 
+  group('properNounTokens', () {
+    // The user side of ResearchLedger's instance check. It answers one
+    // question — "which things did the user NAME?" — and it has to answer
+    // it conservatively, because a wrong "yes" splits one question into a
+    // sub-goal per rewording, and each of those carries a fresh search
+    // budget and a round that looks like it broadened coverage.
+    test('reads the names out of a question that lists several', () {
+      expect(
+        properNounTokens('What is the current population of Tokyo, Delhi, '
+            'Shanghai and São Paulo? Give the figure for each.'),
+        {'tokyo', 'delhi', 'shanghai', 'são', 'paulo'},
+        reason: 'four names the user typed; a multi-word name contributes '
+            'each of its own tokens, because the query side matches token '
+            'by token and a model may write only half of one',
+      );
+      expect(properNounTokens('Compare NASA and ESA budgets.'),
+          {'nasa', 'esa'},
+          reason: 'the sentence-initial verb names nothing, and the '
+              'lowercase noun after ESA ends its run');
+    });
+
+    test('reads nothing out of a question with a single subject', () {
+      // One capitalised phrase is what the question is ABOUT. Splitting on
+      // it would fragment one question, so a single run yields nothing —
+      // and adjacent capitalised words are one run, which is what makes
+      // "Vietnam GDP" and "Mount Everest" single subjects rather than two
+      // names apiece.
+      for (final single in [
+        'What is Vietnam GDP?',
+        'How is Apple doing this quarter?',
+        "What was Vietnam's GDP in 2024?",
+        'How tall is Mount Everest?',
+        'What is the outlook for Brazilian inflation?',
+        'How many people live in the Tokyo metropolitan area as of 2025?',
+      ]) {
+        expect(properNounTokens(single), isEmpty,
+            reason: '"$single" names one thing, so capitalisation carries no '
+                'instance signal and every re-ask of it must still group');
+      }
+    });
+
+    test('reads nothing out of a Title Case or shouted question', () {
+      // Run-merging is what collapses these to a single run. Without it, a
+      // user who types in title case or in caps would have every word of
+      // their question treated as an instance they named.
+      expect(
+          properNounTokens(
+              'What Is The Current Population Of Tokyo And Delhi?'),
+          isEmpty);
+      expect(
+          properNounTokens(
+              'WHAT IS THE CURRENT POPULATION OF TOKYO AND DELHI?'),
+          isEmpty);
+    });
+
+    test('reads nothing out of an uncased script', () {
+      // No character in these is uppercase, so the name split cannot fire
+      // for a Chinese, Japanese, Arabic, Hebrew or Thai question at all —
+      // by construction, not by a script list that could go stale. Those
+      // runs keep exactly the grouping trigramJaccard gives them.
+      for (final uncased in [
+        '东京和德里目前的人口分别是多少？',
+        '東京と大阪の人口は？',
+        'ما هو عدد سكان فيتنام وفرنسا',
+        'ประชากรของโตเกียวและเดลี',
+      ]) {
+        expect(properNounTokens(uncased), isEmpty, reason: uncased);
+      }
+    });
+
+    test('is empty for text with nothing capitalised to read', () {
+      expect(properNounTokens(''), isEmpty);
+      expect(properNounTokens('irrelevant'), isEmpty);
+      expect(properNounTokens('what is the population of tokyo and delhi'),
+          isEmpty,
+          reason: 'an all-lowercase question names nothing this can see, so '
+              'it groups exactly as it did before');
+    });
+  });
+
+  group('wordTokens', () {
+    test('normalizes the query side exactly as the user side is normalized', () {
+      // Both sides of the instance comparison run through one tokenizer on
+      // purpose: if the user's "Vietnam's" kept its apostrophe while a
+      // model's "vietnams" did not, the two would never match and the
+      // split would silently stop firing.
+      expect(wordTokens("Vietnam's GDP in D.C. 2024"),
+          {'vietnams', 'gdp', 'in', 'dc', '2024'},
+          reason: 'apostrophes and periods are stripped inside a word, '
+              'digits are kept as tokens of their own, and everything is '
+              'lowercased');
+      expect(wordTokens('current population of São Paulo'),
+          {'current', 'population', 'of', 'são', 'paulo'},
+          reason: 'case-blind on the query side: a model writes the city '
+              'name however it likes');
+      expect(wordTokens('Tokyo, Delhi — Shanghai; (São Paulo)'),
+          {'tokyo', 'delhi', 'shanghai', 'são', 'paulo'},
+          reason: 'punctuation separates tokens rather than joining them');
+    });
+  });
+
   group('queryCoverage', () {
     test('scores a short query higher against a chunk containing its terms', () {
       const query = 'Vietnam GDP 2024';

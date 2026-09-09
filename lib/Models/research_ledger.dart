@@ -204,17 +204,25 @@ class ResearchLedger {
   /// enough to call a literal duplicate) land on one sub-goal instead of
   /// spawning a lookalike one. Returns null for a genuinely new question.
   ///
-  /// A query naming a different one of the instances the OBJECTIVE asked
-  /// about never groups, however similar it looks — see
-  /// [_isDifferentRequestedInstance]. Four years the user actually listed
-  /// are four questions, and collapsing them onto one sub-goal is what
-  /// silently truncated such a question to three parts: they shared a
-  /// single per-sub-goal search budget, and after the first round none of
-  /// them covered new ground, so the run read as stalled and stopped
-  /// before the last one was ever searched. Keeping them separate also
-  /// keeps their evidence legible: [recordEvidence] would happily pile all
-  /// four years' sources onto one grouped sub-goal, leaving a single ledger
-  /// line that cites everything and distinguishes nothing.
+  /// A query naming a different one of the instances the USER asked about
+  /// never groups, however similar it looks — see
+  /// [_isDifferentRequestedInstance]. Four instances the user actually
+  /// listed are four questions, whether they are picked out by digits
+  /// (years, versions, quarters) or by the names of the things asked
+  /// about; collapsing them onto one sub-goal is what silently truncated
+  /// such a question to three parts: they shared a single per-sub-goal
+  /// search budget, and after the first round none of them covered new
+  /// ground, so the run read as stalled and stopped before the last one
+  /// was ever searched. Keeping them separate also keeps their evidence
+  /// legible: [recordEvidence] would happily pile all four instances'
+  /// sources onto one grouped sub-goal, leaving a single ledger line that
+  /// cites everything and distinguishes nothing.
+  ///
+  /// Named entities were added to that rule for the four-cities case:
+  /// "the current population of Tokyo, Delhi, Shanghai and Sao Paulo" has
+  /// no digits in it at all, so the digit-only version of the override had
+  /// nothing to split on and a question about four cities came back about
+  /// one.
   SubGoal? findMatch(String query) {
     final normalized = _normalize(query);
     for (final goal in subGoals) {
@@ -233,41 +241,76 @@ class ResearchLedger {
     return best;
   }
 
-  /// Digit-runs appearing in the user's own question — the instances they
-  /// actually asked about. Computed once: [userQuestion] is final.
+  /// The instances the user's own question picks out — the digit-runs they
+  /// typed (years, versions, quarters) plus, when they named two or more
+  /// of them, the capitalised words naming the things they asked about.
+  /// Computed once: [userQuestion] is final, and [properNounTokens] is the
+  /// more expensive of the two while [findMatch] runs per planned query
+  /// per round.
   ///
   /// Deliberately NOT taken from [objective], which may be a model-derived
   /// restatement. The whole safety argument for splitting instances rests
   /// on the years being the user's and not a model's invention (see
   /// [_isDifferentRequestedInstance]); sourcing them from a paraphrase
   /// would quietly hand that guarantee to the same kind of model whose
-  /// invented years it exists to reject.
-  late final Set<String> _requestedInstances = numericTokens(userQuestion);
+  /// invented years it exists to reject. That argument covers names word
+  /// for word — an entity a model introduced is exactly as untrustworthy
+  /// as a year it introduced.
+  ///
+  /// Names count only when the user listed at least TWO of them: a lone
+  /// capitalised phrase is the question's subject rather than one instance
+  /// of several, and reading it as an instance would re-open the thrash
+  /// this guard exists to close. See [properNounTokens] for the full rule
+  /// and its deliberate bias towards grouping.
+  late final Set<String> _requestedInstances =
+      numericTokens(userQuestion).union(properNounTokens(userQuestion));
+
+  /// Which of the user's [_requestedInstances] [text] actually names.
+  ///
+  /// Reads both token sources on purpose, so the digit behaviour is
+  /// bit-identical to what it was before names joined the set:
+  /// [numericTokens] finds "1" inside "Q1" where [wordTokens] yields "q1",
+  /// and a question naming quarters puts both forms in the instance set.
+  /// Both sides of the comparison in [_isDifferentRequestedInstance] run
+  /// through here, so they are filtered the same way.
+  Set<String> _instancesIn(String text) => {
+        for (final t in numericTokens(text))
+          if (_requestedInstances.contains(t)) t,
+        for (final t in wordTokens(text))
+          if (_requestedInstances.contains(t)) t,
+      };
 
   /// Whether [query] pins a different one of the user's requested
   /// instances than [goal] does.
   ///
-  /// Gated on the objective on purpose, and this is the whole safety
-  /// argument. A model that invents its own year variations is thrashing,
-  /// and grouping those is what stops it: in a real gpt-oss:120b trace the
-  /// user asked for one city's population and the model re-asked it as
-  /// "...2026 estimate", "...2025", "...2026" — three sub-goals' worth of
-  /// budget for one question. Because none of those years is in the
-  /// objective, they still group, roundsSinceCoverageGrew still fires, and
-  /// that run still ends after three searches exactly as before.
+  /// Gated on the user's own question on purpose, and this is the whole
+  /// safety argument. A model that invents its own year variations is
+  /// thrashing, and grouping those is what stops it: in a real
+  /// gpt-oss:120b trace the user asked for one city's population and the
+  /// model re-asked it as "...2026 estimate", "...2025", "...2026" — three
+  /// sub-goals' worth of budget for one question. Because none of those
+  /// years is in the user's own question, they still group,
+  /// roundsSinceCoverageGrew still fires, and that run still ends after
+  /// three searches exactly as before.
+  ///
+  /// The same holds for names now that they can split too: a model that
+  /// answers "the population of Tokyo, Delhi, Shanghai and Sao Paulo" by
+  /// wandering off to Osaka still groups, because Osaka is not one of the
+  /// names the user listed and so is not in [_requestedInstances] at all.
   ///
   /// What changes is only the case where the user themselves named the
-  /// instances ("US inflation in 2021, 2022, 2023 and 2024"). There the
-  /// years are not the model's invention, and refusing them cost the user
-  /// the parts of their own question.
+  /// instances ("US inflation in 2021, 2022, 2023 and 2024", "the
+  /// population of Tokyo, Delhi, Shanghai and Sao Paulo"). There the
+  /// instances are not the model's invention, and refusing them cost the
+  /// user the parts of their own question.
   ///
-  /// Deliberately one-directional: a query that DROPS a year the goal has
-  /// is a broadening re-ask, not a new instance, and still groups.
+  /// Deliberately one-directional: a query that DROPS an instance the goal
+  /// has is a broadening re-ask, not a new instance, and still groups.
   bool _isDifferentRequestedInstance(String query, SubGoal goal) {
     if (_requestedInstances.isEmpty) return false;
-    final theirs = numericTokens(goal.query);
-    for (final n in numericTokens(query)) {
-      if (_requestedInstances.contains(n) && !theirs.contains(n)) return true;
+    final theirs = _instancesIn(goal.query);
+    for (final n in _instancesIn(query)) {
+      if (!theirs.contains(n)) return true;
     }
     return false;
   }

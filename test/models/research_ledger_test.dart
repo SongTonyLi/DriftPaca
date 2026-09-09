@@ -56,6 +56,136 @@ void main() {
     });
   });
 
+  group('ResearchLedger.findMatch on entities the user named', () {
+    // The digit split has a twin: a question can pick its instances out by
+    // NAME instead of by number ("Tokyo, Delhi, Shanghai and São Paulo"),
+    // and trigramJaccard cannot see the difference between four of those
+    // and one question reworded four times — every one of them is the same
+    // template with one token swapped. These tests pin both directions:
+    // the split fires when the user really did list several names, and
+    // (the far more dangerous direction) it stays quiet everywhere else,
+    // because an extra sub-goal buys a fresh perSubGoalBudget and makes
+    // its round look like it broadened coverage.
+    const cities =
+        'What is the current population of Tokyo, Delhi, Shanghai and '
+        'São Paulo? Give the figure for each.';
+
+    test('names the user listed split the sub-goals, exactly as years do', () {
+      final ledger = ResearchLedger(objective: cities, userQuestion: cities);
+      final tokyo = ledger.upsert('current population of Tokyo');
+
+      expect(ledger.findMatch('current population of Delhi'), isNull,
+          reason: 'the two score '
+              '${trigramJaccard('current population of Tokyo', 'current population of Delhi').toStringAsFixed(3)} '
+              'against each other — grouping is what the trigram layer '
+              'wants, and Delhi being one of the four names the user typed '
+              'is the only thing that can override it');
+      ledger.upsert('current population of Delhi');
+      expect(ledger.subGoals, hasLength(2));
+      expect(ledger.findMatch('current population of Tokyo'), same(tokyo),
+          reason: 'and the split is per instance, not per query: the same '
+              'city still lands on the sub-goal it opened');
+    });
+
+    test('a single named entity does not split a model re-asking one question',
+        () {
+      // The user named ONE thing, so the capitalised word in their question
+      // is its subject rather than one instance of several. A model that
+      // searches broadly and then narrows is re-asking the same question;
+      // if a lone name counted as an instance its own refinement would
+      // open a second sub-goal with a second search budget — funding the
+      // thrash _isDifferentRequestedInstance exists to stop.
+      const one = 'What is the current population of Tokyo?';
+      final ledger = ResearchLedger(objective: one, userQuestion: one);
+      final goal = ledger.upsert('current population estimate');
+
+      expect(ledger.findMatch('current population of Tokyo'), same(goal),
+          reason: 'the refinement names Tokyo where the sub-goal does not, '
+              'and it must still group: one name in the question is not a '
+              'list of instances');
+      ledger.upsert('current population of Tokyo');
+      expect(ledger.subGoals, hasLength(1));
+    });
+
+    test('a Title Case or shouted question yields no name instances', () {
+      // Adjacent capitalised words merge into one run, so a message
+      // capitalised throughout is a single run end to end and names
+      // nothing. Without that rule every word of it would read as an
+      // instance the user asked for, and one question would explode into a
+      // sub-goal per query.
+      for (final shouted in [
+        'What Is The Current Population Of Tokyo And Delhi?',
+        'WHAT IS THE CURRENT POPULATION OF TOKYO AND DELHI?',
+      ]) {
+        final ledger =
+            ResearchLedger(objective: shouted, userQuestion: shouted);
+        ledger.upsert('current population of Tokyo');
+        ledger.upsert('current population of Delhi');
+
+        expect(ledger.subGoals, hasLength(1),
+            reason: '"$shouted" capitalises everything, so capitalisation '
+                'says nothing about which words name things — the harness '
+                'must fall back to grouping rather than split on all of them');
+      }
+    });
+
+    test('the first word of a sentence is never an instance', () {
+      // "What", "Give" and "Compare" are capitalised by position. Reading
+      // one as a name would split every query that echoes the question's
+      // opening word away from every query that does not.
+      final ledger = ResearchLedger(objective: cities, userQuestion: cities);
+      final tokyo = ledger.upsert('current population of Tokyo');
+
+      expect(ledger.findMatch('what is the current population of Tokyo'),
+          same(tokyo),
+          reason: 'the re-ask names the same city and merely repeats the '
+              'question\'s opening word; only Tokyo/Delhi/Shanghai/São Paulo '
+              'are instances here');
+    });
+
+    test('a query that drops a name the sub-goal has still groups', () {
+      // One-directional, exactly as it is for years: dropping "São Paulo"
+      // widens the same question rather than asking a new one.
+      final ledger = ResearchLedger(objective: cities, userQuestion: cities);
+      final goal = ledger.upsert('current population of São Paulo');
+
+      expect(ledger.findMatch('current population'), same(goal));
+    });
+
+    test('an uncased-script question yields no name instances', () {
+      // Nothing in Chinese, Japanese, Arabic, Hebrew or Thai is
+      // "uppercase", so the name split cannot fire there at all and those
+      // runs keep precisely the grouping they had — the CJK normalisation
+      // fix in text_similarity.dart stays the only thing deciding them.
+      const chinese = '东京和德里目前的人口分别是多少？';
+      final ledger = ResearchLedger(objective: chinese, userQuestion: chinese);
+      final goal = ledger.upsert('东京目前的人口是多少');
+
+      expect(properNounTokens(chinese), isEmpty);
+      expect(ledger.findMatch('东京目前的人口是多少人'), same(goal),
+          reason: 'a genuine near-duplicate in an uncased script must still '
+              'group, or every re-ask would open a sub-goal of its own');
+    });
+
+    test('a seeded checklist of four cities opens four gaps', () {
+      // SearchAgent.run seeds ResearchGoal.subQuestions through openGap
+      // before any search runs, and openGap groups through findMatch too.
+      // Collapsed, a four-item checklist would arrive as one line and the
+      // run's written finish line would be missing three quarters of
+      // itself before the first round.
+      final ledger = ResearchLedger(objective: cities, userQuestion: cities);
+      for (final city in ['Tokyo', 'Delhi', 'Shanghai', 'São Paulo']) {
+        ledger.openGap('current population of $city');
+      }
+
+      expect(ledger.subGoals, hasLength(4));
+      expect(ledger.subGoals.map((g) => g.status),
+          everyElement(SubGoalStatus.open),
+          reason: 'seeding a checklist still bills no search against any of '
+              'them');
+    });
+  });
+
   group('ResearchLedger.upsert', () {
     test('creates one entry per genuinely-new query and reuses matches otherwise', () {
       final ledger = ResearchLedger(objective: 'objective');

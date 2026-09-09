@@ -1255,10 +1255,11 @@ class SearchAgent {
     // never sets `madeProgress`, so stallLimit ends the run as before.
     if (matched.outstandingGaps.isNotEmpty) return false;
     if (matched.normalizedQuery == _normalizeQuery(query)) return true;
-    // Nothing here needs to know about years, versions or quarters. A
-    // query naming a different instance never reaches this function,
-    // because ResearchLedger.findMatch refuses to call it the same
-    // sub-goal in the first place (see namesADifferentInstance) — so
+    // Nothing here needs to know about years, versions, quarters or the
+    // names of the things asked about. A query naming a different instance
+    // never reaches this function, because ResearchLedger.findMatch
+    // refuses to call it the same sub-goal in the first place (see
+    // ResearchLedger._isDifferentRequestedInstance) — so
     // `matched` is always the same instance as [query], and comparing
     // their string shape means what it says again. Discriminating here
     // instead would have let the search run while still filing its

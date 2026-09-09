@@ -21,12 +21,17 @@ import 'package:llamaseek/Services/web_search_service.dart';
 import 'package:llamaseek/Utils/text_similarity.dart';
 
 void main() {
-  group('parallel entities collapse onto one sub-goal', () {
-    // The four-cities case. ResearchLedger._groupingThreshold is 0.40 and
-    // _isDifferentRequestedInstance only ever splits on digit-runs the USER
-    // typed — so a question naming four entities with no numbers in it has
-    // nothing to split on, and every "population of <city>" query is a
-    // trigram near-match of the last one.
+  group('parallel entities the user named stay separate sub-goals', () {
+    // The four-cities case, and the two halves of it pull opposite ways.
+    // trigramJaccard measures string SHAPE, so four queries built from one
+    // template ("current population of <city>") differ by a single token
+    // and are near-duplicates of each other by every measure it has — no
+    // threshold separates them from a genuine rewording, as the first test
+    // below pins. What separates them is that the USER named four things:
+    // ResearchLedger._isDifferentRequestedInstance reads the instances out
+    // of the user's own question (properNounTokens alongside the
+    // digit-runs it always read) and refuses to group a query naming one
+    // of them onto a sub-goal that names another.
     const question =
         'What is the current population of Tokyo, Delhi, Shanghai and '
         'São Paulo? Give the figure for each.';
@@ -38,35 +43,66 @@ void main() {
     ];
 
     test('four distinct city lookups score above the grouping threshold', () {
-      for (var i = 1; i < queries.length; i++) {
-        final score = trigramJaccard(queries[0], queries[i]);
-        expect(score, greaterThanOrEqualTo(0.40),
-            reason: '"${queries[0]}" vs "${queries[i]}" scored $score — at or '
-                'above ResearchLedger._groupingThreshold, so findMatch files '
-                'them as the same sub-goal');
+      var lowestCityPair = 1.0;
+      for (var i = 0; i < queries.length; i++) {
+        for (var j = i + 1; j < queries.length; j++) {
+          final score = trigramJaccard(queries[i], queries[j]);
+          expect(score, greaterThanOrEqualTo(0.40),
+              reason: '"${queries[i]}" vs "${queries[j]}" scored $score — at '
+                  'or above ResearchLedger._groupingThreshold, so the trigram '
+                  'layer on its own files them as the same sub-goal; only the '
+                  'instance split can tell them apart');
+          if (score < lowestCityPair) lowestCityPair = score;
+        }
       }
+
+      // And raising the threshold is not an available fix. This pair is a
+      // near-duplicate measured in a real gpt-oss:120b run, and
+      // test/services/text_similarity_test.dart REQUIRES it to group —
+      // yet it scores below every city pair above, so the two
+      // distributions overlap and any threshold that split the cities
+      // would un-group a documented near-duplicate.
+      final mustGroup = trigramJaccard(
+          'Paris 2024 Summer Olympics gold medals USA count',
+          'Paris 2024 Olympic gold medal count USA');
+      expect(mustGroup, lessThan(lowestCityPair),
+          reason: 'a pair the ledger must GROUP scores $mustGroup, below the '
+              'lowest of the four city pairs ($lowestCityPair) — so there is '
+              'no threshold that separates four entities from one rephrasing, '
+              'which is why the split is drawn on the instances the user '
+              'named instead');
     });
 
-    test('the ledger files all four cities as a single sub-goal', () {
+    test('the ledger files all four cities as separate sub-goals', () {
       final ledger = ResearchLedger(objective: question, userQuestion: question);
       for (final q in queries) {
         ledger.upsert(q);
       }
 
-      expect(ledger.subGoals, hasLength(1),
-          reason: 'four separate lookups collapsed into '
-              '${ledger.subGoals.length} sub-goal(s); the checklist can no '
-              'longer represent "Delhi is still open while Tokyo is done"');
-      expect(ledger.subGoals.single.searchCount, 4,
-          reason: 'all four searches billed to one sub-goal, so '
-              'SearchAgent.perSubGoalBudget (3) is exhausted by the third '
-              'city and the fourth is refused as a duplicate');
+      expect(ledger.subGoals, hasLength(4),
+          reason: 'four cities the user listed are four questions; collapsing '
+              'them left the checklist unable to represent "Delhi is still '
+              'open while Tokyo is done"');
+      expect(ledger.subGoals.map((g) => g.query), queries,
+          reason: 'and each sub-goal is the city it was opened for, in order');
+      expect(ledger.subGoals.every((g) => g.searchCount == 1), isTrue,
+          reason: 'each city carries its own perSubGoalBudget (3), so no city '
+              'is refused as a ledgerDupe for being the fourth to arrive');
+
+      final rendered = ledger.render();
+      for (final city in ['Tokyo', 'Delhi', 'Shanghai', 'São Paulo']) {
+        expect(rendered, contains('- [ ] "current population of $city"'),
+            reason: 'the checklist the stopping rule is evaluated against has '
+                'a line per city, so ticking one cannot claim the other '
+                'three — and recordEvidence files each city\'s sources '
+                'against its own line instead of piling all four onto one');
+      }
     });
 
     test('a year the user typed does split the sub-goals', () {
-      // The same shape WITH user-supplied digits stays separate — this is
-      // the guard that exists, and it is exactly why the no-digit case
-      // above has nothing protecting it.
+      // The digit path, unchanged: this is the guard that always existed,
+      // and the entity split above is its counterpart for the questions
+      // that pick their instances out by name instead of by number.
       const dated = 'US inflation in 2021, 2022, 2023 and 2024';
       final ledger = ResearchLedger(objective: dated, userQuestion: dated);
       for (final year in ['2021', '2022', '2023', '2024']) {

@@ -286,7 +286,10 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
                   widget.content,
                   style:
                       TextStyle(color: color, fontSize: 13, height: 1.4),
-                  revealing: !widget.isComplete,
+                  // Paused while folded away: a SizeTransition does not
+                  // mute TickerMode, so without this a collapsed live block
+                  // would keep revealing into a zero-height box.
+                  revealing: !widget.isComplete && _isExpanded,
                 ),
               ),
             ),

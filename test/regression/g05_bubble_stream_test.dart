@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
+import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_list_view.dart';
 
@@ -218,16 +219,24 @@ void main() {
         role: OllamaMessageRole.assistant,
       );
 
-      await tester.pumpWidget(
-        buildTestApp(ChatBubble(message: message, isStreaming: true)),
-      );
+      // The gate only exists on the agentic path, and that path always
+      // carries a ledger segment — which is how the bubble tells it apart
+      // from the legacy WEBSEARCH: path (see the last test in this group).
+      final segments = <MessageSegment>[
+        ResearchLedgerSegment(objective: 'Find the thing.'),
+      ];
+      Widget host() => buildTestApp(ChatBubble(
+            message: message,
+            isStreaming: true,
+            searchSegments: segments,
+          ));
+
+      await tester.pumpWidget(host());
       await tester.pump();
       expect(renderedText(tester), contains('A first draft'));
 
       message.content = '';
-      await tester.pumpWidget(
-        buildTestApp(ChatBubble(message: message, isStreaming: true)),
-      );
+      await tester.pumpWidget(host());
       await tester.pump();
 
       expect(renderedText(tester), contains('A first draft'),
@@ -275,7 +284,13 @@ void main() {
             home: MediaQuery(
               data: const MediaQueryData(disableAnimations: true),
               child: Scaffold(
-                body: ChatBubble(message: message, isStreaming: true),
+                body: ChatBubble(
+                  message: message,
+                  isStreaming: true,
+                  searchSegments: [
+                    ResearchLedgerSegment(objective: 'Find the thing.'),
+                  ],
+                ),
               ),
             ),
           );
@@ -289,6 +304,32 @@ void main() {
       await tester.pump();
 
       expect(renderedText(tester), isNot(contains('A first draft')));
+
+      await tester.pumpWidget(buildTestApp(const SizedBox.shrink()));
+    });
+
+    testWidgets('the legacy WEBSEARCH: clear is cut, not faded',
+        (tester) async {
+      // _streamOllamaMessage clears content when it detects the marker; the
+      // text on screen is a half-typed "WEBSEARCH: ..." line, which must
+      // vanish rather than be held and played out. No ledger segment means
+      // no agentic run, so the fade never arms.
+      final message = OllamaMessage(
+        "I'll check. WEBSEA",
+        role: OllamaMessageRole.assistant,
+      );
+      Widget host() =>
+          buildTestApp(ChatBubble(message: message, isStreaming: true));
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+      expect(renderedText(tester), contains('WEBSEA'));
+
+      message.content = '';
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      expect(renderedText(tester), isNot(contains('WEBSEA')));
 
       await tester.pumpWidget(buildTestApp(const SizedBox.shrink()));
     });

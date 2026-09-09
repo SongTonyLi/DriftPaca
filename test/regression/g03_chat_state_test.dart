@@ -263,6 +263,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     void Function(ResearchClarification clarification)? onClarification,
     void Function(ResearchPhase phase)? onPhase,
     void Function(String delta)? onThinkingDelta,
+    bool Function()? hasLiveThinking,
   }) {
     activeCallbacks = WebSearchCallbackSet(onSearchStart);
   }

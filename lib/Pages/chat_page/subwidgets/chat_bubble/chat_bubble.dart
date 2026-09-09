@@ -501,7 +501,14 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       // mutated in place, so old.message.content is the same string as the
       // new one — the state's own previous target is the only record of what
       // was on screen a frame ago.
-      if (_targetContent.isNotEmpty && widget.message.content.isEmpty) {
+      //
+      // Only the agentic path: the legacy WEBSEARCH: path clears content too
+      // (a detected marker, or the post-stream thinking fallback), and there
+      // the cleared text is a half-typed search marker that must be cut, not
+      // played out. A live ledger segment exists only on the agentic path.
+      if (_targetContent.isNotEmpty &&
+          widget.message.content.isEmpty &&
+          widget.searchSegments.whereType<ResearchLedgerSegment>().isNotEmpty) {
         _beginDraftFade(_targetContent.substring(
             0, surrogateSafeLength(_targetContent, _revealedLength)));
       }
@@ -608,10 +615,9 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       _dropDraftFade();
       return;
     }
-    const total = Duration(milliseconds: 300);
     final controller = _draftFade ??= AnimationController(
       vsync: this,
-      duration: total,
+      duration: motionDuration(context, const Duration(milliseconds: 300)),
     )..addStatusListener((status) {
         if (status == AnimationStatus.completed && mounted) {
           setState(() => _fadingDraft = null);
@@ -1090,6 +1096,9 @@ class _LedgerBody extends StatelessWidget {
           _SectionLabel('Findings'),
           for (final entry in searched)
             _LedgerEntryRow(
+              // Keyed by query so a sub-goal crossing from "Still open" to
+              // "Findings" keeps its element on purpose, not by position.
+              key: ValueKey(entry.query),
               entry: entry,
               searched: true,
               animateIn: !seenSearched.contains(entry.query),
@@ -1099,7 +1108,12 @@ class _LedgerBody extends StatelessWidget {
           const SizedBox(height: 8),
           _SectionLabel('Still open'),
           for (final entry in open)
-            _LedgerEntryRow(entry: entry, searched: false, animateIn: false),
+            _LedgerEntryRow(
+              key: ValueKey(entry.query),
+              entry: entry,
+              searched: false,
+              animateIn: false,
+            ),
         ],
         const SizedBox(height: 10),
         AnimatedSwitcher(
@@ -1224,6 +1238,7 @@ class _LedgerEntryRow extends StatefulWidget {
   final bool animateIn;
 
   const _LedgerEntryRow({
+    super.key,
     required this.entry,
     required this.searched,
     required this.animateIn,

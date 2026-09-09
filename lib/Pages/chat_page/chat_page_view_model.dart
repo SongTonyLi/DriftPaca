@@ -579,6 +579,10 @@ class ChatPageViewModel extends ChangeNotifier {
         _finalizeSearchCards();
         return _searchSegments;
       },
+      // Pure read, for ChatProvider's blank-bubble check: never finalizes.
+      hasLiveThinking: () => _searchSegments
+          .whereType<ThinkingSegment>()
+          .any((segment) => segment.text.isNotEmpty),
       onSearchStart: (query) {
         _searchSegments.add(SearchCardSegment(
           query: query,

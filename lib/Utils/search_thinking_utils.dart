@@ -39,7 +39,7 @@ String encodeSearchSegments(List<MessageSegment> segments) {
         // Only when it was actually measured: a legacy segment has no
         // duration to claim, and writing a zero would render as
         // "Thought for 0 seconds".
-        if (segment.elapsedSeconds != null)
+        if ((segment.elapsedSeconds ?? 0) > 0)
           'elapsedSeconds': segment.elapsedSeconds,
       });
     } else if (segment is SearchCardSegment && segment.query.isNotEmpty) {

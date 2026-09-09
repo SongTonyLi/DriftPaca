@@ -181,6 +181,12 @@ class ChatProvider extends ChangeNotifier {
   void Function(String url, bool success)? _webSearchUrlFetchedCallback;
   void Function()? _webSearchAnswerStartCallback;
   List<MessageSegment> Function()? _webSearchSegmentsProvider;
+
+  /// Read-only probe: whether the live segments hold any reasoning text.
+  /// Separate from [_webSearchSegmentsProvider] on purpose — that one is the
+  /// persistence hook and finalizes every in-flight card as a side effect,
+  /// which a predicate must never do.
+  bool Function()? _webSearchHasLiveThinkingProbe;
   void Function(String objective, List<SubGoal> snapshot)? _webSearchLedgerUpdateCallback;
   void Function(String query, String reason)? _webSearchSkippedCallback;
   void Function(SearchTerminationReason reason)? _webSearchResearchDoneCallback;
@@ -223,8 +229,10 @@ class ChatProvider extends ChangeNotifier {
     void Function(ResearchClarification clarification)? onClarification,
     void Function(ResearchPhase phase)? onPhase,
     void Function(String delta)? onThinkingDelta,
+    bool Function()? hasLiveThinking,
   }) {
     _webSearchClarificationCallback = onClarification;
+    _webSearchHasLiveThinkingProbe = hasLiveThinking;
     _webSearchPhaseCallback = onPhase;
     _webSearchThinkingDeltaCallback = onThinkingDelta;
     _webSearchThinkingCallback = onSearchThinking;
@@ -249,6 +257,7 @@ class ChatProvider extends ChangeNotifier {
     _webSearchUrlFetchedCallback = null;
     _webSearchAnswerStartCallback = null;
     _webSearchSegmentsProvider = null;
+    _webSearchHasLiveThinkingProbe = null;
     _webSearchLedgerUpdateCallback = null;
     _webSearchSkippedCallback = null;
     _webSearchResearchDoneCallback = null;
@@ -1139,13 +1148,7 @@ class ChatProvider extends ChangeNotifier {
     // _initializeChatStream) — so the old "is thinking empty" test now
     // reads empty for every run and would drop the bubble out from under a
     // run stopped mid-reasoning. Ask the segments instead.
-    bool hasLiveThinking() {
-      final segments = _webSearchSegmentsProvider?.call();
-      if (segments == null) return false;
-      return segments
-          .whereType<ThinkingSegment>()
-          .any((segment) => segment.text.isNotEmpty);
-    }
+    bool hasLiveThinking() => _webSearchHasLiveThinkingProbe?.call() ?? false;
 
     // The compaction budget means nothing unless it's tied to what this
     // chat's model can actually see — see SearchAgent.transcriptLimitsFor.

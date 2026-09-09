@@ -6,9 +6,22 @@
 /// them. A gate replying in bold, `**NONE**`, used to lose exactly one
 /// asterisk before the verdict test ran; the residue `*NONE**` was not
 /// NONE, so "the draft is complete" was reported to SearchAgent as a gap.
-/// `parseCoverageGaps` now strips wrapping emphasis on BOTH sides of the
-/// bullet strip, so the two forms are indistinguishable to everything
-/// downstream.
+///
+/// Three things now stand between that reply and a research gap, and the
+/// third is what makes the guarantee general instead of incidental: the
+/// bullet class declines a DOUBLED asterisk (a bullet is never `**`),
+/// emphasis that wraps a whole line is unwrapped on both sides of the bullet
+/// strip, and the verdict is then judged on a copy of the line with every
+/// emphasis character removed. Without that last step the strip only ever
+/// reaches a run sitting at a line's very edge, so `**NONE**.` — the full
+/// stop written OUTSIDE the bold, which is where markdown normally puts it —
+/// stranded `**` mid-string and failed exactly as `*NONE**` did, while
+/// `**NONE.**`, one keystroke away, passed. Same for every bolded verdict
+/// the model justified on the same line.
+///
+/// Bare `NONE`, bold `**NONE**` and bold-with-punctuation `**NONE**.` are
+/// therefore pinned below as one behaviour, each driven through a full
+/// offline SearchAgent run.
 ///
 /// Two sibling holes in the same function are pinned here too: the verdict
 /// test was anchored at both ends, so `NONE — every part is addressed` was
@@ -23,18 +36,21 @@
 /// trigger. The unit group therefore guards it: a line that merely BEGINS
 /// with the word "none" is still a gap.
 ///
-/// Why any of this reaches the user (search_agent.dart:471-524): the parsed
+/// Why any of this reaches the user (search_agent.dart:567-630): the parsed
 /// gaps are never checked for shape or meaning — `_assessGaps` only trims
 /// them and drops blanks, and `ResearchLedger.openGap` only dedupes against
 /// an existing sub-goal — so whatever the parser returns opens a ledger
 /// sub-goal, fires `onResetContent` (which ChatProvider uses to blank the
-/// streamed bubble, chat_provider.dart:1253-1258), is restated to the model
+/// streamed bubble, chat_provider.dart:1276-1281), is restated to the model
 /// as a part of the question it omitted, and forces a corrective round
 /// whose output replaces the accepted draft.
 ///
 /// Each integration assertion below is paired with the identical run using
-/// a bare `NONE`, so any difference is attributable to the two `*`
-/// characters and nothing else in the harness.
+/// a bare `NONE`, so any difference is attributable to the markup and
+/// nothing else in the harness. The pairings are positive as well as
+/// negative — same ledger items, same brief, same number of turns — because
+/// "no NONE anywhere in the ledger" would also pass on a harness that had
+/// quietly stopped opening ledger items at all.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -178,6 +194,44 @@ void main() {
               'prefix of one');
     });
 
+    test('a bold verdict survives punctuation written outside the bold', () {
+      expect(parseCoverageGaps('**NONE.**'), isEmpty,
+          reason: 'control: the full stop INSIDE the emphasis leaves the run '
+              'at the line\'s edge, where a strip anchored to that edge can '
+              'reach it');
+      expect(parseCoverageGaps('**NONE**.'), isEmpty,
+          reason: 'and moving that one full stop outside the bold — the '
+              'ordinary markdown spelling — must not change the verdict: it '
+              'strands `**` mid-string, out of reach of any edge-anchored '
+              'strip, which is why the verdict is judged with emphasis '
+              'removed rather than merely unwrapped');
+      expect(parseCoverageGaps('`NONE`.'), isEmpty,
+          reason: 'the marker is irrelevant; a code-quoted verdict punctuates '
+              'the same way');
+      expect(parseCoverageGaps('- **NONE**!'), isEmpty,
+          reason: 'and a bullet in front of it does not resurrect the hole');
+    });
+
+    test('an emphasised verdict may also carry its justification', () {
+      // The two tolerances compose or neither is worth much: a model that
+      // bolds its verdict is exactly the model that also explains itself.
+      expect(parseCoverageGaps('**NONE** — every part is addressed'), isEmpty,
+          reason: 'the strip cannot reach the closing `**` here either — the '
+              'justification follows it — so this is the same defect wearing '
+              'a different tail');
+      expect(parseCoverageGaps('**NONE** - the draft covers every part'),
+          isEmpty);
+      expect(parseCoverageGaps('_NONE_: the draft covers it'), isEmpty);
+      expect(
+        parseCoverageGaps(
+            'Assessment:\n\n**NONE** - the draft answers the whole question.'),
+        isEmpty,
+        reason: 'and inside a multi-line reply the mangled verdict took the '
+            'model\'s own preamble down with it: two gaps, one of them the '
+            'word "Assessment:"',
+      );
+    });
+
     test('a NONE stated with a reason is still the complete verdict', () {
       expect(parseCoverageGaps('NONE - the draft covers every part'), isEmpty,
           reason: 'the verdict test is no longer anchored at both ends, so a '
@@ -214,9 +268,15 @@ void main() {
     late _RunTrace bold;
     late _RunTrace bare;
 
+    /// `**NONE**.` — the same bold verdict with the full stop where markdown
+    /// normally puts it, outside the emphasis. One character away from the
+    /// `**NONE**` run above, and the last shape of this defect to be closed.
+    late _RunTrace punctuated;
+
     setUpAll(() async {
       bold = await _runWithGateReply('**NONE**');
       bare = await _runWithGateReply('NONE');
+      punctuated = await _runWithGateReply('**NONE**.');
     });
 
     test('the accepted draft survives a bold verdict', () {
@@ -241,25 +301,51 @@ void main() {
       expect(bold.briefs.length, bare.briefs.length,
           reason: 'and the bold run spends exactly the turns the bare run '
               'does: no extra round was billed to the user');
+
+      expect(punctuated.resetContentCount, 0,
+          reason: 'moving the full stop outside the bold is the shape a '
+              'model reaches for most, and it took the same path: openGap, '
+              'onResetContent, a gap notice, a corrective round');
+      expect(punctuated.finalContent, _draftAnswer);
+      expect(punctuated.finalContent, isNot(_correctiveAnswer));
+      expect(punctuated.briefs.length, bare.briefs.length);
     });
 
     test('no checklist item is opened for the verdict', () {
       expect(bare.lastLedgerSnapshot.map((g) => g.query),
           isNot(contains('*NONE**')));
 
+      expect(bold.lastLedgerSnapshot, isNotEmpty,
+          reason: 'the negative assertions below only mean something while '
+              'the harness is still opening ledger items at all — this is '
+              'what stops them passing vacuously');
+      expect(bold.lastLedgerSnapshot.map((g) => g.query),
+          bare.lastLedgerSnapshot.map((g) => g.query),
+          reason: 'the bold run\'s checklist is the bare run\'s checklist, '
+              'item for item: the search sub-goal, and nothing the gate '
+              'added');
+
       expect(bold.lastLedgerSnapshot.map((g) => g.query),
           isNot(contains('*NONE**')),
           reason: 'SearchAgent.run opens whatever gap it is handed with no '
-              'validation (search_agent.dart:486), so the parser is the only '
+              'validation (search_agent.dart:587), so the parser is the only '
               'thing standing between a mangled verdict and a research item '
               'the user sees in the panel');
       expect(bold.lastLedgerSnapshot.map((g) => g.query),
           isNot(anyElement(contains('NONE'))),
           reason: 'and no other mangling of the verdict reaches the ledger '
               'either — the check is on the token, not on one residue');
-      expect(bold.briefs.last, isNot(contains('NONE')),
-          reason: 'so nothing NONE-shaped is rendered into the research '
-              'brief, where an open [ ] tells the model to keep searching');
+      expect(bold.briefs.last, bare.briefs.last,
+          reason: 'so the brief the model is handed is byte-identical to the '
+              'bare run\'s, where an open [ ] would otherwise tell it to keep '
+              'searching for the gate\'s own verdict');
+
+      expect(punctuated.lastLedgerSnapshot.map((g) => g.query),
+          bare.lastLedgerSnapshot.map((g) => g.query),
+          reason: 'and `**NONE**.` opens no checklist item either — the '
+              'residue there was `NONE**.`, a different mangling of the same '
+              'verdict');
+      expect(punctuated.briefs.last, bare.briefs.last);
     });
 
     test('the model is never told it omitted the verdict', () {
@@ -271,10 +357,19 @@ void main() {
             'the gate\'s verdict of completeness to the model as the thing '
             'it failed to answer',
       );
+      expect(
+        punctuated.userMessagesInTranscript.where((m) => m.contains('NONE')),
+        isEmpty,
+        reason: 'nor is it told it omitted `NONE**.`',
+      );
       expect(bare.userMessagesInTranscript.where((m) => m.contains('NONE')),
           isEmpty,
           reason: 'control: identical to the bare run, which is the point — '
-              'the two asterisks change nothing');
+              'the markup changes nothing');
+      expect(bold.userMessagesInTranscript, bare.userMessagesInTranscript,
+          reason: 'and identical in full, not merely free of the token: a '
+              'weaker assertion would still pass if the gate had injected '
+              'some other notice');
     });
   });
 }

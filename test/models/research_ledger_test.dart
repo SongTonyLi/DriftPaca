@@ -914,6 +914,24 @@ void main() {
           reason: 'one ticked option is one instance, so nothing here can '
               'split — exactly as a lone capitalised phrase in a typed '
               'question cannot');
+
+      // The same claim where the label carries two capitalised runs, which
+      // is where it used to be false: a "City, Country" option is one thing
+      // the user ticked, not two things they listed.
+      final qualified = ResearchLedger(
+        objective: 'Market size in the city the user means',
+        userQuestion: 'How big is the market there?',
+        clarificationPicks: const ['Tokyo, Japan'],
+      );
+      final market = qualified.upsert('Tokyo market size 2024');
+
+      expect(qualified.findMatch('market size in Tokyo, Japan'), same(market),
+          reason: 'read as the two instances tokyo and japan, that one label '
+              'made the model\'s own re-ask of this lookup name an instance '
+              'its sub-goal did not: a second sub-goal, a second '
+              'perSubGoalBudget, and a round that looked like it had '
+              'broadened coverage, so answering the card cost twice what '
+              'skipping it did');
     });
 
     test('an empty pick list leaves the question untouched', () {
@@ -936,6 +954,33 @@ void main() {
       expect(ledger.findMatch('Apple revenue Q4 2024'), isNotNull,
           reason: 'with no digits typed and nothing ticked there are no '
               'requested instances at all, so every re-ask groups');
+    });
+
+    test('the picks a ledger keeps cannot be edited underneath it', () {
+      // The ledger memoises the instances and names it reads out of this
+      // list the first time findMatch needs them, so a list the caller
+      // could still edit would let the two drift apart with nothing to
+      // show for it. The copy is what enforces that; a doc comment saying
+      // "never mutated after construction" was only a request.
+      final picks = ['Tokyo'];
+      final ledger = ResearchLedger(
+        objective: 'Population of the city the user means',
+        userQuestion: 'What is the current population there?',
+        clarificationPicks: picks,
+      );
+      picks.add('Delhi');
+
+      expect(ledger.clarificationPicks, ['Tokyo'],
+          reason: 'the ledger kept a copy of the list it was handed');
+      expect(() => ledger.clarificationPicks.add('Delhi'),
+          throwsUnsupportedError,
+          reason: 'and that copy is unmodifiable, so the field itself is no '
+              'way in either');
+
+      final goal = ledger.upsert('current population of Tokyo');
+      expect(ledger.findMatch('current population of Delhi'), same(goal),
+          reason: 'a city added after construction is not one the user '
+              'ticked, so it cannot split anything');
     });
   });
 

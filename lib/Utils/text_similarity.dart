@@ -244,22 +244,40 @@ Set<String> properNounNames(String text) =>
 /// clarification-card counterpart of [properNounNames], reading text the
 /// user selected rather than typed (see ResearchLedger.clarificationPicks).
 ///
-/// [properNounNames]' merging, two-distinct-names and whole-phrase rules
-/// all apply unchanged, across the whole list rather than per choice: "São
-/// Paulo" is one name, and fewer than two distinct names yields nothing —
-/// so ticking a single option can never split anything, exactly as a lone
-/// capitalised phrase in a typed question cannot.
+/// [properNounNames]' merging and whole-phrase rules apply unchanged, so
+/// "São Paulo" is one name rather than the two names são and paulo, and
+/// only a query carrying that whole phrase names it (see [namesIn]).
 ///
-/// What differs is the two rules that read a text as a SENTENCE, and they
-/// have to. An option is a LABEL: "Tokyo" is capitalised because it names
-/// a city, not because it opens a sentence, and a card whose options are
-/// all one-word names shows no lowercase contrast at all. Applying the
-/// contrast rule would erase the whole card, and applying the
-/// sentence-initial skip unconditionally would erase every one-word
-/// option — so a user offered "Tokyo"/"Delhi"/"Shanghai" who ticked two
-/// of them would name nothing, and the two cities they explicitly chose
-/// would collapse onto one sub-goal, which is the failure the name split
-/// exists to stop.
+/// Its "unless the user listed two of them" rule applies too, but counted
+/// over the CHOICES rather than over the runs pooled out of them: at least
+/// two ticked options must each name something, or this yields nothing.
+/// Ticking is how a user lists things on a card, so two ticked options are
+/// two things and ONE ticked option is one thing — however many
+/// capitalised runs its label happens to contain.
+///
+/// Counted over the pooled runs instead, as it was until this bar moved, a
+/// single ticked "Tokyo, Japan" named the two instances tokyo and japan. A
+/// sub-goal opened as "Tokyo market size 2024" then names only tokyo, so
+/// the model's own re-ask of that same lookup ("market size in Tokyo,
+/// Japan", trigram 0.467 — well above the ledger's grouping threshold)
+/// named an instance its sub-goal did not, stopped grouping, and bought a
+/// second sub-goal with a second search budget. Answering the card cost
+/// twice what skipping it cost, which is the exact failure
+/// ResearchLedger.clarificationPicks exists to prevent rather than to
+/// cause — and "City, Country", "Name (qualifier)" and "X — Y" are all
+/// ordinary option shapes, which parseResearchGoal passes through
+/// verbatim.
+///
+/// What differs from [properNounNames] is the two rules that read a text
+/// as a SENTENCE, and they have to. An option is a LABEL: "Tokyo" is
+/// capitalised because it names a city, not because it opens a sentence,
+/// and a card whose options are all one-word names shows no lowercase
+/// contrast at all. Applying the contrast rule would erase the whole card,
+/// and applying the sentence-initial skip unconditionally would erase
+/// every one-word option — so a user offered "Tokyo"/"Delhi"/"Shanghai"
+/// who ticked two of them would name nothing, and the two cities they
+/// explicitly chose would collapse onto one sub-goal, which is the failure
+/// the name split exists to stop.
 ///
 /// A label's opening word is therefore dropped only when the word after
 /// it starts lowercase — the mark of a sentence-case phrase rather than a
@@ -269,11 +287,28 @@ Set<String> properNounNames(String text) =>
 /// using the word generically then named an instance its sub-goal did not
 /// — the same over-split that reading a multi-word name token by token
 /// used to cause.
-Set<String> properNounNamesInChoices(Iterable<String> choices) =>
-    _namesFrom([
-      for (final choice in choices)
-        ..._capitalisedRuns(choice, typedProse: false),
-    ]);
+///
+/// Deliberately accepted under-split, in the same fail-closed direction
+/// [properNounNames] takes: a single option that really does list two
+/// things ("Tokyo, Delhi", ticked from a card offering combinations) names
+/// nothing, because no rule available here tells it apart from the far
+/// commoner "Tokyo, Japan" — one thing, qualified. Those two queries group
+/// exactly as they would have with no card at all, which is the direction
+/// that costs a run nothing it had before.
+Set<String> properNounNamesInChoices(Iterable<String> choices) {
+  final runs = <List<String>>[];
+  var naming = 0;
+  for (final choice in choices) {
+    final own = _capitalisedRuns(choice, typedProse: false);
+    if (own.isEmpty) continue;
+    naming++;
+    runs.addAll(own);
+  }
+  if (naming < 2) return const {};
+  // [_namesFrom]'s own two-distinct-names bar still applies on top, so two
+  // ticked options that name one and the same thing name nothing either.
+  return _namesFrom(runs);
+}
 
 /// Which of [names] — phrases from [properNounNames] or
 /// [properNounNamesInChoices] — [text] actually names.
@@ -379,8 +414,9 @@ List<String> _withoutTrailingDigits(List<String> run) {
 }
 
 /// The lowercased phrases of [runs], but only once [runs] holds two or
-/// more DISTINCT names — the "fewer than two runs yields nothing" rule
-/// both callers rest on.
+/// more DISTINCT names — the "unless the user listed two of them" rule, in
+/// the form [properNounNames] rests on it. [properNounNamesInChoices]
+/// counts ticked options before it gets here, and rests on both bars.
 Set<String> _namesFrom(List<List<String>> runs) {
   final names = {
     for (final run in runs) run.map((t) => t.toLowerCase()).join(' '),

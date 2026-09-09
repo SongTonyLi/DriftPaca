@@ -165,15 +165,22 @@ void main() {
               'for');
     });
 
-    test('picks-only clarification: still one sub-goal', () {
+    test('picks-only clarification: every re-ask matches the first sub-goal',
+        () {
+      // The grouping decision itself, query by query, with nothing upserted
+      // after the first: each re-ask lands on the sub-goal the FIRST query
+      // opened, rather than on a chain of lookalikes each admitted by the
+      // one before it. The accumulated count below cannot tell those apart.
       final ledger = ledgerFor(_raw, picks: const [_picked]);
+      final first = ledger.subGoals.single;
+
       for (final q in _thrash.skip(1)) {
-        ledger.upsert(q);
+        expect(ledger.findMatch(q), same(first),
+            reason: '"$q" is a re-ask of "${_thrash[0]}": the one option the '
+                'user ticked pins Q1 2025, and every other label the model '
+                'tried is either absent from their pick or already inside '
+                'it — a re-ask, not a new instance');
       }
-      expect(ledger.subGoals, hasLength(1),
-          reason: 'the one option the user ticked pins Q1 2025, and every '
-              'other label the model tried is either absent from their pick '
-              'or already inside it — a re-ask, not a new instance');
     });
 
     test('answering the card: still one sub-goal, one budget', () {

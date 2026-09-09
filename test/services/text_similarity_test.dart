@@ -250,10 +250,13 @@ void main() {
           {'são paulo', 'tokyo'},
           reason: 'adjacent capitalised words are still one name, and it is '
               'still that whole name rather than its separate words');
-      expect(properNounNamesInChoices(const ['Tokyo, Delhi']),
-          {'tokyo', 'delhi'},
-          reason: 'and a segment boundary still ends a run, so one option '
-              'naming two things is two names');
+      expect(
+          properNounNamesInChoices(
+              const ['Tokyo, Japan', 'Seoul, South Korea']),
+          {'tokyo', 'japan', 'seoul', 'south korea'},
+          reason: 'and a segment boundary still ends a run, so two ticked '
+              '"City, Country" labels name four things — what has to be two '
+              'is the ticked OPTIONS, and both of these name something');
       expect(properNounNamesInChoices(const ['NOMINAL', 'REAL']),
           {'nominal', 'real'},
           reason: 'a card of shouted labels shows no lowercase contrast '
@@ -262,17 +265,60 @@ void main() {
     });
 
     test('reads nothing out of a single ticked option', () {
-      // The rule that keeps this from over-firing: one name is what the
-      // run is ABOUT. Splitting on it would fragment one question into a
-      // sub-goal per rewording, each with a fresh search budget.
+      // The rule that keeps this from over-firing, and the reason it counts
+      // ticked OPTIONS rather than the capitalised runs pooled out of them:
+      // ticking is how a user lists things on a card, so one ticked option
+      // is one thing however its label happens to be written. One name is
+      // what the run is ABOUT, and splitting on it would fragment one
+      // question into a sub-goal per rewording, each with a fresh search
+      // budget.
       expect(properNounNamesInChoices(const ['Tokyo']), isEmpty);
       expect(
           properNounNamesInChoices(
               const ['The Phoenix Mercury basketball team']),
           isEmpty,
-          reason: 'a multi-word option is still one run, so ticking it alone '
-              'names nothing');
+          reason: 'this one is a single run as well, its capitalised words '
+              'being adjacent — but it is a single ticked option first, '
+              'which is what decides it');
+
+      // The cases that made the claim above false while it was counting
+      // pooled runs. Every one of these is an ordinary option shape, and
+      // parseResearchGoal hands an option's text through verbatim.
+      for (final label in const [
+        'Tokyo, Japan',
+        'New York City, New York',
+        'United States, measured in USD',
+        'Both Tokyo and Delhi',
+      ]) {
+        expect(properNounNamesInChoices([label]), isEmpty,
+            reason: '"$label" holds two capitalised runs, but the user '
+                'ticked ONE option and so listed one thing. Read as two '
+                'named instances, a "City, Country" pick made the model\'s '
+                'own re-ask of its own lookup name an instance its sub-goal '
+                'did not, so the re-ask stopped grouping and bought a second '
+                'sub-goal and a second search budget — answering the card '
+                'cost more than skipping it');
+      }
+
+      expect(properNounNamesInChoices(const ['Tokyo, Delhi']), isEmpty,
+          reason: 'including the option that really does list two things: '
+              'nothing available here tells "Tokyo, Delhi" apart from '
+              '"Tokyo, Japan", so it fails closed by grouping — the same '
+              'accepted under-split those two cities typed in lowercase '
+              'already get, and the direction that costs a run nothing it '
+              'had before');
       expect(properNounNamesInChoices(const []), isEmpty);
+    });
+
+    test('two ticked options must each name something', () {
+      expect(properNounNamesInChoices(const ['Tokyo', 'all major cities']),
+          isEmpty,
+          reason: 'only one of the two ticked options names anything, so the '
+              'user listed one thing and nothing here can split');
+      expect(properNounNamesInChoices(const ['Tokyo', 'Tokyo, Japan']),
+          {'tokyo', 'japan'},
+          reason: 'while two options that do each name something clear the '
+              'bar, and every run they hold between them counts');
     });
 
     test('digits are left to numericTokens', () {

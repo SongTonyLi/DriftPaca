@@ -205,9 +205,11 @@ class ResearchLedger {
   /// a fresh sub-goal and a fresh search budget for each of them —
   /// including the readings the user declined.
   ///
-  /// Never mutated after construction: [_requestedInstances] memoises what
-  /// it reads out of this list, so a later edit would leave the two
-  /// disagreeing.
+  /// Unmodifiable, and copied on the way in: [_requestedInstances] and
+  /// [_requestedNames] memoise what they read out of this list, so an edit
+  /// after the first lookup would leave the ledger's instances and its
+  /// picks disagreeing with no sign that they had. A doc comment saying
+  /// "never mutated" is not the same promise as a list that cannot be.
   final List<String> clarificationPicks;
 
   final List<SubGoal> subGoals = [];
@@ -236,8 +238,9 @@ class ResearchLedger {
     required this.objective,
     String? userQuestion,
     this.clarification = '',
-    this.clarificationPicks = const [],
-  }) : userQuestion = userQuestion ?? objective;
+    List<String> clarificationPicks = const [],
+  })  : userQuestion = userQuestion ?? objective,
+        clarificationPicks = List.unmodifiable(clarificationPicks);
 
   /// Sub-goal identity only — this NEVER decides whether to block a
   /// search; it decides which sub-goal a query belongs to. Checks exact
@@ -305,9 +308,20 @@ class ResearchLedger {
   /// The things the user NAMED, each as a whole phrase — "são paulo" is
   /// one name, not the two instances são and paulo. Read from what they
   /// typed ([userQuestion]) and from what they ticked
-  /// ([clarificationPicks]), and counted separately per source, so a
-  /// single-subject question ("What is Vietnam GDP?") plus a single-choice
-  /// card ("Nominal") stays at one name apiece and splits nothing.
+  /// ([clarificationPicks]), each source counted on its own and each
+  /// having to clear the same "unless the user listed two of them" bar in
+  /// the form that source can express it: a typed question must name two
+  /// things in one sentence, and a card must have two options ticked that
+  /// each name something.
+  ///
+  /// So a single-subject question ("What is Vietnam GDP?") answered with a
+  /// single-choice card stays below both bars and splits nothing —
+  /// whatever the ticked label reads like. That last clause is the whole
+  /// point of counting ticked OPTIONS rather than the capitalised runs
+  /// pooled out of them: "Tokyo, Japan" and "Nominal (current US$)" are
+  /// two runs apiece, and reading them as two named instances made
+  /// answering a card cost a sub-goal and a search budget more than
+  /// skipping it (see [properNounNamesInChoices]).
   ///
   /// Kept as phrases because the alternative — the tokens of every name,
   /// unioned — made any ordinary word that happened to sit inside a name
@@ -349,10 +363,11 @@ class ResearchLedger {
   /// ticked option is the one exception, because the user endorsed that
   /// exact string by selecting it.
   ///
-  /// Names count only when the user listed at least TWO of them: a lone
-  /// capitalised phrase is the question's subject rather than one instance
-  /// of several, and reading it as an instance would re-open the thrash
-  /// this guard exists to close.
+  /// Names count only when the user listed at least TWO of them — named
+  /// two in the sentence they typed, or ticked two options that each name
+  /// something. A lone capitalised phrase is the question's subject rather
+  /// than one instance of several, and reading it as an instance would
+  /// re-open the thrash this guard exists to close.
   late final Set<String> _requestedInstances = {
     ...numericTokens(userQuestion),
     for (final pick in clarificationPicks) ...numericTokens(pick),
@@ -449,14 +464,17 @@ class ResearchLedger {
   ///
   /// Leaving the hit untouched — on the theory that "a gap naming something
   /// already searched adds nothing" — is what erased the completeness
-  /// gate's only finding. The gate judged the drafted answer against
-  /// [userQuestion] having read the very sources that search produced and
-  /// said this part is still unaddressed, so on that one path the theory is
-  /// false: the checklist went on ticking the item `[x]` while the gap
-  /// notice riding in the same request ordered a search for wording the
-  /// brief never showed, and SearchAgent._isLedgerBlocked then refused that
-  /// search as a duplicate of the sub-goal whose budget the gap had
-  /// inherited.
+  /// gate's only finding. The gate judged the drafted answer against the
+  /// question the user meant — [userQuestion] with the clarification folded
+  /// back in, handed to it by SearchAgent.run and never read off this
+  /// ledger (see [userQuestion] and
+  /// [ResearchClarification.clarifiedQuestion]) — having read the very
+  /// sources that search produced, and said this part is still unaddressed,
+  /// so on that one path the theory is false: the checklist went on ticking
+  /// the item `[x]` while the gap notice riding in the same request ordered
+  /// a search for wording the brief never showed, and
+  /// SearchAgent._isLedgerBlocked then refused that search as a duplicate
+  /// of the sub-goal whose budget the gap had inherited.
   ///
   /// [SubGoal.searchCount] > 0 is the exact condition under which reusing
   /// can hurt: only a searched sub-goal renders `[x]`, and only a searched

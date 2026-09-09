@@ -1,46 +1,49 @@
-/// Offline probe: on a turn where the search tool has already been WITHDRAWN,
-/// `SearchAgent._ingestChunk` still deletes the model's finished answer just
-/// because a trailing `web_search` call arrived — and the one-shot
-/// forced-answer guard can only rescue that once, so the second occurrence
-/// returns an EMPTY answer as a non-cancelled `hardCapReached` outcome.
+/// Offline regression: on a turn where the search tool has already been
+/// WITHDRAWN, `SearchAgent` keeps every token the model streams — even when
+/// the model attaches a trailing `web_search` call the loop is guaranteed to
+/// refuse.
 ///
-/// The reset at search_agent.dart:867-875 is unconditional on whether tools
-/// were offered this turn:
+/// Both of `_ingestChunk`'s content-discard rules are gated on
+/// `_TurnAccum.toolsEnabled`, the flag that mirrors
+/// `SearchAgentRequest.toolsEnabled` — which ChatProvider turns straight into
+/// `tools:` / `tools: null` on the wire:
 ///
-///     if (chunk.toolCalls != null && chunk.toolCalls!.isNotEmpty) {
-///       accum.toolCalls.addAll(chunk.toolCalls!);
-///       if (accum.streamedContent) {
-///         listener.onResetContent?.call();
-///         accum.content = '';
-///         ...
+///     if (accum.toolsEnabled && accum.streamedContent) {
+///       listener.onResetContent?.call();
+///       accum.content = '';
+///       ...
+///     if (chunk.content.isNotEmpty &&
+///         (!accum.toolsEnabled || accum.toolCalls.isEmpty)) {
 ///
-/// That is right for the documented "preamble, then search" case (run() line
-/// 424-428, and the `preamble content then tool_calls resets streamed
-/// content` test in search_agent_test.dart): the prose was throat-clearing
-/// ahead of a search that is about to actually run, so discarding it is
-/// correct. But once `_canSearch` is false the request carries NO tools
-/// (chat_provider.dart:1177 sends `tools: null`), any tool call the model
-/// still emits is guaranteed to be refused, and the streamed prose is not a
-/// preamble — it IS the answer. _ingestChunk deletes it anyway.
+/// Discarding prose is right only in the "preamble, then search" case, where
+/// the tool is live, the search really is about to run, and the prose was
+/// throat-clearing — run()'s `hasTools` path, pinned by the `preamble content
+/// then tool_calls resets streamed content` test in search_agent_test.dart.
+/// Once `_canSearch` is false the request carries no tools at all
+/// (chat_provider.dart sends `tools: null`), `hasTools` refuses any call the
+/// model still emits, and the turn was briefed with
+/// `ResearchLedger.closedRule` ("Research is closed... Write the answer now").
+/// The prose is then not a preamble to anything — it IS the answer, and it is
+/// kept.
 ///
-/// The knock-on chain, all inside run():
-///   * `turn.content` is empty, so `lastContent` (line 428) never captures
-///     the answer either — the "never return less than we already had"
-///     fallback at line 542 has nothing to fall back on.
-///   * `hasTools` is false (line 435, `canSearch` is false), so the
-///     forced-answer branch at line 444 fires on a condition — `turn.content
-///     .isEmpty` — that _ingestChunk manufactured. A whole extra model turn
-///     is spent telling a model that already answered that "Research is
-///     closed".
-///   * That branch is one-shot (`!forcedAnswer`). A model that attaches a
-///     trailing tool call to its answer a SECOND time falls straight through
-///     to `return _outcome(turn.content.isNotEmpty ? turn.content :
-///     lastContent, ...)` with both empty.
-///   * The outcome is not cancelled, so ChatProvider's blank-bubble cleanup
-///     (chat_provider.dart:1286, which requires `outcome.cancelled`) is
-///     skipped and `streamingMessage!.content` is overwritten with '' and
-///     persisted — the exact blank assistant message the forced-answer path
-///     exists to prevent, reached this time with the answer in hand.
+/// What the unconditional rule used to cost, and what the groups below now
+/// pin shut, all inside run():
+///   * `_ingestChunk` deleted the answer, so `turn.content` was empty and
+///     `lastContent` never captured it either — the "never return less than
+///     we already had" fallback had nothing to fall back on.
+///   * The forced-answer branch then fired on an emptiness `_ingestChunk`
+///     had manufactured, spending a whole model turn to tell a model that had
+///     just answered that research was closed.
+///   * That branch is one-shot, so a second such turn fell straight through
+///     to a non-cancelled, EMPTY `hardCapReached` outcome. ChatProvider's
+///     blank-bubble cleanup requires `outcome.cancelled`, so it was skipped
+///     and the empty content was written into the bubble and persisted — the
+///     blank assistant message commit dd4ed25 exists to prevent, reached this
+///     time with the answer in hand.
+///
+/// The last group pins where the fix stops: a withdrawn turn that streams no
+/// prose at all still gets dd4ed25's forced-answer rescue, and a tool call
+/// after a preamble on a tools-LIVE turn still wipes the preamble.
 ///
 /// Every test below drives a real SearchAgent with fake `streamTurn` /
 /// `search` callbacks. No network, no model.
@@ -54,6 +57,15 @@ import 'package:llamaseek/Services/web_search_service.dart';
 
 const _question = 'What was Vietnam\'s GDP in 2024?';
 const _answer = 'Vietnam GDP was 476 billion USD in 2024 [1].';
+const _preamble = 'Let me look that up.';
+const _sourceUrl = 'https://example.com/vn-gdp';
+
+/// Wording unique to the forced-answer branch's tool reply. It cannot be
+/// matched on "Research is closed": ResearchLedger.closedRule opens with the
+/// same words, and the rendered ledger is appended to a tool-role transcript
+/// message on every withdrawn turn — so that phrase is present whether or not
+/// the one-shot rescue ever fired.
+const _forcedAnswerMarker = 'Answer now using the sources already provided';
 
 final _history = [
   OllamaMessage(_question, role: OllamaMessageRole.user),
@@ -99,6 +111,11 @@ class _Run {
 
   final int turns;
 
+  /// Whether any request's transcript carried the forced-answer branch's
+  /// "Research is closed" tool reply — i.e. whether run()'s one-shot rescue
+  /// was spent on this run.
+  final bool forcedAnswerSpent;
+
   const _Run({
     required this.outcome,
     required this.toolsEnabled,
@@ -106,41 +123,56 @@ class _Run {
     required this.resets,
     required this.bubble,
     required this.turns,
+    required this.forcedAnswerSpent,
   });
 }
 
+/// Every tools-withdrawn turn streams the answer unless a test says otherwise.
+bool _always(int turn) => true;
+
 /// Drives a real SearchAgent whose budget is one search.
 ///
-/// Turn 1 is a bare `web_search` call, which spends the entire budget, so
-/// every later turn arrives with `toolsEnabled: false`. Each of those later
-/// turns streams the complete answer and then — if [trailingToolCallOnTurn]
-/// says so — one more `web_search` call.
+/// Turn 1 is a `web_search` call — optionally preceded by [preambleOnTurn1],
+/// which is a genuine preamble because the tool is still live on that turn —
+/// and it spends the entire budget, so every later turn arrives with
+/// `toolsEnabled: false`. Each of those later turns streams the complete
+/// answer, unless [proseOnClosedTurn] says otherwise, and then — if
+/// [trailingToolCallOnTurn] says so — one more `web_search` call.
 Future<_Run> _drive({
   required bool Function(int turn) trailingToolCallOnTurn,
+  bool Function(int turn) proseOnClosedTurn = _always,
+  String preambleOnTurn1 = '',
 }) async {
   final toolsEnabled = <bool>[];
   final contentDeltas = <String>[];
   var resets = 0;
   var bubble = '';
   var turn = 0;
+  var forcedAnswerSpent = false;
 
   final agent = SearchAgent(
     maxSearches: 1,
     streamTurn: (request) async* {
       turn++;
       toolsEnabled.add(request.toolsEnabled);
+      forcedAnswerSpent |= request.transcript.any((message) =>
+          message.role == OllamaMessageRole.tool &&
+          message.content.contains(_forcedAnswerMarker));
       if (turn == 1) {
+        if (preambleOnTurn1.isNotEmpty) yield _prose(preambleOnTurn1);
         yield _toolCall('Vietnam GDP 2024');
         return;
       }
-      // The answer, streamed in pieces exactly as a real stream delivers it.
-      yield _prose('Vietnam GDP was ');
-      yield _prose('476 billion USD in 2024 [1].');
+      if (proseOnClosedTurn(turn)) {
+        // The answer, streamed in pieces exactly as a real stream delivers it.
+        yield _prose('Vietnam GDP was ');
+        yield _prose('476 billion USD in 2024 [1].');
+      }
       if (trailingToolCallOnTurn(turn)) {
         yield _toolCall('Vietnam GDP 2024 confirmation');
       }
     },
-    search: (request) async => [_hit('https://example.com/vn-gdp')],
+    search: (request) async => [_hit(_sourceUrl)],
   );
 
   final outcome = await agent.run(
@@ -164,12 +196,14 @@ Future<_Run> _drive({
     resets: resets,
     bubble: bubble,
     turns: turn,
+    forcedAnswerSpent: forcedAnswerSpent,
   );
 }
 
 void main() {
-  group('a trailing tool call on a tools-withdrawn turn deletes the answer',
-      () {
+  group(
+      'a trailing tool call on a tools-withdrawn turn no longer deletes the '
+      'answer', () {
     late _Run run;
 
     setUpAll(() async {
@@ -177,118 +211,175 @@ void main() {
       run = await _drive(trailingToolCallOnTurn: (_) => true);
     });
 
-    test('the tool really was withdrawn for turns 2 and 3', () {
-      expect(run.toolsEnabled, [true, false, false],
+    test('the tool really was withdrawn for turn 2', () {
+      expect(run.toolsEnabled, [true, false],
           reason: 'maxSearches (1) was spent by turn 1, so _canSearch is '
               'false from turn 2 on and SearchAgentRequest.toolsEnabled is '
               'false — the request carries no web_search tool at all '
-              '(chat_provider.dart sends `tools: null`), so the tool calls '
-              'turns 2 and 3 emit CANNOT be honoured. Their prose is the '
-              'answer, not a preamble to a search that is about to run.');
-      expect(run.turns, 3,
-          reason: 'the run took three model turns: one search, then two '
-              'tools-withdrawn turns that each produced a complete answer');
+              '(chat_provider.dart sends `tools: null`), so the tool call '
+              'turn 2 emits CANNOT be honoured. Its prose is the answer, not '
+              'a preamble to a search that is about to run.');
+      expect(run.turns, 2,
+          reason: 'one search turn, then one tools-withdrawn turn that '
+              'answered. The third turn this run used to take was the '
+              'forced-answer retry, spent telling a model that had just '
+              'answered that research was closed — unnecessary now that turn '
+              '2\'s answer survives, so the run is a model turn cheaper.');
     });
 
-    test('the model DID stream the complete answer on both closed turns', () {
-      expect(run.contentDeltas.join(), '$_answer$_answer',
-          reason: 'onContent delivered the full answer twice — the run had '
-              'the finished answer in hand on turn 2 AND on turn 3. Nothing '
-              'about this outcome is the model failing to answer.');
+    test('the model DID stream the complete answer on the closed turn', () {
+      expect(run.contentDeltas.join(), _answer,
+          reason: 'onContent delivered the full answer exactly once: the run '
+              'had the finished answer in hand on turn 2, and no second '
+              'closed turn was needed to produce it again. Nothing about '
+              'this outcome is the model failing to answer.');
     });
 
-    test('_ingestChunk blanked it both times, on screen and in the accumulator',
-        () {
-      expect(run.resets, 2,
-          reason: 'onResetContent fired once per closed turn. In ChatProvider '
-              'that callback sets streamingMessage!.content = \'\', so the '
-              'user watched the complete answer render and then vanish, '
-              'twice.');
-      expect(run.bubble, isEmpty,
+    test('_ingestChunk keeps it, on screen and in the accumulator', () {
+      expect(run.resets, 0,
+          reason: 'onResetContent must never fire for a tool call that '
+              'cannot run. In ChatProvider that callback sets '
+              'streamingMessage!.content = \'\', which is the user watching '
+              'a complete, cited answer render and then vanish.');
+      expect(run.bubble, _answer,
           reason: 'replaying the deltas and the resets the way ChatProvider '
-              'does leaves the bubble empty: the last thing that happened to '
-              'it was a wipe, not a token.');
+              'does leaves the finished answer in the bubble: nothing wiped '
+              'it.');
     });
 
-    test('the run returns an EMPTY answer, uncancelled, as hardCapReached', () {
-      expect(run.outcome.content, isEmpty,
-          reason: 'THE DEFECT. run() returned `turn.content.isNotEmpty ? '
-              'turn.content : lastContent` and both are empty — turn.content '
-              'because _ingestChunk cleared it, lastContent because line 428 '
-              'only captures a turn whose content is non-empty and so never '
-              'saw the answer either. The one-shot forced-answer guard '
-              '(!forcedAnswer) was already spent on turn 2, so turn 3 had no '
-              'second rescue.');
+    test('the run returns the ANSWER, uncancelled, as hardCapReached', () {
+      expect(run.outcome.content, _answer,
+          reason: 'run() returns `turn.content.isNotEmpty ? turn.content : '
+              'lastContent`, and turn.content now holds what the model '
+              'streamed because _ingestChunk no longer clears it on a '
+              'tools-withdrawn turn. The refused call is simply dropped.');
       expect(run.outcome.cancelled, isFalse,
           reason: 'not a cancellation — this is the loop\'s normal '
               'termination path.');
       expect(run.outcome.reason, SearchTerminationReason.hardCapReached,
-          reason: 'reported to the user as "search budget reached", which '
-              'says nothing about an answer having been produced and thrown '
-              'away.');
+          reason: 'the search budget genuinely is spent, so the reason code '
+              'is not what the fix changes — only the content it ships '
+              'with.');
       expect(run.outcome.searchCount, 1,
-          reason: 'research really did happen and really did find the '
-              'source — the evidence is dropped on the floor with the '
-              'answer that cited it');
+          reason: 'research really did happen, and the answer citing it is '
+              'now returned alongside it');
+      expect(run.outcome.sourceUrls.values, contains(_sourceUrl),
+          reason: 'the [1] in the answer resolves to the source the single '
+              'search found: the evidence and the answer survive together');
     });
 
-    test('ChatProvider would persist the blank bubble rather than remove it',
-        () {
-      // chat_provider.dart:1286 removes a blank in-flight bubble only when
-      // `outcome.cancelled` is true; then line 1311 overwrites
-      // streamingMessage!.content with outcome.content unconditionally.
-      final cleanupFires = run.outcome.cancelled &&
-          run.outcome.content.isEmpty &&
-          run.bubble.isEmpty;
-      expect(cleanupFires, isFalse,
-          reason: 'the blank-bubble cleanup is gated on outcome.cancelled, '
-              'which is false here, so it does NOT fire — and the assignment '
-              'below it writes outcome.content (\'\') into the message that '
-              'then gets persisted. The user is left with a saved, blank '
-              'assistant turn: exactly the failure the forced-answer path '
-              'and commit dd4ed25 exist to prevent.');
+    test('ChatProvider has no blank bubble to persist', () {
+      // chat_provider.dart writes outcome.content into streamingMessage and
+      // persists it; its blank-bubble cleanup above that is gated on
+      // outcome.cancelled (and on the bubble having no thinking, which a
+      // search round has already made false).
+      expect(run.outcome.content, isNotEmpty,
+          reason: 'a non-empty outcome is the whole difference between a '
+              'saved answer and a saved blank assistant turn');
+      expect(run.bubble, isNotEmpty,
+          reason: 'the in-flight bubble is non-empty too, so the '
+              'blank-bubble cleanup question never arises — avoiding the '
+              'blank message no longer depends on that gate at all');
     });
   });
 
   group('control: the identical run without the trailing tool call', () {
-    test('turn 3 omitting the tool call returns the very same prose', () async {
-      // Byte-for-byte the same stream except turn 3 stops after its prose.
-      // Turn 2 still ends with a trailing tool call, so the forced-answer
-      // guard is still spent — the ONLY difference is that final tool call.
-      final control = await _drive(trailingToolCallOnTurn: (turn) => turn == 2);
+    test('the run without the trailing tool call is now byte-identical',
+        () async {
+      // Byte-for-byte the same stream except that no closed turn appends a
+      // web_search call. A refused call must make no observable difference.
+      final withCall = await _drive(trailingToolCallOnTurn: (_) => true);
+      final control = await _drive(trailingToolCallOnTurn: (_) => false);
 
-      expect(control.toolsEnabled, [true, false, false],
-          reason: 'same shape as the failing run: three turns, tools '
-              'withdrawn after the first');
-      expect(control.outcome.content, _answer,
-          reason: 'ISOLATION. The same model prose, on the same closed turn, '
-              'of the same run, survives intact when the trailing '
-              'web_search call is removed. The tool call — refused before it '
-              'could ever run — is the entire cause of the empty answer '
-              'above.');
-      expect(control.outcome.reason, SearchTerminationReason.hardCapReached,
-          reason: 'same termination reason, so the reason code is not what '
-              'differs between the two runs');
-      expect(control.bubble, _answer,
-          reason: 'the UI bubble survives too: one reset (turn 2\'s trailing '
-              'call) and then the answer streams again uninterrupted');
-      expect(control.resets, 1,
-          reason: 'only turn 2 blanked the bubble in the control; the '
-              'failing run blanked it twice');
+      expect(control.toolsEnabled, withCall.toolsEnabled,
+          reason: 'same shape: one search turn, then one tools-withdrawn '
+              'turn');
+      expect(control.turns, withCall.turns,
+          reason: 'ISOLATION. The trailing call no longer buys the run an '
+              'extra forced-answer turn.');
+      expect(control.outcome.content, withCall.outcome.content,
+          reason: 'ISOLATION. The same model prose, on the same closed turn '
+              'of the same run, survives intact whether or not a refused '
+              'web_search call is appended to it. The call — refused before '
+              'it could ever run — is now invisible to the answer, which is '
+              'the strongest form of the isolation this file used to state '
+              'as a defect.');
+      expect(control.outcome.reason, withCall.outcome.reason,
+          reason: 'same termination reason either way');
+      expect(control.resets, withCall.resets,
+          reason: 'neither run blanks the bubble; a call that cannot run is '
+              'not a reason to');
+      expect(control.bubble, withCall.bubble,
+          reason: 'and the UI is left holding the same text either way');
     });
 
-    test('a single trailing tool call is survivable — the guard covers it',
+    test('a single trailing tool call no longer needs the forced-answer guard',
         () async {
-      // Turn 2 only. This is the case the forced-answer branch was written
-      // for, and it works: proof that the defect is specifically the guard's
-      // one-shot-ness meeting a repeatable model habit, not tool calls after
-      // withdrawal per se.
+      // The forced-answer branch was written for a withdrawn turn with NO
+      // prose (the next group covers that). A withdrawn turn that answered
+      // and then asked to search must not consume the one-shot rescue.
       final once = await _drive(trailingToolCallOnTurn: (turn) => turn == 2);
-      expect(once.outcome.content, isNotEmpty,
-          reason: 'the FIRST trailing tool call is recovered by the '
-              'forced-answer branch — at the cost of a wasted model turn and '
-              'a bubble the user watched go blank. The second one is not '
-              'recovered at all.');
+
+      expect(once.outcome.content, _answer,
+          reason: 'the answer is returned directly, not recovered a turn '
+              'later at the cost of a bubble the user watched go blank');
+      expect(once.turns, 2, reason: 'no forced-answer retry ran');
+      expect(once.forcedAnswerSpent, isFalse,
+          reason: 'no request ever carried the forced-answer branch\'s tool '
+              'reply, so the one-shot guard is still unspent and available '
+              'for the turn it was written for — a model that emits a tool '
+              'call and no prose at all');
+    });
+  });
+
+  group('the fix stops exactly where the discard is still right', () {
+    test(
+        'the forced-answer rescue still covers a genuinely blank withdrawn '
+        'turn', () async {
+      // dd4ed25's case, unchanged: turn 2 is withdrawn and emits ONLY a tool
+      // call, so turn.content really is empty and the rescue must fire.
+      final blank = await _drive(
+        trailingToolCallOnTurn: (_) => true,
+        proseOnClosedTurn: (turn) => turn != 2,
+      );
+
+      expect(blank.toolsEnabled, [true, false, false],
+          reason: 'the forced-answer turn is a third model turn, also with '
+              'the tool withdrawn');
+      expect(blank.turns, 3,
+          reason: 'gating the discard on toolsEnabled must not disarm the '
+              'rescue: a withdrawn turn that produces no prose is still told '
+              'research is closed and given one more turn to answer');
+      expect(blank.forcedAnswerSpent, isTrue,
+          reason: 'the "Research is closed" tool reply really was fed back, '
+              'which is what keeps the dangling tool_call well-formed');
+      expect(blank.outcome.content, _answer,
+          reason: 'and turn 3 answers — the blank message dd4ed25 exists to '
+              'prevent is still prevented');
+    });
+
+    test('a live tool call after a preamble still wipes the preamble',
+        () async {
+      // Turn 1 has the tool live, so its prose IS throat-clearing ahead of a
+      // search that actually runs, and discarding it is still correct.
+      final preambled = await _drive(
+        trailingToolCallOnTurn: (_) => true,
+        preambleOnTurn1: _preamble,
+      );
+
+      expect(preambled.resets, 1,
+          reason: 'exactly one reset, and it belongs to turn 1: the '
+              'tools-enabled preamble. Turn 2\'s refused call adds none.');
+      expect(preambled.outcome.content, _answer,
+          reason: 'the preamble is not part of the answer');
+      expect(preambled.outcome.content, isNot(contains(_preamble)),
+          reason: 'GUARDRAIL. Prose the model wrote ahead of a search that '
+              'actually ran is throat-clearing, never part of the answer. If '
+              'this starts containing "Let me look that up.", the '
+              'toolsEnabled gate has been inverted and the discard is firing '
+              'on exactly the wrong turns.');
+      expect(preambled.bubble, _answer,
+          reason: 'the UI shows the answer alone, exactly as before the fix');
     });
   });
 }

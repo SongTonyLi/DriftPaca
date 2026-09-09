@@ -1550,6 +1550,101 @@ void main() {
       // 1 search turn + 1 withdrawn turn + exactly 1 forced-answer retry.
       expect(turn, 3, reason: 'the forced-answer turn must fire only once');
     });
+
+    // The rescue above is for a withdrawn turn that says NOTHING. A withdrawn
+    // turn that answers and then asks to search anyway needs the opposite
+    // treatment: the request carried no tools, so the call cannot run and the
+    // prose is not a preamble to anything — it is the answer. _ingestChunk
+    // gates its content discard on _TurnAccum.toolsEnabled for exactly this.
+    test('a withdrawn turn that answers AND asks to search keeps its answer',
+        () async {
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk(distinctTopics[0])]);
+          }
+          return Stream.fromIterable([
+            answerChunk('answer from what I have'),
+            searchChunk(distinctTopics[1]),
+          ]);
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(requests[1].toolsEnabled, isFalse,
+          reason: 'the budget was spent on turn 1, so turn 2 carries no '
+              'web_search tool and the call it emits anyway is guaranteed to '
+              'be refused');
+      expect(outcome.content, 'answer from what I have',
+          reason: 'a refused call must not delete the prose that arrived '
+              'with it — that prose is a finished answer being thrown away');
+      expect(outcome.reason, SearchTerminationReason.hardCapReached);
+      expect(turn, 2,
+          reason: 'and no forced-answer retry is needed, because turn.content '
+              'is no longer empty: the one-shot rescue stays unspent for the '
+              'prose-free turn above');
+    });
+
+    test(
+        'a withdrawn turn that asks to search BEFORE answering keeps its '
+        'answer too', () async {
+      var turn = 0;
+
+      final outcome = await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk(distinctTopics[0])]);
+          }
+          // The other order, which models emit interchangeably: the refused
+          // call first, the answer after it.
+          return Stream.fromIterable([
+            searchChunk(distinctTopics[1]),
+            answerChunk('answer from what I have'),
+          ]);
+        },
+      ).run(history: history, listener: const SearchAgentListener());
+
+      expect(outcome.content, 'answer from what I have',
+          reason: 'the rule is order-independent: _ingestChunk\'s '
+              '`accum.toolCalls.isEmpty` guard, which drops content arriving '
+              'after a call, is gated on toolsEnabled as well');
+      expect(turn, 2);
+    });
+
+    test('onResetContent is never fired by a refused tool call', () async {
+      var resets = 0;
+      var turn = 0;
+
+      await agent(
+        maxSearches: 1,
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable([searchChunk(distinctTopics[0])]);
+          }
+          return Stream.fromIterable([
+            answerChunk('answer from what I have'),
+            searchChunk(distinctTopics[1]),
+          ]);
+        },
+      ).run(
+        history: history,
+        listener: SearchAgentListener(onResetContent: () => resets++),
+      );
+
+      expect(resets, 0,
+          reason: 'ChatProvider wires onResetContent to '
+              'streamingMessage!.content = \'\', so a reset here is the user '
+              'watching a complete, cited answer render and then vanish. A '
+              'call that can never run is no reason to blank the bubble.');
+    });
   });
 
   group('the completeness gate', () {

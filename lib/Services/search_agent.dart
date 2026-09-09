@@ -441,6 +441,12 @@ class SearchAgent {
         // run already established. It has to be told, in the transcript,
         // that research is closed. Once only: if it still says nothing we
         // take what we have rather than loop.
+        //
+        // Reached only when the model genuinely produced no prose:
+        // _ingestChunk no longer manufactures an empty turn out of a
+        // withdrawn turn's trailing tool call, so a turn that answered and
+        // then asked to search anyway keeps its answer here and leaves this
+        // one-shot rescue unspent for the blank turn it was written for.
         if (turn.content.isEmpty && turn.toolCalls.isNotEmpty && !forcedAnswer) {
           forcedAnswer = true;
           transcript.add(OllamaMessage(
@@ -509,9 +515,13 @@ class SearchAgent {
             //
             // Content only. No thinking (re-feeding the reasoning that
             // produced the omission argues for repeating it) and no
-            // toolCalls — safe because `hasTools` is false here and
-            // _ingestChunk guarantees a turn with tool calls has empty
-            // content, so nothing dangling can be introduced.
+            // toolCalls — safe because the gate only runs while
+            // `canSearch` is true, so a turn carrying tool calls would have
+            // `hasTools` true and never reach this branch at all, and
+            // nothing dangling can be introduced. (_ingestChunk's "a turn
+            // with tool calls has empty content" rule now holds only for
+            // tools-enabled turns, so it is no longer what makes this
+            // safe.)
             transcript.add(OllamaMessage(
               turn.content,
               role: OllamaMessageRole.assistant,
@@ -839,7 +849,7 @@ class SearchAgent {
     required bool toolsEnabled,
     String researchBrief = '',
   }) async {
-    final accum = _TurnAccum();
+    final accum = _TurnAccum(toolsEnabled: toolsEnabled);
     final request = SearchAgentRequest(
       history: history,
       transcript: List<OllamaMessage>.from(transcript),
@@ -866,7 +876,26 @@ class SearchAgent {
   ) {
     if (chunk.toolCalls != null && chunk.toolCalls!.isNotEmpty) {
       accum.toolCalls.addAll(chunk.toolCalls!);
-      if (accum.streamedContent) {
+      // Discard the prose that preceded the call ONLY while the tool is
+      // live. That is the "preamble, then search" case: the search really
+      // is about to run, so the prose was throat-clearing. On a
+      // tools-withdrawn turn the call cannot run at all — run()'s
+      // `hasTools` folds in `canSearch`, and the request carried no tools
+      // for the model to call in the first place — and the turn was
+      // briefed with ResearchLedger.closedRule ("Write the answer now"),
+      // so the prose IS the answer. Deleting it wiped a finished, cited
+      // reply off the user's screen and left run() with nothing but a
+      // blank message to return: the very failure the forced-answer path
+      // below it exists to prevent, reached with the answer in hand.
+      //
+      // The trade-off, taken deliberately: a model that really does emit a
+      // preamble on a closed turn now has that preamble returned as its
+      // answer, because run()'s forced-answer rescue keys on
+      // `turn.content.isEmpty`. Rescuing those too would mean blanking the
+      // bubble before the retry — reintroducing the exact "answer renders,
+      // then vanishes" symptom — and, since onContent appends, gluing two
+      // answers together in the UI. A thin reply beats a blank one.
+      if (accum.toolsEnabled && accum.streamedContent) {
         listener.onResetContent?.call();
         accum.content = '';
         accum.streamedContent = false;
@@ -880,7 +909,13 @@ class SearchAgent {
       listener.onThinking?.call(thinking);
     }
 
-    if (chunk.content.isNotEmpty && accum.toolCalls.isEmpty) {
+    // The same rule, for content arriving AFTER a call: while the tool is
+    // live, a turn that has called it is a search turn and its prose is
+    // dropped, but a withdrawn turn keeps everything it streams, whichever
+    // side of the refused call it arrives on — models emit the two orders
+    // interchangeably.
+    if (chunk.content.isNotEmpty &&
+        (!accum.toolsEnabled || accum.toolCalls.isEmpty)) {
       if (!accum.answerStarted) {
         listener.onAnswerStart?.call();
         accum.answerStarted = true;
@@ -1294,12 +1329,30 @@ class _LedgerCarrier {
 }
 
 class _TurnAccum {
+  /// Whether THIS turn's request actually carried the search tool. Mirrors
+  /// [SearchAgentRequest.toolsEnabled], which ChatProvider turns straight
+  /// into `tools:` / `tools: null` on the wire.
+  ///
+  /// Load-bearing in [SearchAgent._ingestChunk]: a tool call only means
+  /// "preamble, then search" while the tool is live. Once it has been
+  /// withdrawn, run() refuses the call outright and the turn was briefed
+  /// with ResearchLedger.closedRule, so prose streamed alongside a refused
+  /// call is the answer rather than throat-clearing ahead of a search.
+  ///
+  /// The contract that makes this safe is that the flag truthfully
+  /// describes what is on the wire: a streamTurn that attached the tool
+  /// regardless of [SearchAgentRequest.toolsEnabled] would re-enable the
+  /// discard exactly where it is wrong.
+  final bool toolsEnabled;
+
   String thinking = '';
   String content = '';
   final toolCalls = <OllamaToolCall>[];
   bool streamedContent = false;
   bool answerStarted = false;
   bool cancelled = false;
+
+  _TurnAccum({required this.toolsEnabled});
 }
 
 enum _PlanKind {

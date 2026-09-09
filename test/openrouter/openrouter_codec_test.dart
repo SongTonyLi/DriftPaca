@@ -203,6 +203,114 @@ void main() {
     });
   });
 
+  group('OpenRouterCodec.errorFrom', () {
+    // The only thing that tells a 200 response carrying a provider failure
+    // apart from a completion — see errorFrom's contract. Both directions
+    // matter: a missed error is reported to the user as a finished answer
+    // (audit finding #12), and a false positive kills a working stream.
+    test('extracts the numeric code and the provider message', () {
+      final error = OpenRouterCodec.errorFrom({
+        'error': {'code': 429, 'message': 'rate limited'}
+      });
+      expect(error, isNotNull);
+      expect(error!.code, 429,
+          reason: 'a numeric code is what lets the failure be formatted like '
+              'the same code arriving as an HTTP status');
+      expect(error.message, 'rate limited');
+    });
+
+    test('names the upstream provider the failure came from', () {
+      final error = OpenRouterCodec.errorFrom({
+        'error': {
+          'code': 502,
+          'message': 'Provider returned error',
+          'metadata': {'provider_name': 'Together'},
+        }
+      });
+      expect(error!.message, 'Provider returned error (Together)',
+          reason: 'OpenRouter relays many providers, and which one broke is '
+              'the difference between retrying and changing models');
+    });
+
+    test('falls back through metadata.raw, then type, then a generic line',
+        () {
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': {
+            'code': 400,
+            'metadata': {'raw': 'context length exceeded'},
+          }
+        })!.message,
+        'context length exceeded',
+      );
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': {'type': 'server_error'}
+        })!.message,
+        'server_error',
+      );
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': {'unexpected': 'shape'}
+        })!.message,
+        'The provider reported an error.',
+        reason: 'a non-empty error object with no wording anyone recognizes '
+            'is still a failure — the presence of the key is the signal, and '
+            'returning null here would reopen the hole',
+      );
+    });
+
+    test('accepts a bare string error', () {
+      final error = OpenRouterCodec.errorFrom({'error': 'upstream exploded'});
+      expect(error!.code, isNull);
+      expect(error.message, 'upstream exploded');
+    });
+
+    test('keeps a non-numeric code out of the HTTP formatting', () {
+      final error = OpenRouterCodec.errorFrom({
+        'error': {'code': 'insufficient_quota', 'message': 'out of credits'}
+      });
+      expect(error!.code, isNull,
+          reason: 'there is no HTTP status to format against, so the caller '
+              'must report the provider text on its own rather than invent '
+              'a status line');
+      expect(error.message, 'out of credits');
+    });
+
+    test('is null for the shapes healthy chunks actually carry', () {
+      expect(
+        OpenRouterCodec.errorFrom({
+          'error': null,
+          'choices': [
+            {
+              'delta': {'content': 'Hi'}
+            }
+          ],
+        }),
+        isNull,
+        reason: 'OpenAI-compatible providers put a null error key on ordinary '
+            'chunks; treating that as a failure would kill every stream',
+      );
+      expect(OpenRouterCodec.errorFrom({'error': const <String, dynamic>{}}),
+          isNull,
+          reason: 'an empty object says nothing went wrong, same as null');
+      expect(OpenRouterCodec.errorFrom({'error': '   '}), isNull);
+      expect(
+        OpenRouterCodec.errorFrom({
+          'model': 'openai/gpt-4o',
+          'choices': [
+            {
+              'message': {'content': 'Hi there'},
+              'finish_reason': 'stop',
+            }
+          ],
+        }),
+        isNull,
+        reason: 'an ordinary completion has no error key at all',
+      );
+    });
+  });
+
   group('OpenRouterCodec.parseCompletion', () {
     test('reads a non-stream chat completion', () {
       final message = OpenRouterCodec.parseCompletion({

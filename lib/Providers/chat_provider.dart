@@ -1197,86 +1197,106 @@ class ChatProvider extends ChangeNotifier {
       },
     );
 
-    final outcome = await agent.run(
-      history: history,
-      isCancelled: cancelled,
-      listener: SearchAgentListener(
-        onThinking: (delta) {
-          final msg = ensureBubble();
-          if (seenSearch) {
-            final modelPart = modelThinkingFromCombined(msg.thinking ?? '');
-            msg.thinking = mergeSearchThinking(
-              searchThinking: lastSearchThinking,
-              modelThinking: modelPart + delta,
-            );
-          } else {
-            msg.thinking = (msg.thinking ?? '') + delta;
-          }
-          touch();
-        },
-        onSearchThinking: (thinking) {
-          seenSearch = true;
-          lastSearchThinking = thinking;
-          _webSearchThinkingCallback?.call(thinking);
-          ensureBubble().thinking = '$thinking$searchThinkingSeparator';
-          touch();
-        },
-        onSearchStart: (query) {
-          ensureBubble();
-          _webSearchCallback?.call(query);
-          _webSearchQueryUpdateCallback?.call(query);
-          touch(force: true);
-        },
-        onSearchComplete: (results, sourceUrls) {
-          // sourceUrls is the exact id->URL map SearchAgent computed for
-          // this call — consuming it directly retires the id-offset
-          // counter this file used to track in parallel (see the audited
-          // double-tracked citation-offset bug).
-          liveSourceUrls.addAll(sourceUrls);
-          _webSearchCompleteCallback?.call(results);
-          touch(force: true);
-        },
-        onAnswerStart: () {
-          ensureBubble();
-          _webSearchAnswerStartCallback?.call();
-          touch(force: true);
-        },
-        onContent: (delta) {
-          final msg = ensureBubble();
-          msg.content += delta;
-          if (liveSourceUrls.isNotEmpty) {
-            msg.content =
-                replaceCitationsWithLinks(msg.content, liveSourceUrls);
-          }
-          touch();
-        },
-        onResetContent: () {
-          if (streamingMessage != null) {
-            streamingMessage!.content = '';
+    final SearchAgentOutcome outcome;
+    try {
+      outcome = await agent.run(
+        history: history,
+        isCancelled: cancelled,
+        listener: SearchAgentListener(
+          onThinking: (delta) {
+            final msg = ensureBubble();
+            if (seenSearch) {
+              final modelPart = modelThinkingFromCombined(msg.thinking ?? '');
+              msg.thinking = mergeSearchThinking(
+                searchThinking: lastSearchThinking,
+                modelThinking: modelPart + delta,
+              );
+            } else {
+              msg.thinking = (msg.thinking ?? '') + delta;
+            }
+            touch();
+          },
+          onSearchThinking: (thinking) {
+            seenSearch = true;
+            lastSearchThinking = thinking;
+            _webSearchThinkingCallback?.call(thinking);
+            ensureBubble().thinking = '$thinking$searchThinkingSeparator';
+            touch();
+          },
+          onSearchStart: (query) {
+            ensureBubble();
+            _webSearchCallback?.call(query);
+            _webSearchQueryUpdateCallback?.call(query);
             touch(force: true);
-          }
-        },
-        onSearchSkipped: (query, reason) {
-          _webSearchSkippedCallback?.call(query, reason);
-          touch(force: true);
-        },
-        onLedgerUpdate: (objective, snapshot) {
-          // The bubble has to exist for the panel to land anywhere: search
-          // segments are handed to the index-0 message, and until this the
-          // index-0 message is the user's own. SearchAgent now opens the
-          // ledger before the goal-derivation request rather than after it,
-          // so this is the first callback of a run — earlier than any
-          // thinking or content token, which is the whole point.
-          ensureBubble();
-          _webSearchLedgerUpdateCallback?.call(objective, snapshot);
-          touch(force: true);
-        },
-        onResearchDone: (reason) {
-          _webSearchResearchDoneCallback?.call(reason);
-          touch(force: true);
-        },
-      ),
-    );
+          },
+          onSearchComplete: (results, sourceUrls) {
+            // sourceUrls is the exact id->URL map SearchAgent computed for
+            // this call — consuming it directly retires the id-offset
+            // counter this file used to track in parallel (see the audited
+            // double-tracked citation-offset bug).
+            liveSourceUrls.addAll(sourceUrls);
+            _webSearchCompleteCallback?.call(results);
+            touch(force: true);
+          },
+          onAnswerStart: () {
+            ensureBubble();
+            _webSearchAnswerStartCallback?.call();
+            touch(force: true);
+          },
+          onContent: (delta) {
+            final msg = ensureBubble();
+            msg.content += delta;
+            if (liveSourceUrls.isNotEmpty) {
+              msg.content =
+                  replaceCitationsWithLinks(msg.content, liveSourceUrls);
+            }
+            touch();
+          },
+          onResetContent: () {
+            if (streamingMessage != null) {
+              streamingMessage!.content = '';
+              touch(force: true);
+            }
+          },
+          onSearchSkipped: (query, reason) {
+            _webSearchSkippedCallback?.call(query, reason);
+            touch(force: true);
+          },
+          onLedgerUpdate: (objective, snapshot) {
+            // The bubble has to exist for the panel to land anywhere: search
+            // segments are handed to the index-0 message, and until this the
+            // index-0 message is the user's own. SearchAgent now opens the
+            // ledger before the goal-derivation request rather than after it,
+            // so this is the first callback of a run — earlier than any
+            // thinking or content token, which is the whole point.
+            ensureBubble();
+            _webSearchLedgerUpdateCallback?.call(objective, snapshot);
+            touch(force: true);
+          },
+          onResearchDone: (reason) {
+            _webSearchResearchDoneCallback?.call(reason);
+            touch(force: true);
+          },
+        ),
+      );
+    } catch (_) {
+      // A run that throws has no outcome, so none of the cleanup below it
+      // runs — and the bubble opened by onLedgerUpdate before the first token
+      // would be left on screen rendering a research panel that never
+      // receives a termination reason, next to the error banner. Same
+      // predicate as the cancelled cleanup below: drop the bubble only when
+      // the turn produced no content and no thinking at all, so a partially
+      // streamed answer is never taken away from the user. Nothing is
+      // persisted either way — _initializeChatStream's `on OllamaException`
+      // handler records the error and leaves ollamaMessage null.
+      if (streamingMessage != null &&
+          streamingMessage!.content.isEmpty &&
+          (streamingMessage!.thinking ?? '').isEmpty) {
+        _messages.remove(streamingMessage);
+        streamingMessage = null;
+      }
+      rethrow;
+    }
 
     // Stopped before the model said anything at all. The bubble exists from
     // the ledger's first update (see onLedgerUpdate above), well ahead of

@@ -215,6 +215,62 @@ class OpenRouterCodec {
     return null;
   }
 
+  /// The provider failure a decoded payload is reporting, or null when it is
+  /// an ordinary completion.
+  ///
+  /// OpenRouter reports a failure that happens AFTER streaming has begun as a
+  /// `data:` frame carrying a top-level `error` on an HTTP **200** stream (and
+  /// a non-streamed failure as a 200 body of the same shape), so
+  /// `OllamaService`'s status-code guards cannot see it. Such a frame has no
+  /// `choices` at all, so [parseCompletion] falls through to its empty-map
+  /// default and reads the failure as content `''` with no tool calls, and the
+  /// error text is dropped: a rate limit becomes indistinguishable from a
+  /// model that had nothing to say, which is how the research loop came to
+  /// report a dead provider as a converged, blank answer (audit finding #12).
+  /// Callers MUST check this before handing a decoded payload to
+  /// [parseCompletion].
+  ///
+  /// What counts as a failure is deliberately narrow, because a false positive
+  /// kills a working stream:
+  ///
+  ///   * `"error": null` is NOT a failure — OpenAI-compatible providers put
+  ///     that key on ordinary chunks. Neither is `"error": {}` nor an empty
+  ///     string, for the same reason.
+  ///   * A NON-EMPTY error object with no readable message IS a failure. The
+  ///     presence of the key is the signal; returning null because the wording
+  ///     was unfamiliar would reopen the hole this closes.
+  ///
+  /// `code` is null unless the provider sent a numeric one (OpenRouter also
+  /// uses string codes like `insufficient_quota`), so callers must be able to
+  /// report the failure without an HTTP status to format it against.
+  static ({int? code, String message})? errorFrom(Map<String, dynamic> json) {
+    final raw = json['error'];
+    if (raw is String) {
+      final text = raw.trim();
+      return text.isEmpty ? null : (code: null, message: text);
+    }
+    if (raw is! Map || raw.isEmpty) return null;
+    final error = Map<String, dynamic>.from(raw);
+    final metadata = error['metadata'] is Map
+        ? Map<String, dynamic>.from(error['metadata'] as Map)
+        : const <String, dynamic>{};
+    // `message` is the documented field; `metadata.raw` carries the upstream
+    // provider's own body when OpenRouter is only relaying it, and `type` is
+    // all some providers send.
+    var message = '';
+    for (final candidate in [error['message'], metadata['raw'], error['type']]) {
+      final text = candidate?.toString().trim() ?? '';
+      if (text.isNotEmpty) {
+        message = text;
+        break;
+      }
+    }
+    if (message.isEmpty) message = 'The provider reported an error.';
+    final provider = metadata['provider_name']?.toString().trim() ?? '';
+    if (provider.isNotEmpty) message = '$message ($provider)';
+    return (code: _asInt(error['code']), message: message);
+  }
+
   /// Raw `tool_calls` from a completion / SSE chunk, including nameless
   /// argument fragments that `_parseToolCalls` would drop, plus whether they
   /// came from the non-delta `message` payload.
@@ -255,6 +311,9 @@ class OpenRouterCodec {
   static List<dynamic>? toolCallDeltas(Map<String, dynamic> json) =>
       toolCallPayload(json)?.calls;
 
+  /// Reads a payload that is assumed to BE a completion: it looks only at
+  /// `choices`, so callers must reject [errorFrom] first or a failure report
+  /// is parsed as an empty assistant turn (audit finding #12).
   static OllamaMessage parseCompletion(Map<String, dynamic> json) {
     final choices = json['choices'];
     final choice = choices is List && choices.isNotEmpty && choices.first is Map

@@ -18,7 +18,11 @@ class _Db extends DatabaseService {
   final ready = Completer<void>();
   final OllamaChat chat;
 
-  _Db({bool incognito = false}) : chat = OllamaChat(id: 'test', model: 'openai/test', isIncognito: incognito);
+  /// The turns already in the chat when the prompt under test is sent.
+  final List<OllamaMessage> priorMessages;
+
+  _Db({bool incognito = false, this.priorMessages = const []})
+      : chat = OllamaChat(id: 'test', model: 'openai/test', isIncognito: incognito);
 
   @override
   Future<void> open(String databaseFile) async {}
@@ -29,7 +33,7 @@ class _Db extends DatabaseService {
   }
 
   @override
-  Future<List<OllamaMessage>> getMessages(String chatId) async => [];
+  Future<List<OllamaMessage>> getMessages(String chatId) async => List.of(priorMessages);
   @override
   Future<void> addMessage(OllamaMessage message, {required OllamaChat chat}) async {}
   @override
@@ -74,6 +78,13 @@ class _Ollama extends OllamaService {
   String? receivedContext;
   String? receivedSystemPrompt;
 
+  /// What the goal request was given: its messages, and the memory the
+  /// chatStream call itself carried (none — the goal call renders memory
+  /// into its user turn instead).
+  List<OllamaMessage>? goalMessages;
+  String? goalRelevantContext;
+  ConversationMemory? goalConversationMemory;
+
   @override
   Future<ModelCapabilities?> getCapabilities(String model) async => const ModelCapabilities(tools: true);
 
@@ -89,6 +100,9 @@ class _Ollama extends OllamaService {
   }) async* {
     if (tools == null) {
       goalStarted = true;
+      goalMessages = messages;
+      goalRelevantContext = relevantContext;
+      goalConversationMemory = conversationMemory;
       yield OllamaMessage(await goal.future, role: OllamaMessageRole.assistant);
     } else {
       turnStarted = true;
@@ -115,7 +129,12 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  test('goal and memory prepare concurrently before the first research turn', () async {
+  test('the goal call reads the memory the first turn will use, and waits for '
+      'the retrieval pass rather than duplicating it', () async {
+    // The goal call used to start blind, in parallel with memory. It now
+    // waits (briefly — see goalContextBudget) for the same two memory
+    // stages the first turn awaits, so a clarification is only asked when
+    // nothing already known settles it. Retrieval runs once, for both.
     final db = _Db();
     final memory = _Memory(db);
     final ollama = _Ollama();
@@ -129,19 +148,103 @@ void main() {
     final prompt = provider.displayUserMessage('What is new?');
     final run = provider.sendPrompt(prompt, searchAttemptsRemaining: 1);
     await _flush();
-    final goalStartedBeforeMemory = ollama.goalStarted;
+    expect(ollama.goalStarted, isFalse,
+        reason: 'the goal call waits for the stored memory to be read');
     memory.conversation.complete(ConversationMemory(summary: 'Summary'));
     await _flush();
-    final selectionStartedBeforeGoal = memory.selectionStarted;
+    expect(memory.selectionStarted, isTrue);
+    expect(ollama.goalStarted, isFalse,
+        reason: 'and for the retrieval pass, while it is quick');
     memory.selection.complete('Relevant memory');
+    await _flush();
+    expect(ollama.goalStarted, isTrue);
     ollama.goal.complete('GOAL: Find what is new');
     await run;
 
-    expect(goalStartedBeforeMemory, isTrue, reason: 'The isolated goal request does not depend on memory reads.');
-    expect(selectionStartedBeforeGoal, isTrue, reason: 'Memory selection must overlap the goal model request.');
     expect(memory.selectedSummary, 'Summary');
+    expect(memory.profileReads, 1, reason: 'the profile is read once for both');
     expect(ollama.turnStarted, isTrue);
     expect(ollama.receivedContext, 'Relevant memory');
+    // The goal call carries memory in its own user turn, not through the
+    // answering turn's injection.
+    expect(ollama.goalRelevantContext, isEmpty);
+    expect(ollama.goalConversationMemory, isNull);
+    final goalTurn = ollama.goalMessages!.single.content;
+    expect(goalTurn, contains('Relevant memory'));
+    expect(goalTurn, contains('Sam'));
+    expect(goalTurn, endsWith('What is new?'));
+  });
+
+  test('a slow retrieval pass costs the goal call its notes, not its start', () async {
+    final defaultBudget = ChatProvider.goalContextBudget;
+    ChatProvider.goalContextBudget = const Duration(milliseconds: 20);
+    addTearDown(() {
+      ChatProvider.goalContextBudget = defaultBudget;
+    });
+    final db = _Db();
+    final memory = _Memory(db);
+    final ollama = _Ollama();
+    final provider = ChatProvider(ollamaService: ollama, databaseService: db, memoryService: memory);
+    addTearDown(provider.dispose);
+    addTearDown(memory.dispose);
+    await db.ready.future;
+    await _flush();
+    provider.destinationChatSelected(1);
+    await _flush();
+    final run = provider.sendPrompt(provider.displayUserMessage('What is new?'), searchAttemptsRemaining: 1);
+    await _flush();
+    memory.conversation.complete(ConversationMemory(summary: 'Summary'));
+    // memory.selection is left hanging past the budget.
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(ollama.goalStarted, isTrue,
+        reason: 'the goal call goes ahead with what has arrived');
+    expect(ollama.goalMessages!.single.content, contains('Sam'),
+        reason: 'the stored stage did arrive');
+    expect(ollama.goalMessages!.single.content, isNot(contains('Relevant memory')));
+    expect(ollama.turnStarted, isFalse,
+        reason: 'the first turn still waits for the full retrieval');
+
+    memory.selection.complete('Relevant memory');
+    ollama.goal.complete('GOAL: Find what is new');
+    await run;
+    expect(ollama.receivedContext, 'Relevant memory');
+  });
+
+  test('the goal call sees the earlier turns, and the message it is briefing last',
+      () async {
+    // The bug this guards: a follow-up like "and its moons?" reached the
+    // derivation with no referent, and "which Mercury?" was asked of a
+    // user who had just spent a turn on the planet.
+    final db = _Db(priorMessages: [
+      OllamaMessage('Tell me about Mercury, the planet', role: OllamaMessageRole.user),
+      OllamaMessage('Mercury is the innermost planet…', role: OllamaMessageRole.assistant),
+    ]);
+    final memory = _Memory(db);
+    final ollama = _Ollama();
+    final provider = ChatProvider(ollamaService: ollama, databaseService: db, memoryService: memory);
+    addTearDown(provider.dispose);
+    addTearDown(memory.dispose);
+    await db.ready.future;
+    await _flush();
+    provider.destinationChatSelected(1);
+    await _flush();
+    final run = provider.sendPrompt(provider.displayUserMessage('and its moons?'), searchAttemptsRemaining: 1);
+    await _flush();
+    memory.conversation.complete(null);
+    memory.selection.complete('');
+    await _flush();
+
+    final goalTurn = ollama.goalMessages!.single.content;
+    expect(goalTurn, contains('Earlier turns of this conversation:'));
+    expect(goalTurn, contains('User: Tell me about Mercury, the planet'));
+    expect(goalTurn, contains('Assistant: Mercury is the innermost planet…'));
+    expect(goalTurn, endsWith('and its moons?'));
+    expect(goalTurn.indexOf('the planet'), lessThan(goalTurn.indexOf('and its moons?')));
+
+    ollama.goal.complete('GOAL: Find the moons of the planet Mercury');
+    await run;
+    expect(ollama.receivedSystemPrompt, contains('Goal: Find the moons of the planet Mercury'));
   });
 
   test('the research panel has a bubble to render into while the goal call '
@@ -162,14 +265,15 @@ void main() {
     await _flush();
     final run = provider.sendPrompt(provider.displayUserMessage('What is new?'), searchAttemptsRemaining: 1);
     await _flush();
+    memory.conversation.complete(ConversationMemory(summary: 'Summary'));
+    memory.selection.complete('Relevant memory');
+    await _flush();
 
     expect(ollama.goalStarted, isTrue);
     expect(ollama.turnStarted, isFalse, reason: 'the derivation has not returned yet');
     expect(provider.messages.map((m) => m.role),
         [OllamaMessageRole.user, OllamaMessageRole.assistant]);
 
-    memory.conversation.complete(ConversationMemory(summary: 'Summary'));
-    memory.selection.complete('Relevant memory');
     ollama.goal.complete('GOAL: Find what is new');
     await run;
   });

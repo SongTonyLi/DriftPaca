@@ -108,25 +108,120 @@ void main() {
     });
 
     test('a Title Case or shouted question yields no name instances', () {
-      // Adjacent capitalised words merge into one run, so a message
-      // capitalised throughout is a single run end to end and names
-      // nothing. Without that rule every word of it would read as an
-      // instance the user asked for, and one question would explode into a
-      // sub-goal per query.
+      // Capitalisation only means something by CONTRAST, so a message
+      // capitalised throughout names nothing. Without that rule every word
+      // of it would read as an instance the user asked for, and one
+      // question would explode into a sub-goal per query.
+      //
+      // The last three spellings are the ones that matter. Merging
+      // adjacent capitals was supposed to carry this on its own, but a
+      // run also ends at every punctuation mark, so ONE comma or dash was
+      // enough to turn a shouted question into two "names" made of
+      // function words — after which the plain re-ask "the current
+      // population of Tokyo" (0.862 against the sub-goal it belongs to)
+      // split off a sub-goal of its own on the word "the".
       for (final shouted in [
         'What Is The Current Population Of Tokyo And Delhi?',
         'WHAT IS THE CURRENT POPULATION OF TOKYO AND DELHI?',
+        'WHAT IS THE CURRENT POPULATION OF TOKYO, DELHI?',
+        'What Is The Current Population Of Tokyo, Delhi?',
+        'PLEASE RESEARCH THE CURRENT POPULATION OF TOKYO - THANKS',
       ]) {
         final ledger =
             ResearchLedger(objective: shouted, userQuestion: shouted);
-        ledger.upsert('current population of Tokyo');
+        final tokyo = ledger.upsert('current population of Tokyo');
         ledger.upsert('current population of Delhi');
 
         expect(ledger.subGoals, hasLength(1),
             reason: '"$shouted" capitalises everything, so capitalisation '
                 'says nothing about which words name things — the harness '
                 'must fall back to grouping rather than split on all of them');
+        expect(ledger.findMatch('the current population of Tokyo'),
+            same(tokyo),
+            reason: 'and a bare rewording of one query must not open a '
+                'sub-goal of its own on a function word');
       }
+    });
+
+    test('a number or a hyphen inside one name does not split it in two', () {
+      // Each question below names exactly ONE thing, so nothing in it may
+      // split anything. A run used to end at a digit and at every
+      // punctuation mark, which cut these single names in half — and two
+      // halves of one name look exactly like two names, which is all it
+      // takes to switch the whole mechanism on. The queries are the shape
+      // a model actually produces: broaden first, then narrow.
+      const cases = <List<String>>[
+        [
+          'What happened to the Boeing 737 MAX, in detail?',
+          'Boeing 737 crash investigation',
+          'Boeing 737 MAX crash investigation',
+        ],
+        [
+          'How does the CRISPR-Cas9 mechanism work?',
+          'CRISPR-Cas9 mechanism',
+          'CRISPR-Cas9 mechanism explained',
+        ],
+        [
+          'Explain the Mercedes-Benz EQS range',
+          'Mercedes-Benz EQS range',
+          'Mercedes EQS range test',
+        ],
+      ];
+      for (final c in cases) {
+        final ledger = ResearchLedger(objective: c[0], userQuestion: c[0]);
+        final goal = ledger.upsert(c[1]);
+
+        expect(ledger.findMatch(c[2]), same(goal),
+            reason: '"${c[0]}" names one thing, so "${c[2]}" is a rewording '
+                'of "${c[1]}" and must share its search budget');
+      }
+    });
+
+    test('an ordinary word inside a multi-word name is not an instance', () {
+      // A name is matched as a whole phrase. Flattened to its own tokens,
+      // "New York" made "new" an instance in its own right — and "new
+      // estimate"/"new data" is the canonical rewording a thrashing model
+      // reaches for, so the guard against thrash was funding it.
+      const two = 'Compare Tokyo and New York populations';
+      final ledger = ResearchLedger(objective: two, userQuestion: two);
+      final tokyo = ledger.upsert('Tokyo population');
+
+      expect(ledger.findMatch('Tokyo population new estimate'), same(tokyo),
+          reason: '"new" here is the ordinary adjective, not the user naming '
+              'New York, and the re-ask must stay on Tokyo\'s sub-goal');
+      expect(ledger.findMatch('New York population'), isNull,
+          reason: 'but the whole name still splits — that is the half of '
+              'this the user actually asked for');
+
+      // The other everyday shape: a title that opens with "The".
+      const titles = 'Which is bigger, The Great Gatsby or Moby Dick?';
+      final books = ResearchLedger(objective: titles, userQuestion: titles);
+      final moby = books.upsert('Moby Dick reviews');
+
+      expect(books.findMatch('reviews of the Moby Dick novel'), same(moby),
+          reason: 'the definite article inside a title is not an instance '
+              'the user named, so a query using the word generically groups');
+    });
+
+    test('a name only the clarification card offered never splits', () {
+      // The model's own clarification question is not the user's question
+      // (see ResearchLedger.clarificationPicks). A city it OFFERED and the
+      // user did not tick is the model's word, so a query wandering to it
+      // is thrash to be grouped, not a fifth instance to be funded — which
+      // is exactly what _isDifferentRequestedInstance's doc comment
+      // promises, on the channel most able to break it.
+      const typed = 'What is the population?';
+      final ledger = ResearchLedger(
+        objective: 'population of the city the user meant',
+        userQuestion: typed,
+        clarificationPicks: const ['Tokyo'],
+      );
+      final goal = ledger.upsert('population of Tokyo');
+
+      expect(ledger.findMatch('population of Osaka'), same(goal),
+          reason: 'Osaka appeared only in the model\'s question "Which city '
+              'do you mean — Tokyo or Osaka?", and a single ticked option '
+              'is one name, not a list — so nothing here splits at all');
     });
 
     test('the first word of a sentence is never an instance', () {
@@ -161,7 +256,7 @@ void main() {
       final ledger = ResearchLedger(objective: chinese, userQuestion: chinese);
       final goal = ledger.upsert('东京目前的人口是多少');
 
-      expect(properNounTokens(chinese), isEmpty);
+      expect(properNounNames(chinese), isEmpty);
       expect(ledger.findMatch('东京目前的人口是多少人'), same(goal),
           reason: 'a genuine near-duplicate in an uncased script must still '
               'group, or every re-ask would open a sub-goal of its own');

@@ -266,15 +266,33 @@ class ResearchLedger {
   /// no digits in it at all, so the digit-only version of the override had
   /// nothing to split on and a question about four cities came back about
   /// one.
+  ///
+  /// The split assumes ONE instance per query, and is one-directional by
+  /// design, so it does not rescue a run whose FIRST query names several
+  /// instances at once: a sub-goal opened as "population of Tokyo Delhi
+  /// Shanghai Sao Paulo" names all four, and each per-city follow-up names
+  /// a subset of what it already has (a broadening re-ask, by the rule
+  /// below) and groups straight back onto it — four searches against one
+  /// per-sub-goal budget, exactly as before. The one-query-per-instance
+  /// shape is the one models actually emit; the alternative — splitting
+  /// when a query names FEWER instances than the sub-goal — would treat
+  /// every narrowing refinement as a new question and re-open the thrash.
   SubGoal? findMatch(String query) {
     final normalized = _normalize(query);
     for (final goal in subGoals) {
       if (goal.normalizedQuery == normalized) return goal;
     }
+    // Hoisted out of the loop below: [query]'s own instances are the same
+    // whichever sub-goal it is being compared against, and findMatch runs
+    // once per planned query per round against every sub-goal opened so
+    // far. Empty for the overwhelming majority of runs, which also spares
+    // the loop from tokenizing any sub-goal's query at all.
+    final asked =
+        _requestedInstances.isEmpty ? const <String>{} : _instancesIn(query);
     SubGoal? best;
     var bestScore = 0.0;
     for (final goal in subGoals) {
-      if (_isDifferentRequestedInstance(query, goal)) continue;
+      if (_isDifferentRequestedInstance(asked, goal)) continue;
       final score = trigramJaccard(query, goal.query);
       if (score >= _groupingThreshold && score > bestScore) {
         best = goal;
@@ -284,12 +302,33 @@ class ResearchLedger {
     return best;
   }
 
+  /// The things the user NAMED, each as a whole phrase — "são paulo" is
+  /// one name, not the two instances são and paulo. Read from what they
+  /// typed ([userQuestion]) and from what they ticked
+  /// ([clarificationPicks]), and counted separately per source, so a
+  /// single-subject question ("What is Vietnam GDP?") plus a single-choice
+  /// card ("Nominal") stays at one name apiece and splits nothing.
+  ///
+  /// Kept as phrases because the alternative — the tokens of every name,
+  /// unioned — made any ordinary word that happened to sit inside a name
+  /// an instance in its own right. Measured: "Compare Tokyo and New York
+  /// populations" made "new" an instance, so the canonical thrash
+  /// rewording "Tokyo population new estimate" stopped grouping onto the
+  /// Tokyo sub-goal and bought itself a fresh search budget.
+  ///
+  /// See [properNounNames] for how a name is recognised and for the
+  /// deliberate bias towards reading none.
+  late final Set<String> _requestedNames = {
+    ...properNounNames(userQuestion),
+    ...properNounNamesInChoices(clarificationPicks),
+  };
+
   /// The instances the user picked out — the digit-runs they typed (years,
   /// versions, quarters) plus, when they named two or more of them, the
-  /// capitalised words naming the things they asked about; read from what
-  /// they typed ([userQuestion]) and from what they ticked
+  /// names of the things they asked about ([_requestedNames]); read from
+  /// what they typed ([userQuestion]) and from what they ticked
   /// ([clarificationPicks]), and from nothing else. Computed once: both
-  /// sources are final, and [properNounTokens] is the more expensive of
+  /// sources are final, and [properNounNames] is the more expensive of
   /// the two while [findMatch] runs per planned query per round.
   ///
   /// Deliberately NOT taken from [objective], which may be a model-derived
@@ -313,36 +352,34 @@ class ResearchLedger {
   /// Names count only when the user listed at least TWO of them: a lone
   /// capitalised phrase is the question's subject rather than one instance
   /// of several, and reading it as an instance would re-open the thrash
-  /// this guard exists to close. Typed names and ticked names are counted
-  /// separately, so a single-subject question ("What is Vietnam GDP?")
-  /// plus a single-choice card ("Nominal") stays at one name apiece and
-  /// splits nothing. See [properNounTokens] and
-  /// [properNounTokensInChoices] for the full rule and its deliberate bias
-  /// towards grouping.
+  /// this guard exists to close.
   late final Set<String> _requestedInstances = {
     ...numericTokens(userQuestion),
-    ...properNounTokens(userQuestion),
     for (final pick in clarificationPicks) ...numericTokens(pick),
-    ...properNounTokensInChoices(clarificationPicks),
+    ..._requestedNames,
   };
 
   /// Which of the user's [_requestedInstances] [text] actually names.
   ///
-  /// Reads both token sources on purpose, so the digit behaviour is
+  /// Reads all three sources on purpose, so the digit behaviour is
   /// bit-identical to what it was before names joined the set:
   /// [numericTokens] finds "1" inside "Q1" where [wordTokens] yields "q1",
   /// and a question naming quarters puts both forms in the instance set.
-  /// Both sides of the comparison in [_isDifferentRequestedInstance] run
-  /// through here, so they are filtered the same way.
+  /// A name, by contrast, is matched whole by [namesIn] — a query has to
+  /// carry every word of it, in order, to be naming it at all. Both sides
+  /// of the comparison in [_isDifferentRequestedInstance] run through
+  /// here, so they are filtered the same way.
   Set<String> _instancesIn(String text) => {
         for (final t in numericTokens(text))
           if (_requestedInstances.contains(t)) t,
         for (final t in wordTokens(text))
           if (_requestedInstances.contains(t)) t,
+        ...namesIn(text, _requestedNames),
       };
 
-  /// Whether [query] pins a different one of the user's requested
-  /// instances than [goal] does.
+  /// Whether a query pinning [asked] — the requested instances it names,
+  /// as [findMatch] computed them once for the whole loop — pins a
+  /// different one of the user's instances than [goal] does.
   ///
   /// Gated on the user's own question on purpose, and this is the whole
   /// safety argument. A model that invents its own year variations is
@@ -358,6 +395,9 @@ class ResearchLedger {
   /// answers "the population of Tokyo, Delhi, Shanghai and Sao Paulo" by
   /// wandering off to Osaka still groups, because Osaka is not one of the
   /// names the user listed and so is not in [_requestedInstances] at all.
+  /// That holds through the clarification card as well — a city the model
+  /// merely OFFERED and the user did not tick is the model's word, not
+  /// theirs, and reaches nothing here (see [clarificationPicks]).
   ///
   /// What changes is only the case where the user themselves named the
   /// instances ("US inflation in 2021, 2022, 2023 and 2024", "the
@@ -367,10 +407,10 @@ class ResearchLedger {
   ///
   /// Deliberately one-directional: a query that DROPS an instance the goal
   /// has is a broadening re-ask, not a new instance, and still groups.
-  bool _isDifferentRequestedInstance(String query, SubGoal goal) {
-    if (_requestedInstances.isEmpty) return false;
+  bool _isDifferentRequestedInstance(Set<String> asked, SubGoal goal) {
+    if (asked.isEmpty) return false;
     final theirs = _instancesIn(goal.query);
-    for (final n in _instancesIn(query)) {
+    for (final n in asked) {
       if (!theirs.contains(n)) return true;
     }
     return false;

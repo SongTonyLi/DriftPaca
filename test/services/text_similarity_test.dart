@@ -125,7 +125,7 @@ void main() {
     });
   });
 
-  group('properNounTokens', () {
+  group('properNounNames', () {
     // The user side of ResearchLedger's instance check. It answers one
     // question — "which things did the user NAME?" — and it has to answer
     // it conservatively, because a wrong "yes" splits one question into a
@@ -133,15 +133,13 @@ void main() {
     // budget and a round that looks like it broadened coverage.
     test('reads the names out of a question that lists several', () {
       expect(
-        properNounTokens('What is the current population of Tokyo, Delhi, '
+        properNounNames('What is the current population of Tokyo, Delhi, '
             'Shanghai and São Paulo? Give the figure for each.'),
-        {'tokyo', 'delhi', 'shanghai', 'são', 'paulo'},
-        reason: 'four names the user typed; a multi-word name contributes '
-            'each of its own tokens, because the query side matches token '
-            'by token and a model may write only half of one',
+        {'tokyo', 'delhi', 'shanghai', 'são paulo'},
+        reason: 'four names the user typed, and the two-word one is ONE '
+            'name rather than the two instances são and paulo',
       );
-      expect(properNounTokens('Compare NASA and ESA budgets.'),
-          {'nasa', 'esa'},
+      expect(properNounNames('Compare NASA and ESA budgets.'), {'nasa', 'esa'},
           reason: 'the sentence-initial verb names nothing, and the '
               'lowercase noun after ESA ends its run');
     });
@@ -160,24 +158,52 @@ void main() {
         'What is the outlook for Brazilian inflation?',
         'How many people live in the Tokyo metropolitan area as of 2025?',
       ]) {
-        expect(properNounTokens(single), isEmpty,
+        expect(properNounNames(single), isEmpty,
             reason: '"$single" names one thing, so capitalisation carries no '
                 'instance signal and every re-ask of it must still group');
       }
     });
 
+    test('a number or a hyphen inside a name does not make it two names', () {
+      // Measured over-splits of the previous shape of this function, where
+      // a digit-run ended a run and a hyphen ended a segment. Each of
+      // these questions names exactly ONE thing, so each must yield
+      // nothing at all: with the name broken in half, its two halves read
+      // as two names, that alone switched the whole instance split on, and
+      // a model broadening and then narrowing the SAME question opened a
+      // second sub-goal with a second search budget.
+      for (final one in [
+        'What happened to the Boeing 737 MAX, in detail?',
+        "What is Coca-Cola's revenue?",
+        'How does the CRISPR-Cas9 mechanism work?',
+        'Explain the Mercedes-Benz EQS range',
+        'When does the Windows 11 Pro support window close?',
+      ]) {
+        expect(properNounNames(one), isEmpty,
+            reason: '"$one" names one thing; the number or hyphen inside '
+                'that name is part of it, not the end of it');
+      }
+    });
+
     test('reads nothing out of a Title Case or shouted question', () {
-      // Run-merging is what collapses these to a single run. Without it, a
-      // user who types in title case or in caps would have every word of
-      // their question treated as an instance they named.
-      expect(
-          properNounTokens(
-              'What Is The Current Population Of Tokyo And Delhi?'),
-          isEmpty);
-      expect(
-          properNounTokens(
-              'WHAT IS THE CURRENT POPULATION OF TOKYO AND DELHI?'),
-          isEmpty);
+      // Capitalisation only means something by CONTRAST. Where every word
+      // is capitalised the user drew no distinction at all, so nothing in
+      // the sentence is evidence of a name.
+      //
+      // Punctuation is the load-bearing half of this test. Run-merging
+      // alone was supposed to collapse a shouted message to one run, but
+      // ANY punctuation ends a run, so a single comma or dash split these
+      // into two-plus runs of function words and handed every word of the
+      // question the standing of a name the user had listed.
+      for (final shouted in [
+        'What Is The Current Population Of Tokyo And Delhi?',
+        'WHAT IS THE CURRENT POPULATION OF TOKYO AND DELHI?',
+        'WHAT IS THE POPULATION OF TOKYO, DELHI, AND SHANGHAI?',
+        'What Is The Current Population Of Tokyo, Delhi And Shanghai?',
+        'PLEASE RESEARCH THE POPULATION OF TOKYO - I NEED IT TODAY',
+      ]) {
+        expect(properNounNames(shouted), isEmpty, reason: shouted);
+      }
     });
 
     test('reads nothing out of an uncased script', () {
@@ -191,84 +217,124 @@ void main() {
         'ما هو عدد سكان فيتنام وفرنسا',
         'ประชากรของโตเกียวและเดลี',
       ]) {
-        expect(properNounTokens(uncased), isEmpty, reason: uncased);
+        expect(properNounNames(uncased), isEmpty, reason: uncased);
       }
     });
 
     test('is empty for text with nothing capitalised to read', () {
-      expect(properNounTokens(''), isEmpty);
-      expect(properNounTokens('irrelevant'), isEmpty);
-      expect(properNounTokens('what is the population of tokyo and delhi'),
+      expect(properNounNames(''), isEmpty);
+      expect(properNounNames('irrelevant'), isEmpty);
+      expect(properNounNames('what is the population of tokyo and delhi'),
           isEmpty,
           reason: 'an all-lowercase question names nothing this can see, so '
-              'it groups exactly as it did before');
+              'it groups exactly as it did before — the entity split closes '
+              'the four-entity truncation for users who capitalise, and the '
+              'accepted under-splits list says so');
     });
   });
 
-  group('properNounTokensInChoices', () {
+  group('properNounNamesInChoices', () {
     // The same question — "which things did the user NAME?" — asked of
     // clarification options they TICKED rather than of a question they
-    // typed. Both safety rules carry over; only the sentence-initial skip
-    // does not, because an option is a label rather than a sentence.
+    // typed. The merging, two-names and whole-phrase rules carry over;
+    // the two rules that read a text as a sentence do not, because an
+    // option is a label.
     test('reads the names out of the options the user ticked', () {
-      expect(properNounTokensInChoices(const ['Tokyo', 'Delhi']),
+      expect(properNounNamesInChoices(const ['Tokyo', 'Delhi']),
           {'tokyo', 'delhi'},
           reason: 'a one-word option is a name, not a sentence opener — '
               'dropping its first word the way a typed question\'s is '
               'dropped would leave two ticked cities naming nothing, and '
               'collapse them onto one sub-goal');
-      expect(properNounTokensInChoices(const ['São Paulo', 'Tokyo']),
-          {'são', 'paulo', 'tokyo'},
-          reason: 'adjacent capitalised words are still one name, and it '
-              'still contributes each of its own tokens');
-      expect(properNounTokensInChoices(const ['Tokyo, Delhi']),
+      expect(properNounNamesInChoices(const ['São Paulo', 'Tokyo']),
+          {'são paulo', 'tokyo'},
+          reason: 'adjacent capitalised words are still one name, and it is '
+              'still that whole name rather than its separate words');
+      expect(properNounNamesInChoices(const ['Tokyo, Delhi']),
           {'tokyo', 'delhi'},
           reason: 'and a segment boundary still ends a run, so one option '
               'naming two things is two names');
+      expect(properNounNamesInChoices(const ['NOMINAL', 'REAL']),
+          {'nominal', 'real'},
+          reason: 'a card of shouted labels shows no lowercase contrast '
+              'anywhere, and requiring it here would erase every option the '
+              'user ticked');
     });
 
     test('reads nothing out of a single ticked option', () {
       // The rule that keeps this from over-firing: one name is what the
       // run is ABOUT. Splitting on it would fragment one question into a
       // sub-goal per rewording, each with a fresh search budget.
-      expect(properNounTokensInChoices(const ['Tokyo']), isEmpty);
+      expect(properNounNamesInChoices(const ['Tokyo']), isEmpty);
       expect(
-          properNounTokensInChoices(
+          properNounNamesInChoices(
               const ['The Phoenix Mercury basketball team']),
           isEmpty,
           reason: 'a multi-word option is still one run, so ticking it alone '
               'names nothing');
-      expect(properNounTokensInChoices(const []), isEmpty);
+      expect(properNounNamesInChoices(const []), isEmpty);
     });
 
     test('digits are left to numericTokens', () {
-      expect(properNounTokensInChoices(const ['2023', '2024']), isEmpty,
+      expect(properNounNamesInChoices(const ['2023', '2024']), isEmpty,
           reason: 'nothing in a bare year is capitalised; the ledger reads '
               'those through numericTokens, which has no two-of-them rule');
-      expect(properNounTokensInChoices(const ['Q1 2025', 'Q4 2024']),
+      expect(properNounNamesInChoices(const ['Q1 2025', 'Q4 2024']),
           {'q1', 'q4'},
           reason: 'a quarter label carries both kinds at once, and reading '
               'the capitalised half here costs nothing: the digits already '
-              'split these two apart');
+              'split these two apart. The trailing year is dropped from the '
+              'name so a query writing only "Q1" still names it');
     });
 
-    test('an option opening with a capitalised article offers that word too',
-        () {
-      // The accepted residual of not skipping an option's first word,
-      // pinned so it is a known trade-off rather than a surprise. It takes
-      // TWO ticked options to reach the two-names bar at all, and the
-      // alternative loses every one-word option — which is what this
-      // function exists for.
+    test('a label opening with a capitalised article loses that word', () {
+      // An option's first word is dropped only when the word after it
+      // starts lowercase — the mark of a sentence-case phrase rather than
+      // a name. Kept, that "The" stood as a name in its own right, and
+      // every query using the word generically then named an instance its
+      // sub-goal did not: the same over-split that reading a multi-word
+      // name token by token used to cause.
       expect(
-          properNounTokensInChoices(
+          properNounNamesInChoices(
               const ['The planet Mercury', 'The Phoenix Mercury team']),
-          contains('the'),
-          reason: 'a ticked string is the user\'s own explicit choice, read '
-              'as they endorsed it — incidental words and all, exactly as a '
-              'picked option\'s incidental digits are kept');
+          {'mercury', 'the phoenix mercury'},
+          reason: '"The planet Mercury" is sentence-case around a name, so '
+              'it names Mercury; "The Phoenix Mercury team" opens with a '
+              'capitalised word and keeps it, because that is where the '
+              'team\'s name starts');
     });
   });
 
+  group('namesIn', () {
+    test('matches a name only when the whole phrase is there, in order', () {
+      const names = {'são paulo', 'tokyo'};
+      expect(namesIn('current population of São Paulo', names), {'são paulo'});
+      expect(namesIn('current population of Tokyo', names), {'tokyo'});
+      expect(namesIn('current population', names), isEmpty);
+      expect(namesIn('Paulo Coelho biography', names), isEmpty,
+          reason: 'half of a two-word name is not that name — matching it '
+              'token by token is what let an ordinary word inside a name '
+              'split queries that only used the word generically');
+      expect(namesIn('São Paulo and Tokyo compared', names),
+          {'são paulo', 'tokyo'});
+      expect(namesIn('anything at all', const <String>{}), isEmpty);
+    });
+
+    test('is case-blind and normalizes the query side identically', () {
+      expect(namesIn('SAO Paulo'.toLowerCase(), const {'sao paulo'}),
+          {'sao paulo'});
+      expect(namesIn('the new york subway', const {'new york'}), {'new york'},
+          reason: 'a model writes the name in whatever case it likes');
+      expect(namesIn("Coca-Cola's market share", const {'coca cola'}), isEmpty,
+          reason: 'an inflected name is an accepted miss: it names nothing '
+              'and the query simply groups, which is the fail-closed '
+              'direction');
+      expect(namesIn('Coca-Cola market share', const {'coca cola'}),
+          {'coca cola'},
+          reason: 'and the hyphen inside a name is not a word boundary on '
+              'either side of the comparison');
+    });
+  });
   group('wordTokens', () {
     test('normalizes the query side exactly as the user side is normalized', () {
       // Both sides of the instance comparison run through one tokenizer on

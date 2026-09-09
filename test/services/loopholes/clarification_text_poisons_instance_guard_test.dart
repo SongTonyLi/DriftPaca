@@ -22,7 +22,7 @@
 ///
 /// The channel these tests close was wider than digits:
 /// `_requestedInstances` also reads capitalised names (see
-/// `properNounTokens`), so the model's clarification question contributed
+/// `properNounNames`), so the model's clarification question contributed
 /// any name it happened to use on exactly the same terms. Both token kinds
 /// are pinned below, on both sides of the split — excluded from the
 /// question, kept for the picks.
@@ -88,7 +88,7 @@ void main() {
               'it concatenates the model\'s own question verbatim for the '
               'completeness gate. That is exactly why it is no longer what '
               'the ledger reads instances out of');
-      expect(properNounTokens(composed), containsAll(<String>['q4', 'q3']),
+      expect(properNounNames(composed), containsAll(<String>['q4', 'q3']),
           reason: 'and the same string offers the model\'s quarter labels as '
               'NAMES too, so narrowing the source to digits alone would not '
               'have closed this');

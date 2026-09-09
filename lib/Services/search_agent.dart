@@ -1454,16 +1454,16 @@ class SearchAgent {
     if (matched.outstandingGaps.isNotEmpty) return false;
     if (matched.normalizedQuery == _normalizeQuery(query)) return true;
     // Nothing here needs to know about years, versions, quarters or the
-    // names of the things asked about. A query naming a different instance
-    // never reaches this function, because ResearchLedger.findMatch
-    // refuses to call it the same sub-goal in the first place (see
-    // ResearchLedger._isDifferentRequestedInstance) — so
-    // `matched` is always the same instance as [query], and comparing
-    // their string shape means what it says again. Discriminating here
-    // instead would have let the search run while still filing its
-    // evidence under the first instance's sub-goal, which is where the
-    // per-sub-goal budget and the stall counter then truncated a
-    // four-part question to three.
+    // names of the things asked about. A query naming an instance
+    // `matched` does not have never reaches this function, because
+    // ResearchLedger.findMatch refuses to call it the same sub-goal in the
+    // first place (see ResearchLedger._isDifferentRequestedInstance) — so
+    // `matched` names a superset of [query]'s instances, i.e. [query] is
+    // at most a narrowing of it, and comparing their string shape means
+    // what it says again. Discriminating here instead would have let the
+    // search run while still filing its evidence under the first
+    // instance's sub-goal, which is where the per-sub-goal budget and the
+    // stall counter then truncated a four-part question to three.
     if (trigramJaccard(query, matched.query) >=
         _ledgerDupeSimilarityThreshold) {
       return true;

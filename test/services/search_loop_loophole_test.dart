@@ -29,7 +29,7 @@ void main() {
     // threshold separates them from a genuine rewording, as the first test
     // below pins. What separates them is that the USER named four things:
     // ResearchLedger._isDifferentRequestedInstance reads the instances out
-    // of the user's own question (properNounTokens alongside the
+    // of the user's own question (properNounNames alongside the
     // digit-runs it always read) and refuses to group a query naming one
     // of them onto a sub-goal that names another.
     const question =

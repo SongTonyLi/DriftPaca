@@ -21,7 +21,9 @@ class OllamaToolCall {
   }
 
   /// Parses OpenAI / Gemini tool arguments and lifts common query aliases
-  /// (`q`, `search_query`, a bare string) onto `query`.
+  /// (`q`, `search_query`, a bare string) onto `query`. JSON-shaped text
+  /// that does not decode yields NO arguments rather than a query — see the
+  /// catch block below.
   static Map<String, dynamic> parseArguments(dynamic raw) {
     if (raw is Map<String, dynamic>) return normalizeSearchArgs(raw);
     if (raw is Map) return normalizeSearchArgs(Map<String, dynamic>.from(raw));
@@ -36,7 +38,20 @@ class OllamaToolCall {
           return {'query': decoded.trim()};
         }
       } catch (_) {
-        return {'query': raw.trim()};
+        // A string that OPENS like JSON but does not decode is corrupt
+        // arguments — truncated mid-stream, or two parallel calls glued
+        // together by an assembler that could not tell them apart — not a
+        // bare query the model typed. Handing the literal text back as a
+        // query spends one of the run's search slots on nonsense and files
+        // that nonsense in the research ledger as a sub-goal that has now
+        // "been researched" (audit finding #11). Returning no arguments
+        // routes the call to SearchAgent._planSearches' emptyQuery branch
+        // instead, which answers the model with "No query provided;
+        // nothing was searched." and reports it through onSearchSkipped,
+        // so the loop, the transcript and the UI all see the failure.
+        final trimmed = raw.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) return {};
+        return {'query': trimmed};
       }
     }
     return {};

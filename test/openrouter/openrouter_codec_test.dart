@@ -340,5 +340,176 @@ void main() {
         'current weather Bellevue WA',
       );
     });
+
+    // The tests below pin the identity rules the assembler falls back on
+    // when a provider omits `index`. It used to have only one — append to
+    // the highest slot seen so far — which merged every parallel call onto
+    // slot 0 and concatenated their argument JSON into one junk query
+    // (audit finding #11).
+
+    test('index-less calls are separated by id', () {
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'id': 'call_a',
+          'function': {'name': 'web_search', 'arguments': '{"query":"one"}'},
+        },
+        {
+          'id': 'call_b',
+          'function': {'name': 'web_search', 'arguments': '{"query":"two"}'},
+        },
+      ]);
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['one', 'two'],
+        reason: 'an unseen id announces a NEW call, so two parallel calls '
+            'stay two calls even with no `index` to key them by',
+      );
+    });
+
+    test('fragments of one index-less call are joined by id', () {
+      const full = '{"query":"current weather Bellevue WA"}';
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'id': 'call_1',
+          'function': {'name': 'web_search', 'arguments': ''},
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'id': 'call_1',
+          'function': {'arguments': full.substring(0, 10)},
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'id': 'call_1',
+          'function': {'arguments': full.substring(10)},
+        },
+      ]);
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1),
+          reason: 'a repeated id is the SAME call, so its fragments rejoin '
+              'rather than opening a call per chunk');
+      expect(calls.single.arguments['query'], 'current weather Bellevue WA');
+    });
+
+    test('a nameless argument fragment continues the call being streamed',
+        () {
+      // Neither `index` nor `id` anywhere: the only defensible target for
+      // a nameless fragment is the call currently being streamed, which is
+      // the shape this class was written for.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'name': 'web_search',
+          'arguments': '{"query":"a',
+        },
+      ]);
+      assembler.addDeltas([
+        {'arguments': 'bc"}'},
+      ]);
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1));
+      expect(calls.single.arguments['query'], 'abc');
+    });
+
+    test('a named entry starts a new call once the previous one is finished',
+        () {
+      // Same absence of identity, but this entry names a function and the
+      // open call already decodes — it is an announcement, not a
+      // continuation, and merging the two would glue their arguments.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'name': 'web_search',
+          'arguments': '{"query":"a"}',
+        },
+      ]);
+      assembler.addDeltas([
+        {
+          'name': 'web_search',
+          'arguments': '{"query":"b"}',
+        },
+      ]);
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['a', 'b'],
+      );
+    });
+
+    test('a complete message payload replaces accumulated fragments', () {
+      // A `message.tool_calls` array is finished calls, not fragments — the
+      // shape a proxy that streams a whole message (or a growing snapshot
+      // of one) sends. Appending it to what the deltas already hold would
+      // concatenate each call's arguments with a copy of itself.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'id': 'call_1',
+          'function': {'name': 'web_search', 'arguments': '{"query":"Belle'},
+        },
+      ]);
+      assembler.addFromCompletionJson({
+        'choices': [
+          {
+            'message': {
+              'role': 'assistant',
+              'tool_calls': [
+                {
+                  'id': 'call_1',
+                  'function': {
+                    'name': 'web_search',
+                    'arguments': '{"query":"Bellevue WA weather"}',
+                  },
+                },
+              ],
+            },
+            'finish_reason': 'tool_calls',
+          },
+        ],
+      });
+
+      final calls = assembler.build();
+      expect(calls, hasLength(1));
+      expect(calls.single.arguments['query'], 'Bellevue WA weather',
+          reason: 'the finished call is authoritative; the half-streamed '
+              'fragment it supersedes is discarded, not prepended');
+    });
+
+    test('a message payload with an empty tool_calls array leaves fragments '
+        'alone', () {
+      // An empty array says nothing about calls the deltas are still
+      // building, so it must not clear them.
+      final assembler = OpenRouterToolCallAssembler();
+      assembler.addDeltas([
+        {
+          'index': 0,
+          'function': {
+            'name': 'web_search',
+            'arguments': '{"query":"Bellevue WA weather"}',
+          },
+        },
+      ]);
+      assembler.addFromCompletionJson({
+        'choices': [
+          {
+            'message': {'role': 'assistant', 'tool_calls': <dynamic>[]},
+            'finish_reason': 'stop',
+          },
+        ],
+      });
+
+      expect(
+        assembler.build().map((c) => c.arguments['query']),
+        ['Bellevue WA weather'],
+      );
+    });
   });
 }

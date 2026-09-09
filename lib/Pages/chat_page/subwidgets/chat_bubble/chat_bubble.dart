@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
@@ -327,8 +328,18 @@ class _AssistantBubble extends StatefulWidget {
 }
 
 class _AssistantBubbleState extends State<_AssistantBubble>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   bool _wasStreaming = false;
+
+  // ── Rejected-draft fade-out ──
+  // The completeness gate can reject a draft mid-run: the live message's
+  // content is cleared and the loop goes back to searching. Cutting the
+  // paragraph out between two frames reads as a rendering glitch, so the
+  // text it removed is held here and played out.
+  String? _fadingDraft;
+  AnimationController? _draftFade;
+  Animation<double>? _draftOpacity;
+  Animation<double>? _draftSize;
 
   // ── Typewriter reveal state ──
   String _targetContent = '';
@@ -424,6 +435,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     super.didChangeDependencies();
     _animationsDisabled = animationsDisabled(context);
     if (_animationsDisabled) {
+      _dropDraftFade();
       _settleReveal();
     } else if (widget.isStreaming) {
       _ensureRevealTicker();
@@ -451,6 +463,14 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       }
       _ensureRevealTicker();
     } else if (widget.isStreaming) {
+      // The draft the gate just threw away, if it did: the message object is
+      // mutated in place, so old.message.content is the same string as the
+      // new one — the state's own previous target is the only record of what
+      // was on screen a frame ago.
+      if (_targetContent.isNotEmpty && widget.message.content.isEmpty) {
+        _beginDraftFade(_targetContent.substring(
+            0, _surrogateSafeLength(_targetContent, _revealedLength)));
+      }
       _targetContent = widget.message.content;
       _targetThinking = nextThinking;
       // Clamp reveal progress if content was shortened (e.g., WEBSEARCH clear)
@@ -545,9 +565,63 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     return false;
   }
 
+  /// Holds [text] on screen and plays it out: 220 ms of fade over 300 ms of
+  /// collapse, both off one controller so the height finishes settling just
+  /// after the words have gone. Under reduced motion the draft is dropped on
+  /// the spot instead.
+  void _beginDraftFade(String text) {
+    if (text.isEmpty || _animationsDisabled) {
+      _dropDraftFade();
+      return;
+    }
+    const total = Duration(milliseconds: 300);
+    final controller = _draftFade ??= AnimationController(
+      vsync: this,
+      duration: total,
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted) {
+          setState(() => _fadingDraft = null);
+        }
+      });
+    _draftOpacity ??= Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: controller,
+        // 220 ms of the 300 ms timeline.
+        curve: const Interval(0.0, 220 / 300, curve: Curves.easeOut),
+      ),
+    );
+    _draftSize ??= Tween<double>(begin: 1.0, end: 0.0)
+        .animate(CurvedAnimation(parent: controller, curve: Curves.easeInOut));
+    _fadingDraft = text;
+    controller.forward(from: 0.0);
+  }
+
+  void _dropDraftFade() {
+    _fadingDraft = null;
+    _draftFade?.stop();
+  }
+
+  Widget _buildFadingDraft(BuildContext context) {
+    final draft = _fadingDraft;
+    final opacity = _draftOpacity;
+    final size = _draftSize;
+    if (draft == null || opacity == null || size == null) {
+      return const SizedBox.shrink();
+    }
+    return FadeTransition(
+      opacity: opacity,
+      child: SizeTransition(
+        sizeFactor: size,
+        axisAlignment: -1,
+        child: widget.buildMarkdown(context, draft),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _revealTicker?.dispose();
+    _draftFade?.dispose();
     super.dispose();
   }
 
@@ -689,6 +763,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
             const SizedBox(height: 4),
             widget.buildMarkdown(context, content),
           ],
+          if (_fadingDraft != null) _buildFadingDraft(context),
         ],
       );
     }
@@ -710,6 +785,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
             const SizedBox(height: 4),
             widget.buildMarkdown(context, parsed.responseContent),
           ],
+          if (_fadingDraft != null) _buildFadingDraft(context),
         ],
       );
     }
@@ -720,6 +796,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         _buildModelLabel(context),
         ...searchWidgets,
         if (content.isNotEmpty) widget.buildMarkdown(context, content),
+        if (_fadingDraft != null) _buildFadingDraft(context),
       ],
     );
   }
@@ -746,12 +823,49 @@ class _ResearchLedgerPanel extends StatefulWidget {
 class _ResearchLedgerPanelState extends State<_ResearchLedgerPanel> {
   bool _expanded = true;
 
+  /// Queries this panel has already shown as searched. A row is only worth
+  /// animating in the frame it *becomes* a finding; every later rebuild
+  /// (a sharper objective, another card landing, a collapse) would
+  /// otherwise replay the entrance of rows that have been sitting there
+  /// for rounds. Seeded in [initState] so a message decoded from history
+  /// renders its findings settled rather than animating the whole ledger
+  /// on scroll.
+  final Set<String> _seenSearched = <String>{};
+  bool _seenSyncScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rememberSearched();
+  }
+
+  void _rememberSearched() {
+    for (final entry in widget.segment.entries) {
+      if (entry.searched) _seenSearched.add(entry.query);
+    }
+  }
+
+  /// Folds this frame's findings into [_seenSearched] once it is on screen.
+  /// Deliberately not a `setState`: the set only changes what the *next*
+  /// build treats as new, and rebuilding here would cut the very entrance
+  /// this frame just started.
+  void _scheduleSeenSync() {
+    if (_seenSyncScheduled) return;
+    _seenSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _seenSyncScheduled = false;
+      if (!mounted) return;
+      _rememberSearched();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final segment = widget.segment;
     final searched = segment.entries.where((e) => e.searched).toList();
     final open = segment.entries.where((e) => !e.searched).toList();
+    _scheduleSeenSync();
 
     // A finished run that never opened a single sub-goal did no research at
     // all — the model answered straight from the chat. The panel exists to
@@ -816,23 +930,40 @@ class _ResearchLedgerPanelState extends State<_ResearchLedgerPanel> {
                 ),
               ),
             ),
-            AnimatedSize(
-              duration: motionDuration(context, const Duration(milliseconds: 200)),
-              curve: Curves.easeInOut,
-              alignment: Alignment.topLeft,
-              child: _expanded
-                  ? Padding(
-                      padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
-                      child: _LedgerBody(
-                        segment: segment,
-                        searched: searched,
-                        open: open,
-                      ),
-                    )
-                  : const SizedBox(width: double.infinity, height: 0),
-            ),
+            // Not wrapped in AnimatedSize under reduced motion: a
+            // zero-duration AnimatedSize whose child changes size (a
+            // sub-goal landing, the panel collapsing) re-dirties itself
+            // from inside its own performLayout, which is a framework
+            // assertion, and the widget has nothing left to do here anyway.
+            if (animationsDisabled(context))
+              _ledgerBody(segment, searched, open)
+            else
+              AnimatedSize(
+                duration:
+                    motionDuration(context, const Duration(milliseconds: 200)),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topLeft,
+                child: _ledgerBody(segment, searched, open),
+              ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _ledgerBody(
+    ResearchLedgerSegment segment,
+    List<LedgerEntryView> searched,
+    List<LedgerEntryView> open,
+  ) {
+    if (!_expanded) return const SizedBox(width: double.infinity, height: 0);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
+      child: _LedgerBody(
+        segment: segment,
+        searched: searched,
+        open: open,
+        seenSearched: _seenSearched,
       ),
     );
   }
@@ -843,59 +974,137 @@ class _LedgerBody extends StatelessWidget {
   final List<LedgerEntryView> searched;
   final List<LedgerEntryView> open;
 
+  /// Queries the panel has already shown as searched — see
+  /// `_ResearchLedgerPanelState._seenSearched`. Anything searched and NOT
+  /// in here became a finding on this very frame, and is worth an entrance.
+  final Set<String> seenSearched;
+
   const _LedgerBody({
     required this.segment,
     required this.searched,
     required this.open,
+    required this.seenSearched,
   });
+
+  /// The line under the checklist: why the run stopped, or what it is
+  /// about to do. Both live in one `AnimatedSwitcher` keyed by this
+  /// string, so "researching X" → "drafting the answer" → the termination
+  /// banner reads as one line changing its mind rather than three
+  /// different lines cutting over each other.
+  String _footerKey() {
+    if (segment.terminationReason != null) {
+      return 'termination:${segment.terminationReason}:'
+          '${searched.fold<int>(0, (sum, entry) => sum + entry.ranges.length)}';
+    }
+    return _nextStepText();
+  }
+
+  String _nextStepText() {
+    // Derivation is a silent model call that can take seconds; without
+    // this the panel claims it is about to draft an answer it has not
+    // even framed a goal for yet.
+    if (segment.isDeriving) return 'Framing the research goal…';
+    if (open.isEmpty) return 'Next — drafting the answer';
+    return 'Next — researching "${open.first.query}"';
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final disabled = animationsDisabled(context);
+
+    final objective = Text(
+      segment.objective,
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+        height: 1.4,
+      ),
+      // Three, not two: a derived goal is one line, but the fallback
+      // when derivation fails is the user's raw message, and clipping
+      // that mid-clause is how this line stopped reading as a goal.
+      maxLines: 3,
+      overflow: TextOverflow.ellipsis,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         if (segment.objective.isNotEmpty)
-          Text(
-            segment.objective,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.4,
+          AnimatedSwitcher(
+            duration: motionDuration(context, const Duration(milliseconds: 260)),
+            layoutBuilder: _leftAlignedSwitcherLayout,
+            // Keyed by the text: the provisional objective (the user's raw
+            // question) crosses over to the derived goal instead of being
+            // swapped out from under the reader mid-sentence.
+            child: KeyedSubtree(
+              key: ValueKey<String>(segment.objective),
+              child: segment.isDeriving && !disabled
+                  ? Shimmer.fromColors(
+                      baseColor: theme.colorScheme.onSurfaceVariant
+                          .withValues(alpha: 0.45),
+                      highlightColor:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.95),
+                      period: const Duration(milliseconds: 1400),
+                      child: objective,
+                    )
+                  : objective,
             ),
-            // Three, not two: a derived goal is one line, but the fallback
-            // when derivation fails is the user's raw message, and clipping
-            // that mid-clause is how this line stopped reading as a goal.
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
           ),
         if (searched.isNotEmpty) ...[
           const SizedBox(height: 8),
           _SectionLabel('Findings'),
           for (final entry in searched)
-            _LedgerEntryRow(entry: entry, searched: true),
+            _LedgerEntryRow(
+              entry: entry,
+              searched: true,
+              animateIn: !seenSearched.contains(entry.query),
+            ),
         ],
         if (open.isNotEmpty) ...[
           const SizedBox(height: 8),
           _SectionLabel('Still open'),
           for (final entry in open)
-            _LedgerEntryRow(entry: entry, searched: false),
+            _LedgerEntryRow(entry: entry, searched: false, animateIn: false),
         ],
         const SizedBox(height: 10),
-        if (segment.terminationReason != null)
-          _TerminationBanner(
-            reason: segment.terminationReason!,
-            // Searches, not sub-goals: one sub-goal can be searched more
-            // than once, and counting entries under-reported a run by
-            // exactly the searches this panel had already failed to show.
-            searchedCount: searched.fold<int>(
-                0, (sum, entry) => sum + entry.ranges.length),
-          )
-        else
-          _NextStepLine(nextOpen: open.isEmpty ? null : open.first.query),
+        AnimatedSwitcher(
+          duration: motionDuration(context, const Duration(milliseconds: 240)),
+          layoutBuilder: _leftAlignedSwitcherLayout,
+          child: KeyedSubtree(
+            key: ValueKey<String>(_footerKey()),
+            child: segment.terminationReason != null
+                ? _TerminationBanner(
+                    reason: segment.terminationReason!,
+                    // Searches, not sub-goals: one sub-goal can be searched
+                    // more than once, and counting entries under-reported a
+                    // run by exactly the searches this panel had already
+                    // failed to show.
+                    searchedCount: searched.fold<int>(
+                        0, (sum, entry) => sum + entry.ranges.length),
+                  )
+                : _NextStepLine(text: _nextStepText()),
+          ),
+        ),
       ],
     );
   }
+}
+
+/// `AnimatedSwitcher`'s default stacks its children centred, which shunts a
+/// cross-fading line to the middle of the panel for the length of the
+/// transition. These lines are left-aligned prose; keep them there.
+Widget _leftAlignedSwitcherLayout(
+  Widget? currentChild,
+  List<Widget> previousChildren,
+) {
+  return Stack(
+    alignment: Alignment.centerLeft,
+    children: <Widget>[
+      ...previousChildren,
+      if (currentChild != null) currentChild,
+    ],
+  );
 }
 
 /// What the run is about to do, shown while it is still going — the live
@@ -905,9 +1114,12 @@ class _LedgerBody extends StatelessWidget {
 /// so the first one is what it has asked for — not a guess about what the
 /// model will choose.
 class _NextStepLine extends StatelessWidget {
-  final String? nextOpen;
+  /// Already resolved by [_LedgerBody], which also keys the cross-fade on
+  /// it — the line and the key have to be the same string or a change
+  /// would swap the text without a transition.
+  final String text;
 
-  const _NextStepLine({required this.nextOpen});
+  const _NextStepLine({required this.text});
 
   @override
   Widget build(BuildContext context) {
@@ -921,9 +1133,7 @@ class _NextStepLine extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            nextOpen == null
-                ? 'Next — drafting the answer'
-                : 'Next — researching "$nextOpen"',
+            text,
             style: TextStyle(
               fontSize: 11.5,
               fontStyle: FontStyle.italic,
@@ -962,43 +1172,126 @@ class _SectionLabel extends StatelessWidget {
 
 /// One sub-goal row: a source-id chip (searched entries) or a plain bullet
 /// (still-open entries) plus the query text.
-class _LedgerEntryRow extends StatelessWidget {
+///
+/// Stateful for one reason: the moment a sub-goal turns into a finding is
+/// the only progress this panel ever shows, and it used to be a cut. The
+/// leading glyph transitions bullet → chip through an `AnimatedSwitcher`,
+/// and a row that has just crossed over ([animateIn]) fades in behind it —
+/// the row keeps its element across the move from "Still open" to
+/// "Findings", so the glyph switcher is the same one, not a fresh widget
+/// starting settled.
+class _LedgerEntryRow extends StatefulWidget {
   final LedgerEntryView entry;
   final bool searched;
 
-  const _LedgerEntryRow({required this.entry, required this.searched});
+  /// True only on the frame this row first appears as searched; the panel
+  /// State decides, so a rebuild for an unrelated reason (or a message
+  /// read back from history) never replays the entrance.
+  final bool animateIn;
+
+  const _LedgerEntryRow({
+    required this.entry,
+    required this.searched,
+    required this.animateIn,
+  });
+
+  @override
+  State<_LedgerEntryRow> createState() => _LedgerEntryRowState();
+}
+
+class _LedgerEntryRowState extends State<_LedgerEntryRow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _fade = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: widget.animateIn && widget.searched ? 0.0 : 1.0,
+  );
+  late final Animation<double> _opacity =
+      CurvedAnimation(parent: _fade, curve: Curves.easeOut);
+
+  @override
+  void initState() {
+    super.initState();
+    if (_fade.value == 0.0) _fade.forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _fade.duration = motionDuration(context, const Duration(milliseconds: 220));
+    if (animationsDisabled(context)) _fade.value = 1.0;
+  }
+
+  @override
+  void didUpdateWidget(_LedgerEntryRow old) {
+    super.didUpdateWidget(old);
+    // Only the crossing matters. Going the other way (the panel marking the
+    // row as already seen) must not restart or rewind an entrance that is
+    // mid-flight.
+    if (!(old.animateIn && old.searched) && widget.animateIn && widget.searched) {
+      if (animationsDisabled(context)) {
+        _fade.value = 1.0;
+      } else {
+        _fade.forward(from: 0.0);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _fade.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (searched && entry.ranges.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 1, right: 6),
-              child: _SourceIdChip(ranges: entry.ranges),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.only(top: 6, right: 8),
-              child: Icon(Icons.circle,
-                  size: 5,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
+    // The chip needs ids to show; a searched entry without any still reads
+    // as a bullet, so the switcher is keyed on what is actually drawn.
+    final showChip = widget.searched && widget.entry.ranges.isNotEmpty;
+    return FadeTransition(
+      opacity: _opacity,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AnimatedSwitcher(
+              duration:
+                  motionDuration(context, const Duration(milliseconds: 280)),
+              switchInCurve: Curves.easeOutBack,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) => ScaleTransition(
+                scale: animation,
+                child: FadeTransition(opacity: animation, child: child),
+              ),
+              child: showChip
+                  ? Padding(
+                      key: const ValueKey<bool>(true),
+                      padding: const EdgeInsets.only(top: 1, right: 6),
+                      child: _SourceIdChip(ranges: widget.entry.ranges),
+                    )
+                  : Padding(
+                      key: const ValueKey<bool>(false),
+                      padding: const EdgeInsets.only(top: 6, right: 8),
+                      child: Icon(Icons.circle,
+                          size: 5,
+                          color: colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.5)),
+                    ),
             ),
-          Expanded(
-            child: Text(
-              entry.query,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: colorScheme.onSurfaceVariant),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            Expanded(
+              child: Text(
+                widget.entry.query,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: colorScheme.onSurfaceVariant),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

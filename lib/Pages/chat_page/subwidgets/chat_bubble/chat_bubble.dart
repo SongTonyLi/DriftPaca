@@ -19,9 +19,12 @@ import 'package:llamaseek/Utils/motion.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
+import 'package:llamaseek/Utils/surrogate_safe_length.dart';
 
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
+import 'package:llamaseek/Widgets/research_activity_strip.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/clarification_card.dart';
 
@@ -37,17 +40,33 @@ class ChatBubble extends StatelessWidget {
   final bool animate;
   final List<MessageSegment> searchSegments;
 
+  /// What the research loop is doing right now, and since when. Set only on
+  /// the live bubble of a running agentic search — a cached bubble from
+  /// further up the conversation is not the run, so it is handed null and
+  /// shows no strip.
+  final ResearchPhase? researchPhase;
+  final DateTime? researchPhaseStartedAt;
+
   const ChatBubble({
     super.key,
     required this.message,
     this.isStreaming = false,
     this.animate = false,
     this.searchSegments = const [],
+    this.researchPhase,
+    this.researchPhaseStartedAt,
   });
 
   @override
   Widget build(BuildContext context) {
-    return _ChatBubbleBody(message: message, isStreaming: isStreaming, animate: animate, searchSegments: searchSegments);
+    return _ChatBubbleBody(
+      message: message,
+      isStreaming: isStreaming,
+      animate: animate,
+      searchSegments: searchSegments,
+      researchPhase: researchPhase,
+      researchPhaseStartedAt: researchPhaseStartedAt,
+    );
   }
 }
 
@@ -56,8 +75,17 @@ class _ChatBubbleBody extends StatelessWidget {
   final bool isStreaming;
   final bool animate;
   final List<MessageSegment> searchSegments;
+  final ResearchPhase? researchPhase;
+  final DateTime? researchPhaseStartedAt;
 
-  const _ChatBubbleBody({required this.message, required this.isStreaming, this.animate = false, this.searchSegments = const []});
+  const _ChatBubbleBody({
+    required this.message,
+    required this.isStreaming,
+    this.animate = false,
+    this.searchSegments = const [],
+    this.researchPhase,
+    this.researchPhaseStartedAt,
+  });
 
   static final md.ExtensionSet _markdownExtensionSet = md.ExtensionSet(
     [
@@ -130,6 +158,8 @@ class _ChatBubbleBody extends StatelessWidget {
               isStreaming: isStreaming,
               buildMarkdown: _buildMarkdown,
               searchSegments: searchSegments,
+              researchPhase: researchPhase,
+              researchPhaseStartedAt: researchPhaseStartedAt,
             ),
         ],
       ),
@@ -314,12 +344,16 @@ class _AssistantBubble extends StatefulWidget {
   final bool isStreaming;
   final Widget Function(BuildContext, String, {bool selectable}) buildMarkdown;
   final List<MessageSegment> searchSegments;
+  final ResearchPhase? researchPhase;
+  final DateTime? researchPhaseStartedAt;
 
   const _AssistantBubble({
     required this.message,
     required this.isStreaming,
     required this.buildMarkdown,
     this.searchSegments = const [],
+    this.researchPhase,
+    this.researchPhaseStartedAt,
   });
 
   @override
@@ -559,6 +593,20 @@ class _AssistantBubbleState extends State<_AssistantBubble>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildMessageContent(context),
+          // What the research loop is busy with, between the content and the
+          // llama: the llama says "still going", the strip says what for.
+          // `done` fires while the answer is still streaming out, and a pill
+          // reading "Done" over a live stream would contradict it.
+          if (widget.isStreaming &&
+              widget.researchPhase != null &&
+              widget.researchPhase != ResearchPhase.done)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: ResearchActivityStrip(
+                phase: widget.researchPhase!,
+                startedAt: widget.researchPhaseStartedAt,
+              ),
+            ),
           // Llama on its own line: running during streaming, resting after
           if (widget.isStreaming || _wasStreaming)
             Padding(
@@ -645,25 +693,11 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     return widgets;
   }
 
-  /// Rewinds a reveal cursor by one code unit when it lands between the two
-  /// halves of a UTF-16 surrogate pair, so [String.substring] never emits an
-  /// orphaned high surrogate (which renders as a tofu box for one frame).
-  int _surrogateSafeLength(String text, int length) {
-    if (length <= 0) return length;
-    final safe = length > text.length ? text.length : length;
-    final unit = text.codeUnitAt(safe - 1);
-    // A high surrogate (0xD800–0xDBFF) as the last included unit leaves its low
-    // half outside the cut — whether the low half exists further along (a
-    // mid-reveal boundary) or the target itself ends mid-pair (a stream chunk
-    // split across a code point). Cut before the high surrogate in both cases.
-    return (unit >= 0xD800 && unit <= 0xDBFF) ? safe - 1 : safe;
-  }
-
   Widget _buildMessageContent(BuildContext context) {
     final content = _isRevealing
         ? _ChatBubbleBody._hideIncompleteLinks(
             _targetContent.substring(
-                0, _surrogateSafeLength(_targetContent, _revealedLength)))
+                0, surrogateSafeLength(_targetContent, _revealedLength)))
         : widget.message.content;
 
     final segments = _getSearchSegments();
@@ -673,7 +707,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     if (displayThinking.isNotEmpty) {
       final thinkingContent = _isRevealing
           ? _targetThinking.substring(
-              0, _surrogateSafeLength(_targetThinking, _revealedThinkingLength))
+              0, surrogateSafeLength(_targetThinking, _revealedThinkingLength))
           : displayThinking;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Utils/motion.dart';
+import 'package:llamaseek/Widgets/token_reveal_text.dart';
 
 /// Parses message content into thinking and response parts.
 class ThinkBlockParser {
@@ -276,10 +277,16 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
                 // Plain Text — selection is provided by the SelectionArea in
                 // chat_list_view. SelectableText here would intercept vertical
                 // drags inside the chat list and block page scroll.
-                child: Text(
+                //
+                // Revealed a character at a time while the block is open, so
+                // reasoning arriving in bursty chunks reads as thinking rather
+                // than as a series of jumps. A block that is already complete
+                // (all of history) renders in full on its first frame.
+                child: TokenRevealText(
                   widget.content,
                   style:
                       TextStyle(color: color, fontSize: 13, height: 1.4),
+                  revealing: !widget.isComplete,
                 ),
               ),
             ),

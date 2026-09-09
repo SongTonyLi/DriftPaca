@@ -3,10 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
+import 'package:llamaseek/Widgets/research_activity_strip.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/search_detail_dialog.dart';
 import 'package:shimmer/shimmer.dart';
@@ -633,6 +635,63 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Thought'), findsOneWidget);
+    });
+  });
+
+  group('the research activity strip', () {
+    testWidgets('a streaming bubble says what the loop is doing right now',
+        (tester) async {
+      // Everything between "sent" and "first token of the answer" used to
+      // look identical from the outside: a llama and nothing else.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        researchPhase: ResearchPhase.searching,
+        researchPhaseStartedAt: DateTime.now(),
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsOneWidget);
+      expect(find.text('Searching'), findsOneWidget);
+
+      // Drop the bubble so the strip's counter timer is cancelled.
+      await tester.pumpWidget(_host(const SizedBox.shrink()));
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('a finished bubble has no strip', (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        researchPhase: ResearchPhase.searching,
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsNothing);
+    });
+
+    testWidgets('a run that has finished researching drops the strip',
+        (tester) async {
+      // `done` fires while the bubble is still streaming out the answer;
+      // "Done" is not a thing worth a live pill.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        researchPhase: ResearchPhase.done,
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsNothing);
+    });
+
+    testWidgets('no phase means no strip, so the legacy path is untouched',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsNothing);
     });
   });
 }

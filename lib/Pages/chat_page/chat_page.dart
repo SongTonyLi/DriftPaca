@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Pages/model_select_page/model_select_route.dart';
 import 'package:llamaseek/Utils/motion.dart';
@@ -203,6 +204,8 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
         isAwaitingReply: _viewModel.isThinking && _viewModel.searchSegments.isEmpty,
         isStreaming: _viewModel.isStreaming,
         searchSegments: _viewModel.searchSegments,
+        researchPhase: _viewModel.researchPhase,
+        researchPhaseStartedAt: _viewModel.researchPhaseStartedAt,
         error: _viewModel.currentError != null
             ? ChatError(
                 message: _viewModel.currentError!.message,
@@ -214,6 +217,20 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
         composerExpanded: _shouldShowExpanded,
       );
     }
+  }
+
+  /// The composer's placeholder. Answering a clarifying question is the one
+  /// thing the field is FOR at that moment, so that hint wins; otherwise a
+  /// running research loop names its current phase there, which is the only
+  /// place the phase is visible once the conversation is scrolled away from
+  /// the streaming bubble.
+  String _composerHint() {
+    if (_viewModel.isAwaitingClarification) {
+      return 'Answer the question above to continue';
+    }
+    final phase = _viewModel.researchPhase;
+    if (phase != null && phase != ResearchPhase.done) return phase.label;
+    return 'Message';
   }
 
   Widget _buildBottomOverlay() {
@@ -342,9 +359,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                         controller: _viewModel.textFieldController,
                         onEditingComplete: _sendMessage,
                         focusNode: _inputFocusNode,
-                        hintText: _viewModel.isAwaitingClarification
-                            ? 'Answer the question above to continue'
-                            : 'Message',
+                        hintText: _composerHint(),
                       ),
                     ),
                   ),

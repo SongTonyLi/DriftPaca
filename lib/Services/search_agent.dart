@@ -359,9 +359,12 @@ class SearchAgent {
     }
     final goal = await _deriveGoal(userQuestion);
     // Asked before the ledger exists, because the answer changes what the
-    // ledger is judged against: the instance detection and the
-    // completeness gate both read userQuestion as ground truth, and a
-    // choice the user made explicitly belongs in that ground truth.
+    // ledger is judged against: a choice the user made explicitly belongs
+    // in the ground truth. Its two halves go to different places, and that
+    // is the whole point of splitting the record. The options they TICKED
+    // join the instance split, because the user endorsed those strings.
+    // The composed question — their picks under the derivation model's own
+    // clarification prose — goes only to the completeness gate below.
     final clarified = await _clarify(goal, userQuestion, isCancelled);
     if (clarified == null) {
       return _outcome('', '', sourceUrls, 0, true,
@@ -369,7 +372,14 @@ class SearchAgent {
     }
     final ledger = ResearchLedger(
       objective: goal.statement,
-      userQuestion: clarified.question,
+      // Verbatim, always — see ResearchLedger.userQuestion. Handing it the
+      // clarified composition instead made every digit and name in the
+      // model's clarification question an instance "the user named", so a
+      // model permuting quarter labels out of that question opened a
+      // sub-goal and a fresh search budget for each permutation and the
+      // stall counter never fired.
+      userQuestion: userQuestion,
+      clarificationPicks: clarified.picks,
       clarification: clarified.note,
     );
     for (final question in goal.subQuestions) {
@@ -482,12 +492,17 @@ class SearchAgent {
           coverageChecks: coverageChecks,
         )) {
           coverageChecks++;
-          // Judged against what the user actually typed, never the derived
-          // restatement: "did this answer my question" has exactly one
-          // ground truth, and a paraphrase that quietly dropped a clause
-          // would make the gate blind to precisely the omission it exists
-          // to catch.
-          final gaps = await _assessGaps(ledger.userQuestion, turn.content);
+          // Judged against what the user actually typed plus what they
+          // clarified, never the derived restatement: "did this answer my
+          // question" has exactly one ground truth, and a paraphrase that
+          // quietly dropped a clause would make the gate blind to
+          // precisely the omission it exists to catch.
+          //
+          // This string carries the model's own clarification question on
+          // purpose — the gate reads prose and needs the refined reading
+          // spelled out — which is exactly why it is not what the ledger
+          // splits instances on (see ResearchLedger.clarificationPicks).
+          final gaps = await _assessGaps(clarified.question, turn.content);
           if (gaps.isNotEmpty) {
             for (final gap in gaps) {
               ledger.openGap(gap);
@@ -694,18 +709,25 @@ class SearchAgent {
   static const maxGoalSubQuestions = 4;
 
   /// Asks the goal's clarification question, if it has one and there is
-  /// someone to ask. Returns the question the rest of the run should treat
-  /// as the user's (their picks folded in) plus the one-line note for the
-  /// brief; null only when the run was cancelled while waiting.
+  /// someone to ask. Returns the completeness gate's ground truth (the
+  /// user's question with their picks folded in), the one-line note for
+  /// the brief, and the picks themselves; null only when the run was
+  /// cancelled while waiting.
+  ///
+  /// The picks travel separately from the composed [question] on purpose:
+  /// only they are the user's, and only they may reach the ledger's
+  /// instance split — see [ResearchLedger.clarificationPicks].
   ///
   /// Every other failure — no callback, a throw, a skip — lands on the
-  /// question as typed, which is what the run would have used anyway.
-  Future<({String question, String note})?> _clarify(
+  /// question as typed with no picks, which is what the run would have
+  /// used anyway.
+  Future<({String question, String note, List<String> picks})?> _clarify(
     ResearchGoal goal,
     String userQuestion,
     bool Function()? isCancelled,
   ) async {
-    final unclarified = (question: userQuestion, note: '');
+    final unclarified =
+        (question: userQuestion, note: '', picks: const <String>[]);
     final clarification = goal.clarification;
     if (clarification == null || askClarification == null) return unclarified;
     List<String>? selected;
@@ -724,6 +746,7 @@ class SearchAgent {
       question: ResearchClarification.clarifiedQuestion(
           userQuestion, clarification.question, picks),
       note: ResearchClarification.note(clarification.question, picks),
+      picks: picks,
     );
   }
 

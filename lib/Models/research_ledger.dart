@@ -49,12 +49,22 @@ class ResearchClarification {
 
   const ResearchClarification({required this.question, required this.options});
 
-  /// The user's picks folded into the question they typed, for every
-  /// stage that must judge against what the user actually meant: the
-  /// ledger's instance detection and the completeness gate both read
-  /// [ResearchLedger.userQuestion], and neither should be blind to a
-  /// choice the user made explicitly. Verbatim question first, so nothing
-  /// that reads it as ground truth is handed a paraphrase.
+  /// The user's picks folded into the question they typed, under the
+  /// model's own clarification question — the completeness gate's ground
+  /// truth, and only that. "Did this answer my question?" has to be judged
+  /// against the refined reading, and the gate is the one stage that can
+  /// safely read the question text back: it compares a draft against
+  /// prose, and prose is what this is. Verbatim question first, so the
+  /// gate is never handed a paraphrase.
+  ///
+  /// The ledger's instance detection deliberately does NOT read this
+  /// string, and [ResearchLedger.userQuestion] is no longer set from it.
+  /// Every digit-run and capitalised word in [question] is the derivation
+  /// model's, so splitting sub-goals on this composed form handed the
+  /// model's own invented year variants — and the readings the user
+  /// declined — the standing of instances the user had named. The ledger
+  /// takes the endorsed half on its own instead, as
+  /// [ResearchLedger.clarificationPicks].
   static String clarifiedQuestion(
     String userQuestion,
     String question,
@@ -155,10 +165,19 @@ class ResearchLedger {
   /// verbatim. This is what gets rendered, both to the model and in the UI.
   final String objective;
 
-  /// The user's message verbatim, always. Ground truth for the two
-  /// decisions that must not be made against a paraphrase: which instances
-  /// the user actually named (see [_requestedInstances]) and whether a
-  /// drafted answer covered the question (SearchAgent's completeness gate).
+  /// The user's message verbatim, always — never a restatement, never a
+  /// composition. Ground truth for the one decision that must not be made
+  /// against text a model wrote: which instances the user actually named
+  /// (see [_requestedInstances]).
+  ///
+  /// SearchAgent's completeness gate wants the opposite of that — the
+  /// user's question WITH the model's clarification question and their
+  /// answer folded in, so "did this answer my question?" is judged against
+  /// the refined reading — so it is handed
+  /// [ResearchClarification.clarifiedQuestion] directly by SearchAgent.run
+  /// and does not read this field. One string cannot serve both: it did,
+  /// and every digit and name in the model's clarification prose became an
+  /// instance the "user" had named.
   final String userQuestion;
 
   /// What the user said they meant, when the run asked (see
@@ -167,6 +186,29 @@ class ResearchLedger {
   /// original, ambiguous message. Empty when nothing was asked or the user
   /// skipped the question.
   final String clarification;
+
+  /// The clarification options the user actually ticked, each verbatim
+  /// (see [ResearchClarification]). Empty when nothing was asked, the card
+  /// was skipped, or the run never had anyone to ask.
+  ///
+  /// The only model-authored text allowed to contribute requested
+  /// instances, and only because the user endorsed each of these strings
+  /// by selecting it: "population for which years?" answered with two
+  /// years is two questions, exactly as if the user had typed both.
+  ///
+  /// Passed as its own list rather than read back out of the composed
+  /// [ResearchClarification.clarifiedQuestion], because that string also
+  /// carries the clarification QUESTION — the derivation model's own prose.
+  /// A question enumerating the readings ("Q1 2025, Q4 2024, or Q3 2024?")
+  /// would otherwise hand [_requestedInstances] the very invented year
+  /// variants [_isDifferentRequestedInstance] exists to group away, funding
+  /// a fresh sub-goal and a fresh search budget for each of them —
+  /// including the readings the user declined.
+  ///
+  /// Never mutated after construction: [_requestedInstances] memoises what
+  /// it reads out of this list, so a later edit would leave the two
+  /// disagreeing.
+  final List<String> clarificationPicks;
 
   final List<SubGoal> subGoals = [];
 
@@ -194,6 +236,7 @@ class ResearchLedger {
     required this.objective,
     String? userQuestion,
     this.clarification = '',
+    this.clarificationPicks = const [],
   }) : userQuestion = userQuestion ?? objective;
 
   /// Sub-goal identity only — this NEVER decides whether to block a
@@ -241,12 +284,13 @@ class ResearchLedger {
     return best;
   }
 
-  /// The instances the user's own question picks out — the digit-runs they
-  /// typed (years, versions, quarters) plus, when they named two or more
-  /// of them, the capitalised words naming the things they asked about.
-  /// Computed once: [userQuestion] is final, and [properNounTokens] is the
-  /// more expensive of the two while [findMatch] runs per planned query
-  /// per round.
+  /// The instances the user picked out — the digit-runs they typed (years,
+  /// versions, quarters) plus, when they named two or more of them, the
+  /// capitalised words naming the things they asked about; read from what
+  /// they typed ([userQuestion]) and from what they ticked
+  /// ([clarificationPicks]), and from nothing else. Computed once: both
+  /// sources are final, and [properNounTokens] is the more expensive of
+  /// the two while [findMatch] runs per planned query per round.
   ///
   /// Deliberately NOT taken from [objective], which may be a model-derived
   /// restatement. The whole safety argument for splitting instances rests
@@ -257,13 +301,30 @@ class ResearchLedger {
   /// for word — an entity a model introduced is exactly as untrustworthy
   /// as a year it introduced.
   ///
+  /// It covers the clarification QUESTION word for word too, which is why
+  /// the picks arrive as their own list instead of being read back out of
+  /// [ResearchClarification.clarifiedQuestion]: that string is composed
+  /// for the completeness gate and embeds the derivation model's prose, so
+  /// sourcing instances from it funded a sub-goal per quarter label the
+  /// model happened to enumerate — the declined readings included. A
+  /// ticked option is the one exception, because the user endorsed that
+  /// exact string by selecting it.
+  ///
   /// Names count only when the user listed at least TWO of them: a lone
   /// capitalised phrase is the question's subject rather than one instance
   /// of several, and reading it as an instance would re-open the thrash
-  /// this guard exists to close. See [properNounTokens] for the full rule
-  /// and its deliberate bias towards grouping.
-  late final Set<String> _requestedInstances =
-      numericTokens(userQuestion).union(properNounTokens(userQuestion));
+  /// this guard exists to close. Typed names and ticked names are counted
+  /// separately, so a single-subject question ("What is Vietnam GDP?")
+  /// plus a single-choice card ("Nominal") stays at one name apiece and
+  /// splits nothing. See [properNounTokens] and
+  /// [properNounTokensInChoices] for the full rule and its deliberate bias
+  /// towards grouping.
+  late final Set<String> _requestedInstances = {
+    ...numericTokens(userQuestion),
+    ...properNounTokens(userQuestion),
+    for (final pick in clarificationPicks) ...numericTokens(pick),
+    ...properNounTokensInChoices(clarificationPicks),
+  };
 
   /// Which of the user's [_requestedInstances] [text] actually names.
   ///

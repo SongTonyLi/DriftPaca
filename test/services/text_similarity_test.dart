@@ -205,6 +205,70 @@ void main() {
     });
   });
 
+  group('properNounTokensInChoices', () {
+    // The same question — "which things did the user NAME?" — asked of
+    // clarification options they TICKED rather than of a question they
+    // typed. Both safety rules carry over; only the sentence-initial skip
+    // does not, because an option is a label rather than a sentence.
+    test('reads the names out of the options the user ticked', () {
+      expect(properNounTokensInChoices(const ['Tokyo', 'Delhi']),
+          {'tokyo', 'delhi'},
+          reason: 'a one-word option is a name, not a sentence opener — '
+              'dropping its first word the way a typed question\'s is '
+              'dropped would leave two ticked cities naming nothing, and '
+              'collapse them onto one sub-goal');
+      expect(properNounTokensInChoices(const ['São Paulo', 'Tokyo']),
+          {'são', 'paulo', 'tokyo'},
+          reason: 'adjacent capitalised words are still one name, and it '
+              'still contributes each of its own tokens');
+      expect(properNounTokensInChoices(const ['Tokyo, Delhi']),
+          {'tokyo', 'delhi'},
+          reason: 'and a segment boundary still ends a run, so one option '
+              'naming two things is two names');
+    });
+
+    test('reads nothing out of a single ticked option', () {
+      // The rule that keeps this from over-firing: one name is what the
+      // run is ABOUT. Splitting on it would fragment one question into a
+      // sub-goal per rewording, each with a fresh search budget.
+      expect(properNounTokensInChoices(const ['Tokyo']), isEmpty);
+      expect(
+          properNounTokensInChoices(
+              const ['The Phoenix Mercury basketball team']),
+          isEmpty,
+          reason: 'a multi-word option is still one run, so ticking it alone '
+              'names nothing');
+      expect(properNounTokensInChoices(const []), isEmpty);
+    });
+
+    test('digits are left to numericTokens', () {
+      expect(properNounTokensInChoices(const ['2023', '2024']), isEmpty,
+          reason: 'nothing in a bare year is capitalised; the ledger reads '
+              'those through numericTokens, which has no two-of-them rule');
+      expect(properNounTokensInChoices(const ['Q1 2025', 'Q4 2024']),
+          {'q1', 'q4'},
+          reason: 'a quarter label carries both kinds at once, and reading '
+              'the capitalised half here costs nothing: the digits already '
+              'split these two apart');
+    });
+
+    test('an option opening with a capitalised article offers that word too',
+        () {
+      // The accepted residual of not skipping an option's first word,
+      // pinned so it is a known trade-off rather than a surprise. It takes
+      // TWO ticked options to reach the two-names bar at all, and the
+      // alternative loses every one-word option — which is what this
+      // function exists for.
+      expect(
+          properNounTokensInChoices(
+              const ['The planet Mercury', 'The Phoenix Mercury team']),
+          contains('the'),
+          reason: 'a ticked string is the user\'s own explicit choice, read '
+              'as they endorsed it — incidental words and all, exactly as a '
+              'picked option\'s incidental digits are kept');
+    });
+  });
+
   group('wordTokens', () {
     test('normalizes the query side exactly as the user side is normalized', () {
       // Both sides of the instance comparison run through one tokenizer on

@@ -163,10 +163,53 @@ bool _isCapitalised(String token) {
 ///   * a question written in an uncased script (CJK, Arabic, Hebrew,
 ///     Thai) yields nothing, since no character in it is uppercase —
 ///     those runs keep exactly the grouping they have today.
-Set<String> properNounTokens(String text) {
+Set<String> properNounTokens(String text) =>
+    _namesFromRuns(_capitalisedRuns(text, skipOpeningWord: true));
+
+/// The names in a list of discrete choices the user TICKED — the
+/// clarification-card counterpart of [properNounTokens], reading text the
+/// user selected rather than typed (see ResearchLedger.clarificationPicks).
+///
+/// Both of [properNounTokens]' safety rules apply unchanged, across the
+/// whole list rather than per choice: adjacent capitalised tokens are one
+/// name ("São Paulo"), and fewer than two distinct names yields nothing —
+/// so ticking a single option can never split anything, exactly as a lone
+/// capitalised phrase in a typed question cannot.
+///
+/// What differs is the sentence-initial skip, and it has to. An option is
+/// a LABEL, not a sentence: "Tokyo" is capitalised because it names a
+/// city, not because it opens one. Dropping its first word — the right
+/// call for the "What"/"Give"/"Compare" that open a typed question —
+/// erases one-word options entirely, so a card offering
+/// "Tokyo"/"Delhi"/"Shanghai" and answered with two of them would name
+/// nothing at all and the two cities the user explicitly chose would
+/// collapse onto one sub-goal, which is the failure the name split exists
+/// to stop.
+///
+/// Accepted residual, in the same fail-closed spirit as the rest of this
+/// mechanism: an option opening with a capitalised article or common noun
+/// ("The planet Mercury") offers that word as a name token too. Reaching
+/// the two-distinct-names bar takes two ticked options in the first place,
+/// and the alternative — skipping every option's first word — costs
+/// precisely the one-word options this exists for. A ticked string is the
+/// user's own explicit choice, incidental words and all.
+Set<String> properNounTokensInChoices(Iterable<String> choices) =>
+    _namesFromRuns([
+      for (final choice in choices)
+        ..._capitalisedRuns(choice, skipOpeningWord: false),
+    ]);
+
+/// The runs of adjacent capitalised tokens in [text], in order. Shared by
+/// [properNounTokens] and [properNounTokensInChoices] so both sides use one
+/// definition of what a name looks like; they differ only in
+/// [skipOpeningWord], which drops the first word of each sentence (see
+/// [properNounTokens] for why, and [properNounTokensInChoices] for why a
+/// ticked option is exempt).
+List<List<String>> _capitalisedRuns(String text,
+    {required bool skipOpeningWord}) {
   final runs = <List<String>>[];
   for (final sentence in text.split(_sentenceBreak)) {
-    var sentenceStarted = false;
+    var sentenceStarted = !skipOpeningWord;
     for (final segment in sentence.split(_segmentBreak)) {
       var run = <String>[];
       for (final token in _tokens(segment)) {
@@ -186,6 +229,15 @@ Set<String> properNounTokens(String text) {
       if (run.isNotEmpty) runs.add(run);
     }
   }
+  return runs;
+}
+
+/// The lowercased tokens of [runs], but only once [runs] holds two or more
+/// DISTINCT names — the "fewer than two runs yields nothing" rule both
+/// callers rest on. Flattened to tokens rather than kept as phrases
+/// because the query side matches token by token ([wordTokens]) and a
+/// model may write only half of a multi-word name.
+Set<String> _namesFromRuns(List<List<String>> runs) {
   final phrases = {
     for (final run in runs) run.map((t) => t.toLowerCase()).join(' '),
   };

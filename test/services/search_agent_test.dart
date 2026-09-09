@@ -1492,6 +1492,73 @@ void main() {
       // original — it has one ground truth, and the user just refined it.
       expect(assessed.single.objective, startsWith('What is Vietnam GDP?'));
       expect(assessed.single.objective, contains('The team'));
+      expect(assessed.single.objective, contains('Which Mercury?'),
+          reason: 'the gate reads prose and needs the model\'s own question '
+              'spelled out to make sense of "The team" — narrowing the '
+              'ledger\'s instance source must not narrow this');
+    });
+
+    test('the picks reach the instance split, the model\'s question does not',
+        () async {
+      // The wiring, end to end and through the real _clarify: the ledger
+      // is handed the options the user TICKED and the verbatim message,
+      // never the composed question. Nothing else in this file observes
+      // grouping, so this is what catches run() quietly going back to
+      // passing the composed string — every other clarification test
+      // watches the brief or the gate, and both of those are unchanged by
+      // the fix.
+      final lagos = [
+        OllamaMessage('What was the population of Lagos?',
+            role: OllamaMessageRole.user),
+      ];
+      const queries = ['Lagos population 2023', 'Lagos population 2024'];
+
+      Future<List<String>> subGoalsFor(List<String> picks) async {
+        var turn = 0;
+        final subGoals = <String>[];
+        await SearchAgent(
+          streamTurn: (req) {
+            turn++;
+            if (turn <= queries.length) {
+              return Stream.fromIterable([searchChunk(queries[turn - 1])]);
+            }
+            return Stream.fromIterable([answerChunk('done')]);
+          },
+          search: (req) async =>
+              [hit('https://example.com/${Uri.encodeComponent(req.query)}')],
+          deriveGoal: (_) async => const ResearchGoal(
+            statement: 'The population of Lagos in the years the user means',
+            clarification: ResearchClarification(
+              // Enumerates its options inside the question, which
+              // goalDerivationInstruction's "which time period" framing
+              // invites — this is the prose that must not become instances.
+              question: 'Which years — 2023, 2024 or 2025?',
+              options: ['2023', '2024', '2025'],
+            ),
+          ),
+          askClarification: (_) async => picks,
+        ).run(
+          history: lagos,
+          listener: SearchAgentListener(
+            onLedgerUpdate: (_, snapshot) {
+              subGoals
+                ..clear()
+                ..addAll(snapshot.map((g) => g.query));
+            },
+          ),
+        );
+        return subGoals;
+      }
+
+      expect(await subGoalsFor(const ['2023']), hasLength(1),
+          reason: '2024 and 2025 appear only in the model\'s clarification '
+              'question, so a re-ask carrying 2024 is the model varying the '
+              'year on its own and groups onto the one sub-goal — where '
+              'splitting would hand it a second search budget and make the '
+              'round look like it broadened coverage');
+      expect(await subGoalsFor(const ['2023', '2024']), hasLength(2),
+          reason: 'but a user who ticked both years asked two questions, and '
+              'each needs its own sub-goal, budget and checklist line');
     });
 
     test('a skip proceeds on the goal alone', () async {

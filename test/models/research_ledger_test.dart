@@ -727,28 +727,120 @@ void main() {
           isNot(contains('The user clarified')));
     });
 
-    test('picks folded into the question count as requested instances', () {
+    test('picks count as requested instances', () {
       // "Population for which years?" answered with two years is two
       // questions, exactly as if the user had typed both years — so the
       // ledger must keep their searches apart instead of grouping them.
-      final question = ResearchClarification.clarifiedQuestion(
-          'What was the population of Lagos?',
-          'Which years?',
-          ['2023', '2024']);
       final ledger = ResearchLedger(
         objective: 'Establish the population of Lagos',
-        userQuestion: question,
+        userQuestion: 'What was the population of Lagos?',
+        clarificationPicks: const ['2023', '2024'],
       );
       ledger.upsert('Lagos population 2023');
 
-      expect(question, startsWith('What was the population of Lagos?'));
       expect(ledger.findMatch('Lagos population 2024'), isNull);
+      expect(
+          ResearchClarification.clarifiedQuestion(
+              'What was the population of Lagos?', 'Which years?',
+              ['2023', '2024']),
+          startsWith('What was the population of Lagos?'),
+          reason: 'the composed form still leads with the verbatim question '
+              '— it is the completeness gate\'s ground truth, and the gate '
+              'must never be handed a paraphrase');
+    });
+
+    test('the clarification question\'s own words are not instances', () {
+      // The picks are the ONLY part of a clarification card the user
+      // endorsed. Reading instances out of the composed question instead
+      // handed the derivation model's own prose the standing of something
+      // the user named: every quarter it enumerated — including the
+      // readings the user declined — split a sub-goal off with a fresh
+      // search budget, so a model permuting those labels never tripped the
+      // stall counter.
+      final ledger = ResearchLedger(
+        objective: 'Apple\'s performance this quarter',
+        userQuestion: 'How is Apple doing this quarter?',
+        clarificationPicks: const ['Q1 2025'],
+      );
+      ledger.upsert('Apple revenue Q1 2025');
+
+      expect(ledger.findMatch('Apple revenue Q4 2024'), isNotNull,
+          reason: 'Q4 2024 was offered and DECLINED; its digits exist only '
+              'in the model\'s question, so the re-ask still groups');
+      expect(ledger.findMatch('Apple revenue Q1 2024'), isNotNull,
+          reason: 'and Q1 2024 was never offered at all — a year variant the '
+              'model invented, which is exactly what the instance guard '
+              'exists to group away');
+    });
+
+    test('two ticked options are two instances, by name as well as by year',
+        () {
+      // Guards the over-correction: dropping picks from the instance
+      // source altogether would silently truncate a two-part question back
+      // to one sub-goal, one budget and one answered half.
+      final years = ResearchLedger(
+        objective: 'Apple\'s performance',
+        userQuestion: 'How is Apple doing?',
+        clarificationPicks: const ['Q1 2025', 'Q4 2024'],
+      );
+      years.upsert('Apple revenue Q1 2025');
+      expect(years.findMatch('Apple revenue Q4 2024'), isNull);
+
+      // The same rule on the token kind a "which entity?" card produces,
+      // which carries no digits at all: two cities the user ticked are two
+      // questions, and a city the card never offered is the model
+      // wandering off.
+      final cities = ResearchLedger(
+        objective: 'Population of the city the user means',
+        userQuestion: 'What is the current population there?',
+        clarificationPicks: const ['Tokyo', 'Delhi'],
+      );
+      final tokyo = cities.upsert('current population of Tokyo');
+      expect(cities.findMatch('current population of Delhi'), isNull);
+      expect(cities.findMatch('current population of Osaka'), same(tokyo));
+    });
+
+    test('a single ticked option names nothing on its own', () {
+      // Same bias towards grouping the typed side has: one capitalised
+      // phrase is the thing being asked about, not one instance of
+      // several. Ticking ONE city narrows the run to it, so a model that
+      // wanders to another city is re-asking rather than opening a second
+      // question, and it groups — the fail-closed direction, since every
+      // extra sub-goal buys a fresh search budget and a round that looks
+      // like it broadened coverage.
+      final ledger = ResearchLedger(
+        objective: 'Population of the city the user means',
+        userQuestion: 'What is the current population there?',
+        clarificationPicks: const ['Tokyo'],
+      );
+      final goal = ledger.upsert('current population of Tokyo');
+
+      expect(ledger.findMatch('current population of Delhi'), same(goal),
+          reason: 'one ticked option is one instance, so nothing here can '
+              'split — exactly as a lone capitalised phrase in a typed '
+              'question cannot');
     });
 
     test('an empty pick list leaves the question untouched', () {
       expect(ResearchClarification.clarifiedQuestion('q', 'which?', const []),
           'q');
       expect(ResearchClarification.note('which?', const []), isEmpty);
+    });
+
+    test('a run that asked nothing has no picks and no instances from them',
+        () {
+      // The default. Every ledger built without a clarification — most of
+      // them — must behave exactly as it did before picks existed.
+      final ledger = ResearchLedger(
+        objective: 'Apple\'s performance this quarter',
+        userQuestion: 'How is Apple doing this quarter?',
+      );
+      ledger.upsert('Apple revenue Q1 2025');
+
+      expect(ledger.clarificationPicks, isEmpty);
+      expect(ledger.findMatch('Apple revenue Q4 2024'), isNotNull,
+          reason: 'with no digits typed and nothing ticked there are no '
+              'requested instances at all, so every re-ask groups');
     });
   });
 

@@ -2406,10 +2406,19 @@ void main() {
       final line = brief
           .split('\n')
           .firstWhere((l) => l.startsWith('- [x]'), orElse: () => '');
-      final quoted = RegExp(r'Excerpt: "(.*)"$').firstMatch(line)!.group(1)!;
+      final quoted =
+          RegExp(r'Excerpt: <untrusted-excerpt>(.*)</untrusted-excerpt>$')
+              .firstMatch(line)!
+              .group(1)!;
       final verbatim = quoted
           .replaceAll(RegExp(r'^\.\.\.'), '')
           .replaceAll(RegExp(r'\.\.\.$'), '');
+      // Still asserted against the RAW chunks: _checklistLine folds the
+      // excerpt onto one line so page text cannot open a checklist line of
+      // its own, and that fold is its only licence to differ from the
+      // stored bytes — for this fixture it changes nothing, which is the
+      // point. A failure here means the rendering started rewriting
+      // evidence rather than framing it.
       expect(result.chunks!.any((c) => c.contains(verbatim)), isTrue,
           reason: 'the excerpt is a verbatim window of one of the chunks the '
               'model was shown, so the ledger and the sources agree');

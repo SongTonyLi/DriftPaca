@@ -284,6 +284,34 @@ class WebSearchService {
     }
   }
 
+  /// Defangs the two framing tags [formatResultsAsContext] fences untrusted
+  /// text with, so a scraped body can neither end the fence nor open a
+  /// `<source>` header of its own. Only the `<` is rewritten (to `&lt;`) —
+  /// the text stays readable and nothing else about it is altered.
+  ///
+  /// Without this, a page carrying `</source></context>` ended the
+  /// untrusted region early and everything it wrote after that read as
+  /// harness-authored prompt; a page carrying its own
+  /// `<source id="1" name="https://attacker">` forged a header for a source
+  /// id it did not own.
+  ///
+  /// The payload reaches here as ordinary text because a page has to write
+  /// `&lt;/source&gt;` to SHOW those characters, and [extractTextFromHtml]
+  /// strips tags before decoding entities. That order is correct — entity-
+  /// escaped text is content, not markup, and decoding first would eat a
+  /// legitimate `&lt;div&gt;` on any page that discusses HTML — so the
+  /// neutralising belongs here, at the boundary where the text is wrapped
+  /// in a structure that means something, not in the extractor.
+  ///
+  /// Deliberately matched WITHOUT requiring the closing `>`: an unclosed
+  /// `<source id="1" name="x"` is still enough for a reader scanning for
+  /// `<source id=`, so a `>`-anchored pattern would miss it.
+  @visibleForTesting
+  static String neutralizeSourceMarkup(String text) => text.replaceAllMapped(
+        RegExp(r'<\s*/?\s*(?:source|context)\b', caseSensitive: false),
+        (m) => m.group(0)!.replaceFirst('<', '&lt;'),
+      );
+
   /// Formats search results as RAG context.
   /// Uses top chunks when available, falls back to snippet.
   /// Source ids start at [idOffset]+1 so later searches can accumulate.
@@ -307,10 +335,21 @@ class WebSearchService {
         content = '${r.title}\n${r.snippet}';
       }
       final id = idOffset + i + 1;
-      final escapedUrl = r.url.replaceAll('"', '&quot;');
+      // The header line is structure, so nothing that reaches it may be
+      // able to end it: control characters (a `%0A` a redirector decoded
+      // back into a newline, say — see [_extractUrl]) would break the line
+      // in two, and an angle bracket would close the tag mid-attribute.
+      // Only the DISPLAYED name is hardened; [sourceUrlsFromResults] still
+      // returns the raw URL, because that map is what a citation tap
+      // follows and rewriting it there would change where benign links go.
+      final escapedUrl = r.url
+          .replaceAll(RegExp(r'[\u0000-\u001f\u007f]+'), '')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;');
       sourceContext.writeln(
           '<source id="$id" name="$escapedUrl" resource-type="web_search">');
-      sourceContext.writeln(content);
+      sourceContext.writeln(neutralizeSourceMarkup(content));
       sourceContext.writeln('</source>');
     }
 

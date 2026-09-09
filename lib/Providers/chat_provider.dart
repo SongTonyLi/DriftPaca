@@ -832,13 +832,22 @@ class ChatProvider extends ChangeNotifier {
 
       // Build search context and extract source URLs
       final newSearchContext = WebSearchService.formatResultsAsContext(searchResults);
-      _interceptedSourceUrls = {};
-      final urlPattern = RegExp(r'<source id="(\d+)" name="([^"]*)"');
-      for (final match in urlPattern.allMatches(newSearchContext)) {
-        final id = int.tryParse(match.group(1)!);
-        final url = match.group(2);
-        if (id != null && url != null) _interceptedSourceUrls![id] = url;
-      }
+      // The id->URL map is read from the result objects, never re-derived
+      // from the formatted blob. That blob embeds scraped page bodies
+      // between the <source> headers, so scanning it for
+      // `<source id="N" name="...">` also matched headers a PAGE had
+      // written inside its own body — and with a plain map write the last
+      // match for an id won, so a page could repoint citation [1] at a URL
+      // that appeared nowhere in the results and the user tapped a citation
+      // attributed to Wikipedia straight into it. (A benign URL containing
+      // a `"` mis-mapped through that regex too: it read back the
+      // &quot;-escaped form.) This is the same authoritative mapping the
+      // native-tool path already consumes via
+      // SearchAgentListener.onSearchComplete. Both calls take the same list
+      // at the default idOffset, so the ids line up exactly; if this path
+      // ever accumulates rounds, the offset has to be threaded to BOTH.
+      _interceptedSourceUrls =
+          WebSearchService.sourceUrlsFromResults(searchResults);
 
       // Recursive call: re-stream with search context, reusing same message
       debugPrint('[SEARCH] Starting Call 2 with ${newSearchContext.length} chars context');

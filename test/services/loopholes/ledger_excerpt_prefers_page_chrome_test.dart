@@ -37,10 +37,14 @@
 ///    that earned the score, marking elided sides with `...`.
 ///
 /// The excerpt this produces is what `ResearchLedger.recordEvidence` stores
-/// for the life of the run, what `_checklistLine` renders as `Excerpt: "…"`
-/// on every `[x]` line, what `ChatProvider` appends to the SYSTEM prompt
-/// every turn (chat_provider.dart:1166), and the only per-sub-goal evidence
-/// text that survives `_compactStaleRounds`.
+/// for the life of the run, what `_checklistLine` renders on every `[x]`
+/// line as `Excerpt: <untrusted-excerpt>…</untrusted-excerpt>` (declared
+/// untrusted once per brief by `ResearchLedger.excerptWarning` — see
+/// test/services/search_loop_loophole_test.dart), what `ChatProvider`
+/// appends to the SYSTEM prompt every turn, and the only per-sub-goal
+/// evidence text that survives `_compactStaleRounds`. Which bytes get
+/// promoted is therefore still worth pinning: framing says the passage is
+/// somebody's web page, not that it is the RIGHT passage.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -307,7 +311,8 @@ void main() {
           .split('\n')
           .firstWhere((l) => l.startsWith('- [x]'), orElse: () => '');
       expect(line, isNotEmpty, reason: 'the round recorded evidence');
-      expect(line, contains('Excerpt: "'));
+      expect(line, contains('Excerpt: <untrusted-excerpt>'),
+          reason: 'the quoted evidence is fenced as untrusted page text');
       expect(line, contains(_figure),
           reason: 'the ledger line the model reads every turn presents the '
               'answering sentence as what source [1] said about "$_query"');

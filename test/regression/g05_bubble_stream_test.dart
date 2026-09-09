@@ -206,4 +206,91 @@ void main() {
           reason: 'inline code content must be left untouched by preprocessing');
     });
   });
+
+  group('Bug 6: a rejected draft fades out instead of vanishing', () {
+    testWidgets('the old text plays out through a FadeTransition',
+        (tester) async {
+      // What the completeness gate does when it rejects a draft: the live
+      // message's content is cleared and the run goes back to searching.
+      // Cutting the paragraph out between two frames reads as a glitch.
+      final message = OllamaMessage(
+        'A first draft the gate will reject.',
+        role: OllamaMessageRole.assistant,
+      );
+
+      await tester.pumpWidget(
+        buildTestApp(ChatBubble(message: message, isStreaming: true)),
+      );
+      await tester.pump();
+      expect(renderedText(tester), contains('A first draft'));
+
+      message.content = '';
+      await tester.pumpWidget(
+        buildTestApp(ChatBubble(message: message, isStreaming: true)),
+      );
+      await tester.pump();
+
+      expect(renderedText(tester), contains('A first draft'),
+          reason: 'the rejected draft should still be on screen, fading');
+      expect(
+        find.ancestor(
+          of: find.textContaining('A first draft'),
+          matching: find.byType(FadeTransition),
+        ),
+        findsWidgets,
+      );
+      expect(
+        find.ancestor(
+          of: find.textContaining('A first draft'),
+          matching: find.byType(SizeTransition),
+        ),
+        findsWidgets,
+      );
+
+      // Mid-flight the copy is on its way out, not simply parked.
+      await tester.pump(const Duration(milliseconds: 120));
+      final opacities = tester
+          .widgetList<FadeTransition>(find.ancestor(
+            of: find.textContaining('A first draft'),
+            matching: find.byType(FadeTransition),
+          ))
+          .map((t) => t.opacity.value);
+      expect(opacities.any((v) => v < 1.0), isTrue);
+
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(renderedText(tester), isNot(contains('A first draft')));
+
+      // Dispose the streaming widget so its ticker doesn't linger at teardown.
+      await tester.pumpWidget(buildTestApp(const SizedBox.shrink()));
+    });
+
+    testWidgets('reduced motion drops the rejected draft immediately',
+        (tester) async {
+      final message = OllamaMessage(
+        'A first draft the gate will reject.',
+        role: OllamaMessageRole.assistant,
+      );
+
+      Widget host() => MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(disableAnimations: true),
+              child: Scaffold(
+                body: ChatBubble(message: message, isStreaming: true),
+              ),
+            ),
+          );
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+      expect(renderedText(tester), contains('A first draft'));
+
+      message.content = '';
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      expect(renderedText(tester), isNot(contains('A first draft')));
+
+      await tester.pumpWidget(buildTestApp(const SizedBox.shrink()));
+    });
+  });
 }

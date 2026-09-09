@@ -15,6 +15,7 @@ import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/ollama_service.dart';
@@ -185,6 +186,8 @@ class ChatProvider extends ChangeNotifier {
   void Function(SearchTerminationReason reason)? _webSearchResearchDoneCallback;
   void Function(ResearchClarification clarification)?
       _webSearchClarificationCallback;
+  void Function(ResearchPhase phase)? _webSearchPhaseCallback;
+  void Function(String delta)? _webSearchThinkingDeltaCallback;
 
   /// The clarification a research run is currently waiting on, if any.
   /// Completed by [answerClarification] (the user picked), or with null by
@@ -218,8 +221,12 @@ class ChatProvider extends ChangeNotifier {
     void Function(String query, String reason)? onSearchSkipped,
     void Function(SearchTerminationReason reason)? onResearchDone,
     void Function(ResearchClarification clarification)? onClarification,
+    void Function(ResearchPhase phase)? onPhase,
+    void Function(String delta)? onThinkingDelta,
   }) {
     _webSearchClarificationCallback = onClarification;
+    _webSearchPhaseCallback = onPhase;
+    _webSearchThinkingDeltaCallback = onThinkingDelta;
     _webSearchThinkingCallback = onSearchThinking;
     _webSearchCallback = onSearchStart;
     _webSearchQueryUpdateCallback = onSearchQueryUpdate;
@@ -246,6 +253,8 @@ class ChatProvider extends ChangeNotifier {
     _webSearchSkippedCallback = null;
     _webSearchResearchDoneCallback = null;
     _webSearchClarificationCallback = null;
+    _webSearchPhaseCallback = null;
+    _webSearchThinkingDeltaCallback = null;
   }
 
   /// Source URLs intercepted during WEBSEARCH stream interception.
@@ -1099,8 +1108,6 @@ class ChatProvider extends ChangeNotifier {
     OllamaMessage? streamingMessage;
     final notifyThrottle = Stopwatch()..start();
     final liveSourceUrls = <int, String>{};
-    var seenSearch = false;
-    var lastSearchThinking = '';
 
     void touch({bool force = false}) {
       if (force || notifyThrottle.elapsedMilliseconds >= 32) {
@@ -1122,6 +1129,22 @@ class ChatProvider extends ChangeNotifier {
       }
       notifyListeners();
       return streamingMessage!;
+    }
+
+    // Whether this run has reasoning on screen.
+    //
+    // In the agent path the live message's `thinking` is deliberately never
+    // written — the view model's segments are the single source of live
+    // thinking (they are what gets persisted, see the encode step in
+    // _initializeChatStream) — so the old "is thinking empty" test now
+    // reads empty for every run and would drop the bubble out from under a
+    // run stopped mid-reasoning. Ask the segments instead.
+    bool hasLiveThinking() {
+      final segments = _webSearchSegmentsProvider?.call();
+      if (segments == null) return false;
+      return segments
+          .whereType<ThinkingSegment>()
+          .any((segment) => segment.text.isNotEmpty);
     }
 
     // The compaction budget means nothing unless it's tied to what this
@@ -1286,6 +1309,10 @@ class ChatProvider extends ChangeNotifier {
           req.query,
           excludeUrls: req.excludeUrls,
           onUrlsKnown: (urls) {
+            // The one phase SearchAgent cannot report: it hands the whole
+            // search off to this closure, and "which pages are being read"
+            // is only known once the engine has answered — in here.
+            _webSearchPhaseCallback?.call(ResearchPhase.reading);
             req.onUrlsKnown?.call(urls);
             _webSearchUrlsKnownCallback?.call(urls);
           },
@@ -1305,25 +1332,27 @@ class ChatProvider extends ChangeNotifier {
         history: history,
         isCancelled: cancelled,
         listener: SearchAgentListener(
+          // Every turn's reasoning, token by token, into the view model's
+          // one live segment. Nothing is written to the message itself:
+          // merging each turn into `thinking` is what used to make the
+          // first turn's reasoning disappear the moment a search started,
+          // and the segments are persisted anyway.
           onThinking: (delta) {
-            final msg = ensureBubble();
-            if (seenSearch) {
-              final modelPart = modelThinkingFromCombined(msg.thinking ?? '');
-              msg.thinking = mergeSearchThinking(
-                searchThinking: lastSearchThinking,
-                modelThinking: modelPart + delta,
-              );
-            } else {
-              msg.thinking = (msg.thinking ?? '') + delta;
-            }
+            ensureBubble();
+            _webSearchThinkingDeltaCallback?.call(delta);
             touch();
           },
+          // The turn's authoritative full text, once it ends. Forwarded so
+          // the view model can close the block the deltas were filling.
           onSearchThinking: (thinking) {
-            seenSearch = true;
-            lastSearchThinking = thinking;
             _webSearchThinkingCallback?.call(thinking);
-            ensureBubble().thinking = '$thinking$searchThinkingSeparator';
-            touch();
+          },
+          onPhase: (phase) {
+            // The strip lives in the bubble, so the bubble has to exist —
+            // framingGoal fires before anything else a run produces.
+            ensureBubble();
+            _webSearchPhaseCallback?.call(phase);
+            touch(force: true);
           },
           onSearchStart: (query) {
             ensureBubble();
@@ -1393,7 +1422,8 @@ class ChatProvider extends ChangeNotifier {
       // handler records the error and leaves ollamaMessage null.
       if (streamingMessage != null &&
           streamingMessage!.content.isEmpty &&
-          (streamingMessage!.thinking ?? '').isEmpty) {
+          (streamingMessage!.thinking ?? '').isEmpty &&
+          !hasLiveThinking()) {
         _messages.remove(streamingMessage);
         streamingMessage = null;
       }
@@ -1409,7 +1439,8 @@ class ChatProvider extends ChangeNotifier {
         outcome.cancelled &&
         outcome.content.isEmpty &&
         streamingMessage!.content.isEmpty &&
-        (streamingMessage!.thinking ?? '').isEmpty) {
+        (streamingMessage!.thinking ?? '').isEmpty &&
+        !hasLiveThinking()) {
       _messages.remove(streamingMessage);
       notifyListeners();
       // A stall is not a stop: nobody asked for this run to end, so ending

@@ -607,11 +607,19 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     for (final segment in segments) {
       switch (segment) {
         case ThinkingSegment():
-          if (segment.text.isEmpty) continue;
+          // A LIVE segment with no text yet is still rendered: that empty
+          // moment is precisely when the "Thinking..." header has to be on
+          // screen. Only a finished segment with nothing in it is dropped.
+          if (segment.isComplete && segment.text.isEmpty) continue;
           widgets.add(ThinkBlockWidget(
+            // Keyed on the segment instance so the one live block keeps its
+            // element — and with it its stopwatch, pulse and collapse
+            // animation — when the view model completes it in place.
+            key: ObjectKey(segment),
             content: segment.text,
-            isComplete: true,
-            isStreaming: false,
+            isComplete: segment.isComplete,
+            isStreaming: !segment.isComplete,
+            elapsedSeconds: segment.elapsedSeconds,
           ));
         case SearchCardSegment():
           widgets.add(SearchCard(segment: segment));

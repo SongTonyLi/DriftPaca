@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
 import 'package:llamaseek/Utils/text_similarity.dart';
 
@@ -96,6 +97,17 @@ class SearchAgentListener {
   /// with why the loop stopped.
   final void Function(SearchTerminationReason reason)? onResearchDone;
 
+  /// Fired whenever the run moves to a new stage — see [ResearchPhase] for
+  /// the seam each value marks. Every phase but [ResearchPhase.reading] is
+  /// fired from inside this class; that one belongs to the caller's
+  /// `search` implementation, which is where a search's URLs become known.
+  ///
+  /// Repeats are not suppressed: two consecutive turns both report
+  /// [ResearchPhase.thinking], because the second one really is a fresh
+  /// stretch of thinking and the UI's elapsed-in-phase counter has to
+  /// restart with it.
+  final void Function(ResearchPhase phase)? onPhase;
+
   const SearchAgentListener({
     this.onThinking,
     this.onSearchThinking,
@@ -107,6 +119,7 @@ class SearchAgentListener {
     this.onSearchSkipped,
     this.onLedgerUpdate,
     this.onResearchDone,
+    this.onPhase,
   });
 }
 
@@ -414,6 +427,7 @@ class SearchAgent {
     // update below already fires immediately, and a second identical
     // publish would say nothing.
     if (deriveGoal != null) {
+      listener.onPhase?.call(ResearchPhase.framingGoal);
       listener.onLedgerUpdate?.call(userQuestion, const []);
     }
     final goal = await _deriveGoal(userQuestion);
@@ -424,7 +438,7 @@ class SearchAgent {
     // join the instance split, because the user endorsed those strings.
     // The composed question — their picks under the derivation model's own
     // clarification prose — goes only to the completeness gate below.
-    final clarified = await _clarify(goal, userQuestion, isCancelled);
+    final clarified = await _clarify(goal, userQuestion, isCancelled, listener);
     if (clarified == null) {
       return _outcome('', '', sourceUrls, 0, true,
           reason: SearchTerminationReason.cancelled, listener: listener);
@@ -476,6 +490,11 @@ class SearchAgent {
         searchCount: searchCount,
         round: round,
       );
+
+      // Announced before the request goes out, not on the first token: the
+      // wait for time-to-first-token is exactly the stretch that used to
+      // look like nothing was happening.
+      listener.onPhase?.call(ResearchPhase.thinking);
 
       // The brief has to agree with the request it rides on: once the tool
       // is withdrawn it says research is closed, instead of inviting the
@@ -581,7 +600,8 @@ class SearchAgent {
           // purpose — the gate reads prose and needs the refined reading
           // spelled out — which is exactly why it is not what the ledger
           // splits instances on (see ResearchLedger.clarificationPicks).
-          final gaps = await _assessGaps(clarified.question, turn.content);
+          final gaps =
+              await _assessGaps(clarified.question, turn.content, listener);
           if (gaps.isNotEmpty) {
             for (final gap in gaps) {
               ledger.openGap(gap);
@@ -804,11 +824,16 @@ class SearchAgent {
     ResearchGoal goal,
     String userQuestion,
     bool Function()? isCancelled,
+    SearchAgentListener listener,
   ) async {
     final unclarified =
         (question: userQuestion, note: '', picks: const <String>[]);
     final clarification = goal.clarification;
     if (clarification == null || askClarification == null) return unclarified;
+    // Only once there really is a question to put and someone to put it
+    // to: reporting the wait for a run that never asks would leave the
+    // strip claiming to want an answer nobody was ever shown.
+    listener.onPhase?.call(ResearchPhase.awaitingClarification);
     List<String>? selected;
     try {
       selected = await askClarification!(clarification);
@@ -859,7 +884,12 @@ class SearchAgent {
   /// A gate that throws must never cost the user an answer already in hand:
   /// the downside of wrongly accepting is a partial answer, the downside of
   /// propagating is no answer at all.
-  Future<List<String>> _assessGaps(String objective, String draftAnswer) async {
+  Future<List<String>> _assessGaps(
+    String objective,
+    String draftAnswer,
+    SearchAgentListener listener,
+  ) async {
+    listener.onPhase?.call(ResearchPhase.checkingCoverage);
     try {
       final gaps = await assessCoverage!(
           CoverageRequest(objective: objective, draftAnswer: draftAnswer));
@@ -1117,6 +1147,7 @@ class SearchAgent {
         (!accum.toolsEnabled || accum.toolCalls.isEmpty)) {
       if (!accum.answerStarted) {
         listener.onAnswerStart?.call();
+        listener.onPhase?.call(ResearchPhase.drafting);
         accum.answerStarted = true;
       }
       accum.content += chunk.content;
@@ -1191,6 +1222,7 @@ class SearchAgent {
         return _SearchExec(nextOffset: idOffset, cancelled: true);
       }
       listener.onSearchStart?.call(p.query);
+      listener.onPhase?.call(ResearchPhase.searching);
       final List<WebSearchResult> results;
       try {
         results = await search(SearchAgentSearchRequest(
@@ -1556,6 +1588,7 @@ class SearchAgent {
     required SearchAgentListener listener,
   }) {
     listener.onResearchDone?.call(reason);
+    listener.onPhase?.call(ResearchPhase.done);
     return SearchAgentOutcome(
       content: content,
       thinking: thinking,

@@ -554,4 +554,85 @@ void main() {
       expect(find.text('Next — drafting the answer'), findsOneWidget);
     });
   });
+
+  group('the live thinking block', () {
+    testWidgets('an open block with nothing in it yet already says Thinking',
+        (tester) async {
+      // The empty moment matters: the header has to be on screen before the
+      // first reasoning token, or the bubble is blank for the whole of
+      // time-to-first-token. A COMPLETE empty segment is still skipped.
+      final segment = ThinkingSegment('', isComplete: false, startedAt: DateTime.now());
+
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        searchSegments: [segment],
+      )));
+      await tester.pump();
+
+      expect(find.text('Thinking...'), findsOneWidget);
+      expect(find.byKey(ObjectKey(segment)), findsOneWidget);
+    });
+
+    testWidgets('completing the block keeps the same widget and reads its time',
+        (tester) async {
+      final segment = ThinkingSegment('', isComplete: false, startedAt: DateTime.now());
+      final bubble = ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        searchSegments: [segment],
+      );
+
+      await tester.pumpWidget(_host(bubble));
+      await tester.pump();
+      final live = tester.element(find.byKey(ObjectKey(segment)));
+
+      // Exactly what ChatPageViewModel does when the turn ends: the same
+      // instance is filled in and closed, never replaced.
+      segment.text = 'Weighed two sources.';
+      segment.isComplete = true;
+      segment.elapsedSeconds = 3;
+
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        searchSegments: [segment],
+      )));
+      await tester.pump();
+
+      // Same element: the block collapses in place, keeping its stopwatch
+      // and its expand animation, instead of vanishing and reappearing as
+      // a fresh "Thought" row below.
+      expect(identical(tester.element(find.byKey(ObjectKey(segment))), live),
+          isTrue);
+      expect(find.text('Thought for 3 seconds'), findsOneWidget);
+    });
+
+    testWidgets('a reloaded message reads how long it thought for',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ThinkingSegment('Earlier reasoning.', elapsedSeconds: 5),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Thought for 5 seconds'), findsOneWidget);
+    });
+
+    testWidgets('a complete block with no recorded time still just says Thought',
+        (tester) async {
+      // Every segment persisted before elapsedSeconds existed.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [ThinkingSegment('Earlier reasoning.')],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Thought'), findsOneWidget);
+    });
+  });
 }

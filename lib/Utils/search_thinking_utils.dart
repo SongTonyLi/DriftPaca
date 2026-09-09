@@ -33,7 +33,15 @@ String encodeSearchSegments(List<MessageSegment> segments) {
   final data = <Map<String, dynamic>>[];
   for (final segment in segments) {
     if (segment is ThinkingSegment && segment.text.isNotEmpty) {
-      data.add({'type': 'thinking', 'text': segment.text});
+      data.add({
+        'type': 'thinking',
+        'text': segment.text,
+        // Only when it was actually measured: a legacy segment has no
+        // duration to claim, and writing a zero would render as
+        // "Thought for 0 seconds".
+        if (segment.elapsedSeconds != null)
+          'elapsedSeconds': segment.elapsedSeconds,
+      });
     } else if (segment is SearchCardSegment && segment.query.isNotEmpty) {
       data.add({
         'type': 'search',
@@ -115,7 +123,13 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
     for (final item in data) {
       final type = item['type'] as String?;
       if (type == 'thinking') {
-        segments.add(ThinkingSegment(item['text'] as String? ?? ''));
+        // Complete by construction (the default): nothing streams into a
+        // message read back from the database, and startedAt is live-only
+        // bookkeeping with nothing left to time.
+        segments.add(ThinkingSegment(
+          item['text'] as String? ?? '',
+          elapsedSeconds: item['elapsedSeconds'] as int?,
+        ));
       } else if (type == 'search') {
         final urls = (item['urls'] as List?)
                 ?.map((u) => SearchURLStatus(

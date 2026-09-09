@@ -13,6 +13,7 @@ import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 import 'package:llamaseek/Services/services.dart';
@@ -47,6 +48,49 @@ class ChatPageViewModel extends ChangeNotifier {
   /// Message segments for the current search-augmented response (ephemeral)
   final List<MessageSegment> _searchSegments = [];
   List<MessageSegment> get searchSegments => List.unmodifiable(_searchSegments);
+
+  /// What the running research loop is doing right now, and since when.
+  /// Both null outside a run — [_beginWebSearch] and [_endWebSearch] reset
+  /// them — so the activity strip can never outlive the run it describes.
+  ResearchPhase? _researchPhase;
+  ResearchPhase? get researchPhase => _researchPhase;
+
+  DateTime? _researchPhaseStartedAt;
+  DateTime? get researchPhaseStartedAt => _researchPhaseStartedAt;
+
+  /// Throttle for the `onThinkingDelta` callback. Reasoning arrives token
+  /// by token and every token would otherwise rebuild the whole list;
+  /// 32 ms is the same budget ChatProvider's own `touch()` keeps.
+  final Stopwatch _thinkingNotifyThrottle = Stopwatch();
+
+  /// The one live thinking block, if a turn is currently reasoning into it.
+  ThinkingSegment? _openThinking() => _searchSegments
+      .whereType<ThinkingSegment>()
+      .where((segment) => !segment.isComplete)
+      .lastOrNull;
+
+  /// Closes the live thinking block, stamping how long it ran.
+  ///
+  /// [text] replaces what the deltas accumulated when the caller has the
+  /// turn's authoritative full text (onSearchThinking does); otherwise
+  /// whatever streamed in stands. Called from every exit a turn has, since
+  /// the answering turn's reasoning is never reported to onSearchThinking.
+  void _completeOpenThinking({String? text}) {
+    final open = _openThinking();
+    if (open == null) return;
+    if (text != null) open.text = text;
+    open.isComplete = true;
+    final startedAt = open.startedAt;
+    if (startedAt != null) {
+      open.elapsedSeconds = DateTime.now().difference(startedAt).inSeconds;
+    }
+  }
+
+  /// Clears the phase state a finished or superseded run left behind.
+  void _resetResearchPhase() {
+    _researchPhase = null;
+    _researchPhaseStartedAt = null;
+  }
 
   /// Whether the user has accepted the web search disclosure
   bool get webSearchConsented => Hive.box('settings').get('webSearchConsented', defaultValue: false);
@@ -473,13 +517,58 @@ class ChatPageViewModel extends ChangeNotifier {
   Object _beginWebSearch() {
     _isSearching = true;
     _searchSegments.clear();
+    // A new run starts with nothing to report: the previous run's last
+    // phase must not be on screen while this one is still starting up.
+    _resetResearchPhase();
+    _thinkingNotifyThrottle.reset();
     notifyListeners();
 
     final token = Object();
     _webSearchToken = token;
     _chatProvider.setWebSearchCallbacks(
+      // The turn's authoritative full reasoning, reported once the turn
+      // ends. It closes the block the deltas have been filling — same
+      // instance, so the widget rendering it keeps its element rather than
+      // being replaced by a collapsed "Thought" row — and only appends a
+      // new one when nothing was streamed at all (the legacy path).
       onSearchThinking: (thinking) {
-        _searchSegments.add(ThinkingSegment(thinking));
+        if (_openThinking() != null) {
+          _completeOpenThinking(text: thinking);
+        } else {
+          _searchSegments.add(ThinkingSegment(thinking));
+        }
+        notifyListeners();
+      },
+      // One reasoning token. Appends into the open block, opening one if
+      // this is the turn's first token.
+      onThinkingDelta: (delta) {
+        final open = _openThinking();
+        if (open == null) {
+          _searchSegments
+              .add(ThinkingSegment(delta, isComplete: false, startedAt: DateTime.now()));
+          _thinkingNotifyThrottle.reset();
+          _thinkingNotifyThrottle.start();
+          notifyListeners();
+          return;
+        }
+        open.text += delta;
+        if (!_thinkingNotifyThrottle.isRunning ||
+            _thinkingNotifyThrottle.elapsedMilliseconds >= 32) {
+          _thinkingNotifyThrottle.reset();
+          _thinkingNotifyThrottle.start();
+          notifyListeners();
+        }
+      },
+      // The run moved on to a new stage. Never throttled: a phase change
+      // is exactly the moment the activity strip has to redraw.
+      onPhase: (phase) {
+        _researchPhase = phase;
+        _researchPhaseStartedAt = DateTime.now();
+        if (phase != ResearchPhase.framingGoal) {
+          final ledger =
+              _searchSegments.whereType<ResearchLedgerSegment>().lastOrNull;
+          ledger?.isDeriving = false;
+        }
         notifyListeners();
       },
       // Called once, by ChatProvider, just before the assistant message is
@@ -585,6 +674,10 @@ class ChatPageViewModel extends ChangeNotifier {
         }
       },
       onAnswerStart: () {
+        // Before the early returns: the answering turn's reasoning is never
+        // handed to onSearchThinking, so this is where its block closes —
+        // whether or not an answer divider is warranted.
+        _completeOpenThinking();
         if (_searchSegments.whereType<AnswerSegment>().isNotEmpty) return;
         if (_searchSegments.whereType<SearchCardSegment>().isEmpty) return;
         _searchSegments.add(AnswerSegment());
@@ -646,12 +739,18 @@ class ChatPageViewModel extends ChangeNotifier {
         ];
         final ledger =
             _searchSegments.whereType<ResearchLedgerSegment>().lastOrNull;
+        // The panel opens before the goal call returns, with the user's own
+        // question standing in for the objective — say so, rather than
+        // letting it read as a derived goal that happens to be verbatim.
+        final isDeriving = _researchPhase == ResearchPhase.framingGoal;
         if (ledger != null) {
           ledger.objective = objective;
           ledger.entries = entries;
+          ledger.isDeriving = isDeriving;
         } else {
-          _searchSegments
-              .add(ResearchLedgerSegment(objective: objective, entries: entries));
+          _searchSegments.add(ResearchLedgerSegment(
+              objective: objective, entries: entries)
+            ..isDeriving = isDeriving);
         }
         notifyListeners();
       },
@@ -735,6 +834,10 @@ class ChatPageViewModel extends ChangeNotifier {
   /// card that never finished comes back claiming it searched and found
   /// nothing.
   void _finalizeSearchCards() {
+    // Nothing will stream into the live thinking block after this point, so
+    // close it here too — otherwise a run that ended mid-reasoning persists
+    // (and re-renders) a block that claims to still be thinking.
+    _completeOpenThinking();
     // A clarification the run stopped waiting on is closed the same way,
     // so a reloaded message never shows a card that is still asking.
     for (final card in _searchSegments.whereType<ClarificationSegment>()) {
@@ -777,6 +880,8 @@ class ChatPageViewModel extends ChangeNotifier {
     // was persisted, say) gets its spinner resolved here.
     _finalizeSearchCards();
     _isSearching = false;
+    _resetResearchPhase();
+    _thinkingNotifyThrottle.stop();
     notifyListeners();
   }
 }

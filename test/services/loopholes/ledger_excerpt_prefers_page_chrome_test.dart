@@ -1,32 +1,46 @@
-/// Probe: the research ledger's supporting excerpt is the TOP of the fetched
-/// page (navigation chrome), not the passage that made the page win.
+/// Regression: the research ledger's supporting excerpt is the passage that
+/// made the source win, not the top of the fetched page (its navigation
+/// chrome).
 ///
-/// `SearchAgent._executeToolCalls` (search_agent.dart:966-972) builds the
-/// excerpt candidate list as `[...?r.chunks, r.pageContent, r.snippet]` —
-/// the whole extracted page is ranked as one candidate alongside the chunks
-/// it was split into. Ranking is `queryCoverage` (text_similarity.dart:74),
-/// asymmetric containment with only the QUERY's trigram count as the
-/// denominator, so a superset text can never score below any of its parts:
-/// unless one single 1,500-char chunk happens to contain 100% of the query's
-/// character trigrams, `pageContent` (up to `_maxPageContentLength` =
-/// 200,000 chars) strictly beats every chunk. `selectSupportingExcerpt` then
-/// returns `best.substring(0, 220)` (research_ledger.dart:463) — the first
-/// 220 characters of the winner. For the page that just won on a sentence
-/// several thousand characters in, those 220 characters are the site's
-/// navigation sidebar.
+/// Two decoupled defects had to be closed to get here, and this file pins
+/// both because either one alone reopens the hole.
 ///
-/// The scoring window and the returned window are decoupled: the candidate
-/// is judged on 200,000 chars and quoted from its first 220. That is exactly
-/// the failure `_maxPageContentLength`'s own doc comment
-/// (web_search_service.dart:44-55) says was fixed for CHUNK ranking — "the
-/// ranker was picking the best of several thousand characters of nothing" —
-/// reintroduced by adding the whole page back as a candidate.
+/// 1. A page was ranked against its own chunks.
+///    `SearchAgent._executeToolCalls` built the candidate list as
+///    `[...?r.chunks, r.pageContent, r.snippet]` — the whole extracted page
+///    as one candidate alongside the chunks it was split into. Ranking is
+///    `queryCoverage` (text_similarity.dart:69-79), asymmetric containment
+///    with only the QUERY's trigram count as the denominator, so a superset
+///    text can never score below any of its parts: `pageContent` (up to
+///    `_maxPageContentLength` = 200,000 chars) beat every chunk unless one
+///    single 1,500-char chunk happened to hold 100% of the query's
+///    trigrams. Worse, candidates are pooled across ALL of a round's
+///    results and ties break toward the earlier candidate, so several pages
+///    saturating at 1.0 meant the evidence was simply the first result's.
+///    `SearchAgent.excerptCandidates` now applies the precedence
+///    `WebSearchService.formatResultsAsContext` already used for the same
+///    data (web_search_service.dart:302-306) — chunks when the page was
+///    chunked, else the page, else the snippet — so a page and its own
+///    chunks are never siblings in one ranking.
 ///
-/// The excerpt that loses this way is what `ResearchLedger.recordEvidence`
-/// stores, what `_checklistLine` renders as `Excerpt: "…"` on every `[x]`
-/// line, what `ChatProvider` appends to the SYSTEM prompt every turn, what
-/// the research panel shows the user as that sub-goal's evidence, and the
-/// only per-sub-goal evidence text that survives `_compactStaleRounds`.
+/// 2. The scoring window and the returned window were decoupled.
+///    `selectSupportingExcerpt` judged a candidate on its entire length and
+///    then returned `best.substring(0, 220)` — the first 220 characters of
+///    the winner, wherever the query's terms actually were. That is exactly
+///    the failure `_maxPageContentLength`'s own doc comment
+///    (web_search_service.dart:44-55) records as fixed for CHUNK ranking —
+///    "the ranker was picking the best of several thousand characters of
+///    nothing" — reintroduced one level down, and it survives fixing (1):
+///    with only the page dropped, four of the five phrasings below still
+///    quoted 220 characters that do not contain the answer. It now scores
+///    the winner's boundary-aligned <=220-char windows and quotes the one
+///    that earned the score, marking elided sides with `...`.
+///
+/// The excerpt this produces is what `ResearchLedger.recordEvidence` stores
+/// for the life of the run, what `_checklistLine` renders as `Excerpt: "…"`
+/// on every `[x]` line, what `ChatProvider` appends to the SYSTEM prompt
+/// every turn (chat_provider.dart:1166), and the only per-sub-goal evidence
+/// text that survives `_compactStaleRounds`.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -91,13 +105,14 @@ String buildPage() {
   return paras.join('\n\n');
 }
 
-/// The candidate list exactly as search_agent.dart:966-972 builds it for a
-/// single result: every chunk, then the whole page, then the snippet.
-List<String> candidatesFor(WebSearchResult r) => <String?>[
-      ...?r.chunks,
-      r.pageContent,
-      r.snippet,
-    ].whereType<String>().toList();
+/// The candidate list for a single result, taken from PRODUCTION rather
+/// than restated here. This helper used to hand-copy the list literal out
+/// of `search_agent.dart`, which is precisely how a test can keep passing
+/// while the code it claims to describe moves: the copy is what the test
+/// measures, not the shipped builder. Delegating means a future edit to
+/// the real precedence rule is felt here immediately.
+List<String> candidatesFor(WebSearchResult r) =>
+    SearchAgent.excerptCandidates(r);
 
 WebSearchResult buildResult() {
   final page = buildPage();
@@ -114,8 +129,7 @@ WebSearchResult buildResult() {
 }
 
 void main() {
-  group('whole-page candidate wins the ranking, then is quoted from the top',
-      () {
+  group('the whole page is never ranked against its own chunks', () {
     test('pageContent strictly outscores every chunk it was split from', () {
       final result = buildResult();
       final page = result.pageContent!;
@@ -130,48 +144,52 @@ void main() {
       expect(pageScore, 1.0,
           reason: 'queryCoverage only counts how many of the QUERY\'s '
               'trigrams appear in the text, so the superset every chunk was '
-              'split from saturates at 1.0');
+              'split from saturates at 1.0 — this is the property that '
+              'makes the precedence rule necessary, not a bug in the score');
       expect(bestChunkScore, lessThan(pageScore),
           reason: 'no single 1500-char chunk holds 100% of the query\'s '
-              'trigrams (best was $bestChunkScore), so pageContent wins the '
-              'ranking outright — selectSupportingExcerpt breaks ties toward '
-              'the earlier candidate, and the whole page needs no tie');
+              'trigrams (best was $bestChunkScore), so a page offered '
+              'alongside its own chunks would win outright and no chunk '
+              'could ever be quoted; excerptCandidates keeps them apart');
     });
 
-    test('the chosen excerpt is the navigation sidebar, not the evidence', () {
+    test('the chosen excerpt is the passage that carries the answer', () {
       final result = buildResult();
       final excerpt = selectSupportingExcerpt(candidatesFor(result), _query);
 
       expect(excerpt, isNotNull);
-      expect(excerpt!, startsWith('Jump to content Main menu'),
-          reason: 'the winner is pageContent and selectSupportingExcerpt '
-              'returns best.substring(0, 220) — the first 220 chars of a '
-              '${result.pageContent!.length}-char document, which for a '
-              'reference page is chrome');
-      expect(excerpt, isNot(contains(_figure)),
-          reason: 'the sentence that made this candidate win the ranking is '
-              '${result.pageContent!.indexOf(_figure)} chars in, far outside '
-              'the 220-char window that is actually quoted — the scoring '
-              'window and the returned window are decoupled');
+      expect(excerpt!, contains(_figure),
+          reason: 'the answering sentence is '
+              '${result.pageContent!.indexOf(_figure)} chars into a '
+              '${result.pageContent!.length}-char document; the excerpt is '
+              'now the window that earned the score, not the winner\'s '
+              'first 220 characters');
+      expect(excerpt, isNot(startsWith('Jump to content')),
+          reason: 'quoting from character 0 of a reference page is how the '
+              'ledger used to record navigation chrome as evidence');
+      expect(excerpt, isNot(contains('Main menu')),
+          reason: 'no part of the sidebar survives into the record');
     });
 
-    test('the returned text is nearly irrelevant to the query that picked it',
-        () {
+    test('the returned text is what made the candidate win', () {
       final result = buildResult();
       final excerpt = selectSupportingExcerpt(candidatesFor(result), _query)!;
 
-      final scoreOfWinner = queryCoverage(_query, result.pageContent!);
       final scoreOfWhatWasReturned = queryCoverage(_query, excerpt);
+      final scoreOfOldHeadOfPage =
+          queryCoverage(_query, result.pageContent!.substring(0, 220));
 
-      expect(scoreOfWinner, 1.0);
-      expect(scoreOfWhatWasReturned, lessThan(0.35),
-          reason: 'the candidate was selected on a score of $scoreOfWinner '
-              'but the bytes actually stored as evidence score '
-              '$scoreOfWhatWasReturned against the same query — the ranking '
-              'says nothing about the text it hands back');
+      expect(scoreOfWhatWasReturned, greaterThan(0.9),
+          reason: 'the bytes actually stored as evidence score '
+              '$scoreOfWhatWasReturned against the query that selected '
+              'them — the ranking now describes the text it hands back');
+      expect(scoreOfWhatWasReturned, greaterThan(scoreOfOldHeadOfPage),
+          reason: 'the head of the page, which the old code returned, '
+              'scores only $scoreOfOldHeadOfPage against the same query');
     });
 
-    test('a strictly better excerpt was available and was passed over', () {
+    test('the whole-page candidate can no longer displace the answering chunk',
+        () {
       final result = buildResult();
       final chunks = result.chunks!;
 
@@ -180,30 +198,30 @@ void main() {
               c.contains(_figure) && queryCoverage(_query, c) > 0.9)
           .toList();
       expect(answerChunks, isNotEmpty,
-          reason: 'a chunk carrying the actual figure scored above 0.9 — it '
-              'lost only because the superset it came from scored 1.0');
+          reason: 'a chunk carrying the actual figure scores above 0.9 — it '
+              'used to lose only because the superset it came from '
+              'scored 1.0');
 
-      // Isolate the cause: same ranker, same query, same candidates, with
-      // ONLY the whole-page entry removed from the list.
-      final withoutWholePage = selectSupportingExcerpt(
-        <String>[...chunks, result.snippet],
-        _query,
+      expect(candidatesFor(result), isNot(contains(result.pageContent)),
+          reason: 'chunks exist, so the page is not offered beside them');
+      expect(
+        selectSupportingExcerpt(candidatesFor(result), _query),
+        selectSupportingExcerpt(<String>[...chunks, result.snippet], _query),
+        reason: 'the production candidate list and a hand-built chunks-only '
+            'list now agree — the inverse of what this file used to prove, '
+            'where the single extra whole-page entry turned the evidence '
+            'into sidebar links',
       );
-      expect(withoutWholePage, contains(_figure),
-          reason: 'drop pageContent from search_agent.dart:966-972 and the '
-              'very same call returns an excerpt that quotes the answer; the '
-              'single extra candidate is what turns the evidence into '
-              'sidebar links');
     });
   });
 
   group('this is the normal case, not a knife-edge one', () {
-    // The defect does not need the query to be tuned: pageContent's score
-    // is >= every chunk's by construction (chunk trigrams are a subset of
-    // the page's), so a chunk only survives by TYING, which needs the
-    // query's whole trigram set packed inside one 1,500-char window.
-    // Ordinary phrasings of the same user question don't do that.
-    test('five natural phrasings of one question all yield the sidebar', () {
+    // The fix must not need the query tuned to the document either. Every
+    // ordinary phrasing of the same user question has to land on the same
+    // answering passage, including ones whose trigrams are nowhere near
+    // packed into a single window.
+    test('five natural phrasings of one question all yield the answering '
+        'passage', () {
       const phrasings = [
         'Tokyo metropolitan area population 2025 estimate',
         'population of the Tokyo metropolitan area in 2025',
@@ -215,36 +233,38 @@ void main() {
 
       for (final q in phrasings) {
         final excerpt = selectSupportingExcerpt(candidatesFor(result), q)!;
-        expect(excerpt, startsWith('Jump to content'),
-            reason: 'query "$q": pageContent scored '
-                '${queryCoverage(q, result.pageContent!)} against a best '
-                'chunk of ${result.chunks!.map((c) => queryCoverage(q, c)).reduce((a, b) => a > b ? a : b)}, '
-                'so the excerpt is the top of the document');
-        expect(excerpt, isNot(contains(_figure)));
+        expect(excerpt, contains(_figure),
+            reason: 'query "$q": the chosen window scores '
+                '${queryCoverage(q, excerpt)} against it, versus '
+                '${queryCoverage(q, result.pageContent!.substring(0, 220))} '
+                'for the head of the page the old code quoted');
+        expect(excerpt, isNot(startsWith('Jump to content')));
       }
     });
 
-    test('the escape hatch is a chunk that TIES, which needs near-verbatim '
-        'phrasing', () {
-      // Stated so the boundary is on record rather than implied: when one
-      // chunk does contain every trigram the page does, ties break toward
-      // the earlier candidate and the chunk wins. That is the only way the
-      // whole-page candidate loses.
+    test('the result no longer depends on how closely the query is phrased',
+        () {
+      // Before the fix the only way a chunk beat the whole page was by
+      // TYING its containment score, which took near-verbatim phrasing.
+      // Both ends of that spectrum now land on the answer, so the tie is
+      // no longer the escape hatch it used to be.
       const verbatimish = 'estimated population Tokyo metropolitan area 2025';
+      const loosest = 'Tokyo population';
       final result = buildResult();
-      final best = result.chunks!
-          .map((c) => queryCoverage(verbatimish, c))
-          .reduce((a, b) => a > b ? a : b);
 
-      expect(best, queryCoverage(verbatimish, result.pageContent!),
-          reason: 'a chunk matched the whole page\'s score exactly');
-      expect(selectSupportingExcerpt(candidatesFor(result), verbatimish),
-          contains(_figure),
-          reason: 'and only then does the ledger quote the evidence');
+      for (final q in const [verbatimish, loosest]) {
+        final excerpt = selectSupportingExcerpt(candidatesFor(result), q)!;
+        expect(excerpt, contains(_figure),
+            reason: 'query "$q" quotes the evidence; note the two windows '
+                'are not the same bytes — the window is chosen per query, '
+                'so this is not one fixed answer being returned twice');
+        expect(excerpt, isNot(startsWith('Jump to content')));
+      }
     });
   });
 
-  group('the sidebar reaches the ledger, the brief and the system prompt', () {
+  group('the evidence reaches the ledger, the brief and the system prompt',
+      () {
     /// Drives a real SearchAgent for one search round and returns the
     /// research brief handed to the SECOND turn — the one that has seen the
     /// search results. ChatProvider appends this string to the system
@@ -279,22 +299,25 @@ void main() {
       return briefs.last;
     }
 
-    test('the checklist line cites the source and quotes the sidebar',
-        () async {
+    test('the checklist line cites the source and quotes the answering '
+        'passage', () async {
       final brief = await briefAfterOneSearch(buildResult());
 
       final line = brief
           .split('\n')
           .firstWhere((l) => l.startsWith('- [x]'), orElse: () => '');
       expect(line, isNotEmpty, reason: 'the round recorded evidence');
-      expect(line, contains('Excerpt: "Jump to content Main menu'),
+      expect(line, contains('Excerpt: "'));
+      expect(line, contains(_figure),
           reason: 'the ledger line the model reads every turn presents the '
-              'wiki sidebar as what source [1] said about "$_query"');
-      expect(brief, isNot(contains(_figure)),
-          reason: 'the figure the page actually contains never enters the '
-              'brief, so once _compactStaleRounds rewrites this round\'s raw '
+              'answering sentence as what source [1] said about "$_query"');
+      expect(brief, contains(_figure),
+          reason: 'so once _compactStaleRounds rewrites this round\'s raw '
               'tool text to a citation-only line, the model\'s surviving '
-              'record of source [1] is navigation chrome');
+              'record of source [1] still carries the figure');
+      expect(brief, isNot(contains('Jump to content')),
+          reason: 'and none of the page\'s navigation chrome is presented '
+              'as evidence anywhere in the brief');
     });
   });
 }

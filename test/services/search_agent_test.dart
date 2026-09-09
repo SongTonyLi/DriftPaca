@@ -6,6 +6,7 @@ import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
+import 'package:llamaseek/Utils/text_splitter.dart';
 
 final history = [
   OllamaMessage('What is Vietnam GDP?', role: OllamaMessageRole.user),
@@ -2153,6 +2154,142 @@ void main() {
       // backend outage.
       expect(outcome.searchCount, 2);
       expect(outcome.reason, isNot(SearchTerminationReason.searchUnavailable));
+    });
+  });
+
+  group('SearchAgent.excerptCandidates', () {
+    // The ledger's supporting excerpt is ranked by queryCoverage, which is
+    // asymmetric containment: a text can never score below any of its own
+    // substrings. Offering a page AND the chunks it was split into as
+    // siblings therefore guaranteed the page won, and the excerpt became
+    // its first 220 characters — a reference page's navigation sidebar.
+    // This helper is the precedence rule that prevents that, and it is the
+    // same one formatResultsAsContext uses to pick what the model is shown.
+    test('offers the chunks and the snippet, never the page beside them', () {
+      final result = WebSearchResult(
+        title: 'T',
+        snippet: 'the snippet',
+        url: 'https://example.invalid/a',
+        pageContent: 'first chunk second chunk',
+        chunks: const ['first chunk', 'second chunk'],
+      );
+
+      expect(SearchAgent.excerptCandidates(result),
+          ['first chunk', 'second chunk', 'the snippet']);
+      expect(SearchAgent.excerptCandidates(result),
+          isNot(contains(result.pageContent)),
+          reason: 'the superset of the chunks must not compete with them');
+    });
+
+    test('falls back to the whole page when nothing was chunked', () {
+      for (final chunks in <List<String>?>[null, const []]) {
+        final result = WebSearchResult(
+          title: 'T',
+          snippet: 'the snippet',
+          url: 'https://example.invalid/a',
+          pageContent: 'the whole page',
+          chunks: chunks,
+        );
+        expect(SearchAgent.excerptCandidates(result),
+            ['the whole page', 'the snippet'],
+            reason: 'with chunks == $chunks there is no finer text to rank, '
+                'so dropping the page would throw the evidence away');
+      }
+    });
+
+    test('falls back to the snippet alone, and drops blank candidates', () {
+      final noContent = WebSearchResult(
+        title: 'T',
+        snippet: 'the snippet',
+        url: 'https://example.invalid/a',
+      );
+      expect(SearchAgent.excerptCandidates(noContent), ['the snippet']);
+
+      final blanks = WebSearchResult(
+        title: 'T',
+        snippet: '   ',
+        url: 'https://example.invalid/a',
+        chunks: const ['', '  ', 'real text'],
+      );
+      expect(SearchAgent.excerptCandidates(blanks), ['real text'],
+          reason: 'selectSupportingExcerpt skips blanks anyway; keeping them '
+              'out of the list keeps the ranking honest about how many '
+              'candidates a source actually offered');
+    });
+  });
+
+  group('the excerpt recorded for a real round', () {
+    const answer =
+        'The mill closed in 1974 after the last waterwheel was dismantled.';
+    const query = 'mill closed 1974 waterwheel dismantled';
+
+    /// A page shaped like a real extraction: site chrome at the top, the
+    /// answering sentence several thousand characters down, more prose
+    /// after it.
+    String longPage() {
+      final chrome = List.filled(
+        6,
+        'Skip to main content Navigation menu Sign in Create account '
+            'Contents Random page Donate Tools.',
+      ).join(' ');
+      final filler = List.filled(
+        14,
+        'The archive holds letters, ledgers and photographs donated by '
+            'local families over several decades.',
+      ).join(' ');
+      final more = List.filled(
+        14,
+        'Volunteers catalogue the collection on weekends throughout the '
+            'year and publish a newsletter.',
+      ).join(' ');
+      return '$chrome\n\n$filler\n\n$filler $answer\n\n$more';
+    }
+
+    test('quotes the answering passage, not the head of the page', () async {
+      final page = longPage();
+      final result = WebSearchResult(
+        title: 'Local history archive',
+        snippet: 'An archive of local history material.',
+        url: 'https://example.invalid/archive',
+        pageContent: page,
+        // Exactly what WebSearchService.searchAndExtract sets.
+        chunks: splitText(page, chunkSize: 1500, overlap: 200),
+      );
+      expect(result.chunks!.length, greaterThan(1),
+          reason: 'the fixture has to be long enough to be chunked at all');
+
+      final requests = <SearchAgentRequest>[];
+      var turn = 0;
+      await agent(
+        streamTurn: (req) {
+          requests.add(req);
+          turn++;
+          if (turn == 1) return Stream.fromIterable([searchChunk(query)]);
+          return Stream.fromIterable([answerChunk('done [1]')]);
+        },
+        search: (_) async => [result],
+      ).run(history: history, listener: const SearchAgentListener());
+
+      final brief = requests.last.researchBrief;
+      expect(brief, contains(answer),
+          reason: 'the ledger line the model re-reads every turn carries the '
+              'sentence that made this source win');
+      expect(brief, isNot(contains(page.substring(0, 220))),
+          reason: 'and not the first 220 characters of the document, which '
+              'for a page with site chrome on top is navigation furniture');
+
+      final line = brief
+          .split('\n')
+          .firstWhere((l) => l.startsWith('- [x]'), orElse: () => '');
+      final quoted = RegExp(r'Excerpt: "(.*)"$').firstMatch(line)!.group(1)!;
+      final verbatim = quoted
+          .replaceAll(RegExp(r'^\.\.\.'), '')
+          .replaceAll(RegExp(r'\.\.\.$'), '');
+      expect(result.chunks!.any((c) => c.contains(verbatim)), isTrue,
+          reason: 'the excerpt is a verbatim window of one of the chunks the '
+              'model was shown, so the ledger and the sources agree');
+      expect(verbatim.length, lessThanOrEqualTo(220),
+          reason: 'one checklist line stays bounded however long the page is');
     });
   });
 }

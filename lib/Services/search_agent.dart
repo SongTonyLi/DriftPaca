@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
@@ -926,6 +927,39 @@ class SearchAgent {
     }
   }
 
+  /// The text offered to [selectSupportingExcerpt] for one result, in the
+  /// same precedence [WebSearchService.formatResultsAsContext] uses to
+  /// decide what the model is actually shown: the chunks when the page was
+  /// chunked, else the whole page, else the snippet.
+  ///
+  /// A page and the chunks it was split into are NEVER both offered. They
+  /// used to be, and the ranking could not survive it: [queryCoverage] is
+  /// asymmetric containment with only the QUERY's trigram count in the
+  /// denominator, so a text can never score below any of its own
+  /// substrings. The whole page therefore won every ranking it entered —
+  /// and since candidates are pooled across all of a round's results and
+  /// ties break toward the earlier candidate, a 200,000-char page
+  /// saturating at 1.0 meant the stored evidence degenerated to the
+  /// opening characters of the FIRST result whatever it said: on a
+  /// reference page, its navigation sidebar.
+  ///
+  /// Dropping the whole page when chunks exist costs nothing in practice:
+  /// production chunks are always `splitText(pageContent, chunkSize: 1500,
+  /// overlap: 200)` (web_search_service.dart:177-185), so any phrase up to
+  /// the 200-char overlap survives intact inside some chunk.
+  @visibleForTesting
+  static List<String> excerptCandidates(WebSearchResult r) {
+    final chunks = r.chunks;
+    final page = r.pageContent;
+    return <String>[
+      if (chunks != null && chunks.isNotEmpty)
+        ...chunks
+      else if (page != null && page.isNotEmpty)
+        page,
+      r.snippet,
+    ].where((c) => c.trim().isNotEmpty).toList();
+  }
+
   Future<_SearchExec> _executeToolCalls(
     List<OllamaToolCall> toolCalls, {
     required int remaining,
@@ -998,13 +1032,9 @@ class SearchAgent {
       visited.addAll(results.map((r) => r.url));
       if (results.isNotEmpty) {
         anyNonEmptyResults = true;
-        final candidates = <String?>[
-          for (final r in results) ...[
-            ...?r.chunks,
-            r.pageContent,
-            r.snippet,
-          ],
-        ].whereType<String>().toList();
+        final candidates = [
+          for (final r in results) ...excerptCandidates(r),
+        ];
         ledger.recordEvidence(
           p.subGoal!,
           sourceIdStart: offset + 1,

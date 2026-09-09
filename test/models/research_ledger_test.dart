@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Utils/text_similarity.dart';
 
 void main() {
   group('ResearchLedger.findMatch', () {
@@ -350,6 +351,90 @@ void main() {
     test('returns null when every candidate is empty or blank', () {
       expect(selectSupportingExcerpt(['', '   '], 'anything'), isNull);
       expect(selectSupportingExcerpt([], 'anything'), isNull);
+    });
+
+    // A candidate longer than maxLength is quoted from the window that
+    // earned it the win, not from character 0. The old behavior — score the
+    // whole candidate, return its opening — is what made the ledger record
+    // a reference page's navigation sidebar as evidence for every sub-goal
+    // it was cited on (see loopholes/ledger_excerpt_prefers_page_chrome).
+    group('windowing a candidate longer than maxLength', () {
+      /// ~500 chars of prose that shares no trigrams with the query below,
+      /// so the only thing the ranker can be responding to is the final
+      /// sentence.
+      final offTopicFiller = List.filled(
+        7,
+        'Sourdough starter needs regular feeding to stay active in a warm '
+            'kitchen.',
+      ).join(' ');
+
+      const onTopicTail =
+          'Vietnam GDP grew 7.1% in 2024, led by electronics exports.';
+
+      test('quotes the on-topic tail and marks the elided head with ...', () {
+        final candidate = '$offTopicFiller $onTopicTail';
+        expect(candidate.length, greaterThan(220),
+            reason: 'the windowing path only runs above maxLength');
+
+        final result = selectSupportingExcerpt([candidate], 'Vietnam GDP 2024');
+
+        expect(result, isNotNull);
+        expect(result!, contains(onTopicTail),
+            reason: 'the sentence that earned the candidate its score is the '
+                'sentence that gets stored');
+        expect(result, startsWith('...'),
+            reason: 'text before the quoted window was dropped, and the '
+                'excerpt says so rather than passing itself off as the '
+                'start of the source');
+        expect(result, isNot(endsWith('...')),
+            reason: 'the window runs to the end of the candidate, so there '
+                'is nothing on the right to mark as elided');
+      });
+
+      test('falls back to the opening window when no window scores at all',
+          () {
+        // No trigram of the query appears anywhere in the candidate, so
+        // every window ties at 0.0 and the earliest wins — the old
+        // head-of-candidate behavior, kept deliberately as the no-signal
+        // fallback since one window is then as good as another.
+        const query = 'zebra migration corridors';
+        final candidate = List.filled(40, 'ppp qqq').join(' ');
+        expect(candidate.length, greaterThan(220));
+        expect(queryCoverage(query, candidate), 0.0,
+            reason: 'the premise has to be checked, not assumed: the whole '
+                'candidate is the superset of every window, so zero '
+                'coverage here means zero on all of them');
+
+        final result = selectSupportingExcerpt([candidate], query)!;
+
+        expect(result, isNot(startsWith('...')),
+            reason: 'the first window is quoted, so nothing was elided on '
+                'the left to mark');
+        expect(result, endsWith('...'),
+            reason: 'but the rest of the candidate was dropped');
+        expect(candidate, startsWith(result.substring(0, result.length - 3)),
+            reason: 'and what is quoted is the candidate\'s own opening');
+      });
+
+      test('the quoted window is verbatim from exactly one candidate, and '
+          'never longer than maxLength', () {
+        final candidates = <String>[
+          List.filled(6, 'Unrelated notes about lighthouse masonry.').join(' '),
+          '$offTopicFiller $onTopicTail',
+          'short snippet',
+        ];
+
+        final result = selectSupportingExcerpt(candidates, 'Vietnam GDP 2024')!;
+        final quoted =
+            result.replaceAll(RegExp(r'^\.\.\.'), '').replaceAll(RegExp(r'\.\.\.$'), '');
+
+        expect(quoted.length, lessThanOrEqualTo(220),
+            reason: 'splitText(chunkSize: 220, overlap: 0) never emits a '
+                'window over the cap, so the ledger line stays bounded');
+        expect(candidates.where((c) => c.contains(quoted)).length, 1,
+            reason: 'the excerpt is a verbatim substring of one candidate — '
+                'never stitched together and never invented');
+      });
     });
   });
 }

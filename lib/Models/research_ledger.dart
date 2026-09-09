@@ -1,4 +1,5 @@
 import 'package:llamaseek/Utils/text_similarity.dart';
+import 'package:llamaseek/Utils/text_splitter.dart';
 
 /// A clean restatement of what the user asked, plus the parts of it that
 /// need their own lookup — derived once per run before any searching (see
@@ -439,10 +440,29 @@ class ResearchLedger {
 
 /// Picks the candidate excerpt most relevant to [topicText] (typically the
 /// search query that produced these candidates), so the ledger can quote
-/// something plausibly on-topic rather than an arbitrary chunk. Always
-/// returns one of the given strings verbatim — trimmed and, if needed,
-/// truncated — never invented text. Returns null if every candidate is
-/// empty/blank.
+/// something plausibly on-topic rather than an arbitrary chunk.
+///
+/// Always returns a verbatim substring of ONE of the given strings — never
+/// invented text: the at-most-[maxLength] window of the best-scoring
+/// candidate that itself best covers [topicText], with `...` marking
+/// whichever side of that window was dropped from the candidate. (The
+/// candidate's own provenance is not visible here, so a candidate that is
+/// itself a slice of a larger page carries no marker of that.) Returns null
+/// if every candidate is empty/blank.
+///
+/// The window matters as much as the candidate. This used to return the
+/// winner's first [maxLength] characters, which decoupled the text that was
+/// SCORED from the text that was STORED: a candidate judged on several
+/// thousand characters was then quoted from character 0, so a reference
+/// page that won on a sentence deep in the article was recorded as its
+/// navigation sidebar. That is the same failure
+/// `WebSearchService._maxPageContentLength`'s doc comment records as fixed
+/// for chunk ranking — "the ranker was picking the best of several thousand
+/// characters of nothing" — and it had been reintroduced one level down.
+/// The excerpt is what `recordEvidence` keeps for the life of the run and
+/// what `_checklistLine` re-injects into the model's context every turn
+/// after `SearchAgent._compactStaleRounds` has discarded the round's raw
+/// tool text, so these are the only bytes of evidence that survive.
 String? selectSupportingExcerpt(
   List<String> candidates,
   String topicText, {
@@ -461,5 +481,30 @@ String? selectSupportingExcerpt(
   }
   if (best == null) return null;
   if (best.length <= maxLength) return best;
-  return '${best.substring(0, maxLength).trim()}...';
+
+  // Quote the window that actually earned the score, not the winner's
+  // opening characters. splitText walks paragraph -> line -> sentence ->
+  // word boundaries, so the quote reads as prose rather than cutting a
+  // word in half; overlap: 0 skips the overlap pass, which is what
+  // guarantees every window is itself at most [maxLength].
+  final windows = splitText(best, chunkSize: maxLength, overlap: 0);
+  if (windows.isEmpty) return '${best.substring(0, maxLength).trim()}...';
+  var bestIndex = 0;
+  var bestWindowScore = -1.0;
+  for (var i = 0; i < windows.length; i++) {
+    final score = queryCoverage(topicText, windows[i]);
+    if (score > bestWindowScore) {
+      bestWindowScore = score;
+      bestIndex = i;
+    }
+  }
+  // Strict '>' scanning in order, so ties go to the EARLIEST window — the
+  // same rule WebSearchService._selectTopChunks states for chunk ranking.
+  // It also makes the old head-of-candidate result the fallback for a
+  // candidate whose windows all score zero: with no signal to go on,
+  // quoting the opening is as good as quoting anywhere else.
+  final window = windows[bestIndex];
+  final prefix = bestIndex == 0 ? '' : '...';
+  final suffix = bestIndex == windows.length - 1 ? '' : '...';
+  return '$prefix$window$suffix';
 }

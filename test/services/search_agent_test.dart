@@ -90,6 +90,30 @@ SearchAgent agent({
 }
 
 void main() {
+  test('snippet-only corrective searches retain the gap and terminate', () async {
+    var turn = 0;
+    final snapshots = <List<SubGoal>>[];
+    final requests = <SearchAgentRequest>[];
+    final outcome = await agent(
+      maxSearches: 2,
+      streamTurn: (req) {
+        requests.add(req);
+        turn++;
+        return Stream.value(turn == 1 || turn == 3
+          ? searchChunk('Vietnam GDP')
+          : answerChunk('The available snippets do not establish GDP.'));
+      },
+      search: (_) async => [WebSearchResult(title: 'Indexed result',
+        snippet: 'Vietnam GDP summary', url: 'https://example.org')],
+      assessCoverage: (_) async => ['Vietnam GDP'],
+    ).run(history: history, listener: SearchAgentListener(
+      onLedgerUpdate: (_, goals) => snapshots.add(goals)));
+    expect(outcome.searchCount, 2);
+    expect(snapshots.last.single.outstandingGaps, ['Vietnam GDP']);
+    expect(requests.last.transcript.where((m) => m.role == OllamaMessageRole.tool)
+      .map((m) => m.content).join(), contains('Search snippet only'));
+    expect(turn, lessThanOrEqualTo(5));
+  });
   test('no tool_calls answers directly with tools and memory on first turn', () async {
     final requests = <SearchAgentRequest>[];
     final outcome = await agent(

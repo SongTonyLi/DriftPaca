@@ -777,11 +777,23 @@ class _FailedSourceRow extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                url.domain,
-                style: theme.textTheme.bodySmall?.copyWith(color: muted),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    url.domain,
+                    style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    url.outcome?.label ?? 'Page text unavailable',
+                    style: theme.textTheme.labelSmall?.copyWith(color: muted),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
             ),
             Icon(

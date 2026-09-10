@@ -17,6 +17,14 @@ List<WebSearchResult> twoResults() => [
     ];
 
 void main() {
+  test('snippet-only evidence is explicitly identified', () {
+    final context = WebSearchService.formatResultsAsContext([
+      WebSearchResult(title: 'Result', snippet: 'An indexed summary',
+        url: 'https://example.org'),
+    ]);
+    expect(context, contains('Search snippet only; page content not retrieved'));
+    expect(context, contains('id="1"'));
+  });
   test('idOffset 0 starts source ids at 1 and 2', () {
     final ctx = WebSearchService.formatResultsAsContext(twoResults());
     expect(ctx, contains('<source id="1" name="https://example.com/a"'));

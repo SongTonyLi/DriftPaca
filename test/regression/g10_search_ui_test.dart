@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
+import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
@@ -312,6 +313,59 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       FaviconCache.instance.clearForTest();
+    });
+  });
+
+  group('SearchDetailDialog failed source reasons', () {
+    testWidgets('shows a typed failure reason and keeps the URL tappable',
+        (tester) async {
+      final segment = SearchCardSegment(
+        query: 'q',
+        isComplete: true,
+        urls: [
+          SearchURLStatus(
+            url: 'https://example.com/forbidden',
+            domain: 'example.com',
+            state: SearchURLState.failed,
+            outcome: const PageFetchOutcome(
+              state: PageFetchState.httpError,
+              elapsed: Duration(milliseconds: 50),
+              httpStatus: 403,
+            ),
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_host(SearchDetailDialog(segment: segment)));
+      await tester.pump();
+
+      expect(find.text('Access denied (403)'), findsOneWidget);
+      final row = find.ancestor(
+        of: find.text('Access denied (403)'),
+        matching: find.byType(InkWell),
+      );
+      expect(row, findsOneWidget);
+      expect(tester.widget<InkWell>(row).onTap, isNotNull);
+    });
+
+    testWidgets('labels a legacy unknown failure without inventing a cause',
+        (tester) async {
+      final segment = SearchCardSegment(
+        query: 'q',
+        isComplete: true,
+        urls: [
+          SearchURLStatus(
+            url: 'https://legacy.example.com',
+            domain: 'legacy.example.com',
+            state: SearchURLState.failed,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_host(SearchDetailDialog(segment: segment)));
+      await tester.pump();
+
+      expect(find.text('Page text unavailable'), findsOneWidget);
     });
   });
 

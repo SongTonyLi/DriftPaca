@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Utils/search_thinking_utils.dart';
@@ -58,6 +59,51 @@ void main() {
       expect(card.resultCount, 5);
       expect(card.extractedContent, contains('6.5%'));
       expect(card.isComplete, true);
+    });
+
+    test(
+        'roundtrips fetch failure state and HTTP status without response data',
+        () {
+      final encoded = encodeSearchSegments([
+        SearchCardSegment(
+          query: 'restricted page',
+          urls: [
+            SearchURLStatus(
+              url: 'https://example.com/restricted',
+              domain: 'example.com',
+              state: SearchURLState.failed,
+              outcome: const PageFetchOutcome(
+                state: PageFetchState.httpError,
+                elapsed: Duration(milliseconds: 240),
+                httpStatus: 403,
+                contentType: 'text/html',
+                text: 'Forbidden response body must not be persisted',
+              ),
+            ),
+          ],
+          isComplete: true,
+        ),
+      ]);
+
+      final encodedBody = encoded.substring(
+        '<!--SEARCH_DATA:'.length,
+        encoded.indexOf('-->'),
+      );
+      final persisted = jsonDecode(utf8.decode(base64Decode(encodedBody)))
+          as List<dynamic>;
+      final persistedUrl = (persisted.single as Map<String, dynamic>)['urls']
+          as List<dynamic>;
+      expect(persistedUrl.single, isNot(contains('text')));
+      expect(persistedUrl.single, isNot(contains('contentType')));
+
+      final status = (decodeSearchSegments(encoded)!.single
+              as SearchCardSegment)
+          .urls
+          .single;
+      expect(status.outcome?.state, PageFetchState.httpError);
+      expect(status.outcome?.httpStatus, 403);
+      expect(status.outcome?.text, isNull);
+      expect(status.outcome?.contentType, isNull);
     });
 
     test('roundtrips a clarification card with what was chosen', () {
@@ -182,7 +228,7 @@ void main() {
               'url': 'https://imf.org/data',
               'domain': 'imf.org',
               'title': '',
-              'state': 'success',
+              'state': 'failed',
             },
           ],
           'resultCount': 5,
@@ -207,6 +253,9 @@ void main() {
       expect(card.extractedContent, contains('6.5%'));
       expect(card.round, isNull);
       expect(card.skipReason, isNull);
+      expect(card.urls.single.state, SearchURLState.failed);
+      expect(card.urls.single.outcome, isNull,
+          reason: 'old failures must remain unknown, not gain a made-up cause');
       expect(decoded.whereType<ResearchLedgerSegment>(), isEmpty);
     });
 

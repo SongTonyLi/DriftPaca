@@ -32,6 +32,7 @@ void main() {
   chatForImage.options.temperature = 0;
   chatForImage.options.seed = 1453;
 
+  group('live local Ollama daemon', () {
   test("Test Ollama generate endpoint (non-stream)", () async {
     final message = await service.generate("Hello", chat: chat);
 
@@ -195,6 +196,7 @@ void main() {
 
     await service.deleteModel("test_model_with_messages:latest");
   });
+  }, tags: ['live']);
 
   test("Test constructUrl with various base URLs", () {
     // Test with trailing slash

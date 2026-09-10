@@ -184,4 +184,7 @@ class _ForgetFakePathProvider extends Fake
   @override
   Future<String?> getApplicationDocumentsPath() async =>
       Directory.systemTemp.createTempSync('forget_docs').path;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => getApplicationDocumentsPath();
 }

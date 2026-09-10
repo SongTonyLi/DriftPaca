@@ -1,3 +1,6 @@
+@Timeout(Duration(seconds: 30))
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -10,6 +13,9 @@ class _FakePathProvider extends PathProviderPlatform
   @override
   Future<String?> getApplicationDocumentsPath() async =>
       '.dart_tool/test_hive_openrouter_settings';
+
+  @override
+  Future<String?> getApplicationSupportPath() async => getApplicationDocumentsPath();
 }
 
 void main() {
@@ -47,7 +53,8 @@ void main() {
     expect(find.text('OpenRouter'), findsOneWidget);
 
     await tester.tap(find.text('OpenRouter'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
 
     expect(Hive.box('settings').get('serverMode'), 'openrouter');
     expect(Hive.box('settings').get('isCloudMode'), isFalse);

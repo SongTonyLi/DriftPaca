@@ -459,10 +459,12 @@ class ChatPageViewModel extends ChangeNotifier {
   Object _beginWebSearch() {
     _isSearching = true;
     _searchSegments.clear();
+    _pendingFetchResults.clear();
     notifyListeners();
 
     final token = Object();
     _webSearchToken = token;
+    final attemptedResultsByUrl = <String, WebSearchResult>{};
     _chatProvider.setWebSearchCallbacks(
       onSearchThinking: (thinking) {
         _searchSegments.add(ThinkingSegment(thinking));
@@ -477,6 +479,7 @@ class ChatPageViewModel extends ChangeNotifier {
         return _searchSegments;
       },
       onSearchStart: (query) {
+        attemptedResultsByUrl.clear();
         _searchSegments.add(SearchCardSegment(
           query: query,
           round: _searchCardOrdinal(),
@@ -496,15 +499,23 @@ class ChatPageViewModel extends ChangeNotifier {
       onUrlsKnown: (urls) {
         final card = _searchSegments.whereType<SearchCardSegment>().lastOrNull;
         if (card == null) return;
-        card.urls = [
-          for (final r in urls)
-            SearchURLStatus(
+        final knownUrls = {for (final status in card.urls) status.url};
+        final merged = card.urls.toList();
+        for (final r in urls) {
+          attemptedResultsByUrl[r.url] = r;
+          if (knownUrls.add(r.url)) {
+            final status = SearchURLStatus(
               url: r.url,
               domain: Uri.tryParse(r.url)?.host ?? r.url,
               title: r.title,
               state: SearchURLState.pending,
-            ),
-        ];
+              outcome: r.fetchOutcome,
+            );
+            merged.add(status);
+            _pendingFetchResults[status] = r;
+          }
+        }
+        card.urls = merged;
         // Warm favicon cache for these domains so the source-card
         // dialog and any future inline citation render instantly.
         FaviconCache.instance.preload(card.urls.map((u) => u.domain));
@@ -515,8 +526,9 @@ class ChatPageViewModel extends ChangeNotifier {
         if (card == null) return;
         for (final u in card.urls) {
           if (u.url == url) {
-            u.state =
-                success ? SearchURLState.success : SearchURLState.failed;
+            u.state = success ? SearchURLState.success : SearchURLState.failed;
+            u.outcome = attemptedResultsByUrl[url]?.fetchOutcome;
+            _pendingFetchResults.remove(u);
             break;
           }
         }
@@ -528,23 +540,43 @@ class ChatPageViewModel extends ChangeNotifier {
           if (results.isEmpty) {
             card.error = 'No results found';
           } else {
-            card.urls = results
-                .map((r) => SearchURLStatus(
-                      url: r.url,
-                      domain: Uri.tryParse(r.url)?.host ?? r.url,
-                      title: r.title,
-                      state: r.pageContent != null
-                          ? SearchURLState.success
-                          : SearchURLState.failed,
-                    ))
-                .toList();
+            SearchURLStatus statusFor(WebSearchResult result) => SearchURLStatus(
+                  url: result.url,
+                  domain: Uri.tryParse(result.url)?.host ?? result.url,
+                  title: result.title,
+                  state: result.fetchOutcome?.isSuccess == true ||
+                          (result.fetchOutcome == null && result.pageContent?.isNotEmpty == true)
+                      ? SearchURLState.success
+                      : SearchURLState.failed,
+                  outcome: result.fetchOutcome,
+                );
+
+            final completedByUrl = {
+              for (final result in results) result.url: statusFor(result),
+            };
+            final merged = <SearchURLStatus>[];
+            final seen = <String>{};
+            for (final existing in card.urls) {
+              if (!seen.add(existing.url)) continue;
+              merged.add(completedByUrl.remove(existing.url) ?? existing);
+            }
+            for (final result in results) {
+              final completed = completedByUrl.remove(result.url);
+              if (completed != null && seen.add(completed.url)) {
+                merged.add(completed);
+              }
+            }
+            card.urls = merged;
             card.resultCount = results.length;
             final sources = <SearchSource>[];
             for (final r in results) {
-              final content = r.chunks != null && r.chunks!.isNotEmpty
+              var content = r.chunks != null && r.chunks!.isNotEmpty
                   ? r.chunks!.take(2).join('\n')
                   : (r.pageContent ?? r.snippet);
               if (content.isEmpty) continue;
+              if (r.chunks?.isNotEmpty != true && r.pageContent?.isNotEmpty != true) {
+                content = 'Search snippet only; page content not retrieved.\n$content';
+              }
               final domain = Uri.tryParse(r.url)?.host ?? r.url;
               sources.add(SearchSource(
                 url: r.url,
@@ -725,7 +757,9 @@ class ChatPageViewModel extends ChangeNotifier {
       card.error ??= 'Search did not finish';
       for (final url in card.urls) {
         if (url.state == SearchURLState.pending) {
-          url.state = SearchURLState.failed;
+          url.outcome ??= _pendingFetchResults.remove(url)?.fetchOutcome;
+          url.state = url.outcome?.isSuccess == true
+              ? SearchURLState.success : SearchURLState.failed;
         }
       }
     }
@@ -740,6 +774,7 @@ class ChatPageViewModel extends ChangeNotifier {
 
   /// Identifies the request that currently owns the web-search machinery.
   Object? _webSearchToken;
+  final _pendingFetchResults = <SearchURLStatus, WebSearchResult>{};
 
   /// Tears down web-search callbacks and clears the searching flag, but only
   /// when [token] still owns the machinery. A request that was cancelled and
@@ -755,6 +790,7 @@ class ChatPageViewModel extends ChangeNotifier {
     // so a run that ended without closing one (an error before any message
     // was persisted, say) gets its spinner resolved here.
     _finalizeSearchCards();
+    _pendingFetchResults.clear();
     _isSearching = false;
     notifyListeners();
   }

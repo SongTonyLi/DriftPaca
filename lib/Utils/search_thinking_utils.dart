@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 
@@ -44,6 +45,10 @@ String encodeSearchSegments(List<MessageSegment> segments) {
                   'domain': u.domain,
                   'title': u.title,
                   'state': u.state.name,
+                  if (u.outcome != null)
+                    'fetchState': u.outcome!.state.name,
+                  if (u.outcome?.httpStatus != null)
+                    'httpStatus': u.outcome!.httpStatus,
                 })
             .toList(),
         'resultCount': segment.resultCount,
@@ -126,6 +131,7 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
                         (s) => s.name == (u['state'] as String? ?? ''),
                         orElse: () => SearchURLState.failed,
                       ),
+                      outcome: _decodeFetchOutcome(u),
                     ))
                 .toList() ??
             [];
@@ -178,6 +184,22 @@ List<MessageSegment>? decodeSearchSegments(String thinking) {
   } catch (e) {
     return null;
   }
+}
+
+/// Restores only the safe, compact part of a fetch outcome. Response bodies,
+/// content types, and timings are intentionally not persisted in chat data.
+PageFetchOutcome? _decodeFetchOutcome(dynamic entry) {
+  final rawState = entry['fetchState'] as String?;
+  if (rawState == null) return null;
+  final state = PageFetchState.values
+      .where((candidate) => candidate.name == rawState)
+      .firstOrNull;
+  if (state == null) return null;
+  return PageFetchOutcome(
+    state: state,
+    elapsed: Duration.zero,
+    httpStatus: entry['httpStatus'] as int?,
+  );
 }
 
 /// Reads a ledger entry's source ids, accepting both shapes: the current

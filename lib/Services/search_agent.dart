@@ -1230,14 +1230,21 @@ class SearchAgent {
       visited.addAll(results.map((r) => r.url));
       if (results.isNotEmpty) {
         anyNonEmptyResults = true;
-        final candidates = [
-          for (final r in results) ...excerptCandidates(r),
-        ];
+        // Keep the durable ledger excerpt grounded in retrieved text whenever
+        // available. A lexical match in a snippet must not acquire page status.
+        final pageCandidates = <String>[
+          for (final r in results)
+            if (r.chunks?.isNotEmpty == true) ...r.chunks!
+            else if (r.pageContent != null) r.pageContent!,
+        ].where((text) => text.trim().isNotEmpty).toList();
+        final candidates = pageCandidates.isNotEmpty
+            ? pageCandidates : [for (final r in results) r.snippet];
         ledger.recordEvidence(
           p.subGoal!,
           sourceIdStart: offset + 1,
           sourceIdEnd: offset + results.length,
           excerpt: selectSupportingExcerpt(candidates, p.query),
+          hasExtractedEvidence: pageCandidates.isNotEmpty,
         );
         compactionMetaByKey[p.key] = _CompactionMeta(
           query: p.query,

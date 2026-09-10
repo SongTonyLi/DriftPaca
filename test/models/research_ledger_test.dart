@@ -3,6 +3,29 @@ import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Utils/text_similarity.dart';
 
 void main() {
+  test('ledger keeps snippet provenance until a retrieved excerpt replaces it', () {
+    final ledger = ResearchLedger(objective: 'Vietnam GDP');
+    final goal = ledger.upsert('Vietnam GDP');
+    ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 1,
+      excerpt: 'Indexed summary', hasExtractedEvidence: false);
+    expect(ledger.renderBrief(closed: true), contains('Search snippet only'));
+    ledger.recordEvidence(goal, sourceIdStart: 2, sourceIdEnd: 2,
+      excerpt: 'Retrieved passage', hasExtractedEvidence: true);
+    expect(ledger.renderBrief(), contains('Retrieved passage'));
+    expect(ledger.renderBrief(), isNot(contains('Indexed summary')));
+  });
+  test('snippet-only evidence cannot close a reopened coverage gap', () {
+    final ledger = ResearchLedger(objective: 'Vietnam GDP');
+    final goal = ledger.upsert('Vietnam GDP');
+    ledger.openGap('Vietnam GDP');
+    ledger.recordEvidence(goal, sourceIdStart: 1, sourceIdEnd: 1,
+      excerpt: 'Indexed summary', hasExtractedEvidence: false);
+    expect(goal.outstandingGaps, isNotEmpty);
+    expect(goal.ranges, hasLength(1));
+    ledger.recordEvidence(goal, sourceIdStart: 2, sourceIdEnd: 2,
+      excerpt: 'Retrieved supporting passage', hasExtractedEvidence: true);
+    expect(goal.outstandingGaps, isEmpty);
+  });
   group('ResearchLedger.findMatch', () {
     test('matches an exact-normalized variant and a near-duplicate phrasing', () {
       final ledger = ResearchLedger(objective: 'objective');

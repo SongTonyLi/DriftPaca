@@ -1,3 +1,4 @@
+import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 
 /// Status of a single URL fetch. `state` is mutable so the view model
@@ -10,12 +11,14 @@ class SearchURLStatus {
   final String domain;
   final String title;
   SearchURLState state;
+  PageFetchOutcome? outcome;
 
   SearchURLStatus({
     required this.url,
     required this.domain,
     this.title = '',
     required this.state,
+    this.outcome,
   });
 }
 

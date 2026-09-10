@@ -10,6 +10,7 @@ import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
+import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
@@ -610,6 +611,136 @@ void main() {
       expect(card.error, 'Search did not finish');
       expect(card.urls.single.state, SearchURLState.failed,
           reason: 'a pending row shimmers forever otherwise');
+    });
+
+    test('finalization retains cancellation without a fetch callback', () {
+      fakeChatProvider.capturedOnSearchStart!('query');
+      final result = WebSearchResult(title: 'Page', snippet: 'Summary',
+          url: 'https://example.org');
+      fakeChatProvider.capturedOnUrlsKnown!([result]);
+      result.fetchOutcome = const PageFetchOutcome(
+          state: PageFetchState.cancelled, elapsed: Duration.zero);
+      final cards = fakeChatProvider.capturedSegmentsProvider!()
+          .whereType<SearchCardSegment>();
+      expect(cards.single.urls.single.outcome?.state, PageFetchState.cancelled);
+      expect(cards.single.urls.single.state, SearchURLState.failed);
+    });
+
+    test('incremental URL snapshots preserve resolved rows while adding URLs', () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onUrlsKnown = fakeChatProvider.capturedOnUrlsKnown!;
+      final onUrlFetched = fakeChatProvider.capturedOnUrlFetched!;
+
+      onSearchStart('q1');
+      onUrlsKnown([
+        WebSearchResult(url: 'https://a.test', title: 'A', snippet: 'a'),
+        WebSearchResult(url: 'https://b.test', title: 'B', snippet: 'b'),
+      ]);
+      onUrlFetched('https://a.test', false);
+      onUrlsKnown([
+        WebSearchResult(url: 'https://a.test', title: 'A', snippet: 'a'),
+        WebSearchResult(url: 'https://b.test', title: 'B', snippet: 'b'),
+        WebSearchResult(url: 'https://c.test', title: 'C', snippet: 'c'),
+      ]);
+
+      final urls = viewModel.searchSegments.whereType<SearchCardSegment>().single.urls;
+      expect(urls.map((url) => url.url), [
+        'https://a.test',
+        'https://b.test',
+        'https://c.test',
+      ]);
+      expect(urls.map((url) => url.state), [
+        SearchURLState.failed,
+        SearchURLState.pending,
+        SearchURLState.pending,
+      ]);
+    });
+
+    test('a completed failed fetch copies its typed outcome from the URL object', () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onUrlsKnown = fakeChatProvider.capturedOnUrlsKnown!;
+      final onUrlFetched = fakeChatProvider.capturedOnUrlFetched!;
+      final result = WebSearchResult(
+        url: 'https://example.com/slow',
+        title: 'Slow page',
+        snippet: 'snippet',
+      );
+
+      onSearchStart('q1');
+      onUrlsKnown([result]);
+      result.fetchOutcome = const PageFetchOutcome(
+        state: PageFetchState.timedOut,
+        elapsed: Duration(seconds: 8),
+      );
+      onUrlFetched(result.url, false);
+
+      final status = viewModel.searchSegments.whereType<SearchCardSegment>().single.urls.single;
+      expect(status.state, SearchURLState.failed);
+      expect(status.outcome?.state, PageFetchState.timedOut);
+    });
+
+    test('completion retains attempted failures omitted from final sources', () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onUrlsKnown = fakeChatProvider.capturedOnUrlsKnown!;
+      final onUrlFetched = fakeChatProvider.capturedOnUrlFetched!;
+      final onSearchComplete = fakeChatProvider.capturedOnSearchComplete!;
+
+      onSearchStart('q1');
+      onUrlsKnown([
+        WebSearchResult(url: 'https://blocked.test', title: 'Blocked', snippet: 'blocked'),
+        WebSearchResult(url: 'https://replacement.test', title: 'Replacement', snippet: 'replacement'),
+      ]);
+      onUrlFetched('https://blocked.test', false);
+      onSearchComplete([
+        WebSearchResult(
+          url: 'https://replacement.test',
+          title: 'Replacement',
+          snippet: 'replacement',
+          pageContent: 'Extracted page',
+          fetchOutcome: const PageFetchOutcome(
+            state: PageFetchState.extracted,
+            elapsed: Duration(milliseconds: 80),
+            text: 'Extracted page',
+          ),
+        ),
+      ]);
+
+      final card = viewModel.searchSegments.whereType<SearchCardSegment>().single;
+      expect(card.resultCount, 1);
+      expect(card.urls.map((url) => url.url), [
+        'https://blocked.test',
+        'https://replacement.test',
+      ]);
+      expect(card.urls.first.state, SearchURLState.failed);
+      expect(card.urls.last.state, SearchURLState.success);
+      expect(card.urls.last.outcome?.state, PageFetchState.extracted);
+    });
+
+    test('completion maps typed failure details onto a URL row', () {
+      final onSearchStart = fakeChatProvider.capturedOnSearchStart!;
+      final onSearchComplete = fakeChatProvider.capturedOnSearchComplete!;
+
+      onSearchStart('q1');
+      onSearchComplete([
+        WebSearchResult(
+          url: 'https://example.com/forbidden',
+          title: 'Forbidden',
+          snippet: 'indexed snippet',
+          fetchOutcome: const PageFetchOutcome(
+            state: PageFetchState.httpError,
+            elapsed: Duration(milliseconds: 120),
+            httpStatus: 403,
+          ),
+        ),
+      ]);
+
+      final status = viewModel.searchSegments.whereType<SearchCardSegment>().single.urls.single;
+      expect(status.state, SearchURLState.failed);
+      expect(status.outcome?.state, PageFetchState.httpError);
+      expect(status.outcome?.httpStatus, 403);
+      final source = viewModel.searchSegments
+          .whereType<SearchCardSegment>().single.sources!.single;
+      expect(source.content, contains('Search snippet only; page content not retrieved'));
     });
 
     test('a completed card is left untouched by the finalize sweep', () {

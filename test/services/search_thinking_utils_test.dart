@@ -312,6 +312,40 @@ void main() {
       // which measured ~954KB for this shape before the fix.
       expect(encoded.length, lessThan(600000));
     });
+
+    test('a completed live segment keeps how long it took to think', () {
+      final encoded = encodeSearchSegments(
+          <MessageSegment>[ThinkingSegment('Weighed two sources', elapsedSeconds: 7)]);
+
+      final decoded = decodeSearchSegments(encoded)!;
+      final thinking = decoded.single as ThinkingSegment;
+      expect(thinking.text, 'Weighed two sources');
+      expect(thinking.elapsedSeconds, 7,
+          reason: 'a reloaded message still reads "Thought for 7 seconds"');
+    });
+
+    test('a decoded thinking segment is always complete', () {
+      // Nothing is streaming into a message read back from the database,
+      // so a decoded segment must never render as the one live block.
+      final encoded = encodeSearchSegments(
+          <MessageSegment>[ThinkingSegment('Reasoned about it', isComplete: false)]);
+
+      final thinking = decodeSearchSegments(encoded)!.single as ThinkingSegment;
+      expect(thinking.isComplete, isTrue);
+      expect(thinking.elapsedSeconds, isNull);
+      expect(thinking.startedAt, isNull,
+          reason: 'live bookkeeping is never persisted');
+    });
+
+    test('a live segment that never received a token is not encoded', () {
+      // The empty-text rule is unchanged by liveness: an open segment
+      // holding nothing is UI scaffolding, not reasoning worth saving.
+      final encoded = encodeSearchSegments(<MessageSegment>[
+        ThinkingSegment('', isComplete: false, startedAt: DateTime.now()),
+      ]);
+
+      expect(encoded, isEmpty);
+    });
   });
 
   group('stripSearchData', () {

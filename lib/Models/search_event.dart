@@ -28,9 +28,38 @@ enum SearchURLState { pending, success, failed }
 /// Persisted as JSON in the thinking field.
 sealed class MessageSegment {}
 
+/// One stretch of the model's reasoning.
+///
+/// At most one segment in a run is live ([isComplete] false): the turn
+/// currently streaming. It is mutated in place as deltas arrive and then
+/// completed where the turn ends, so the widget rendering it keeps its
+/// element — and with it its stopwatch, pulse and collapse animation —
+/// instead of being torn down and replaced by a fresh "Thought" row.
+/// Every segment decoded from a persisted message is complete.
 class ThinkingSegment extends MessageSegment {
   String text;
-  ThinkingSegment(this.text);
+
+  /// False only for the one live segment. Rendered as `isStreaming` by the
+  /// bubble, which is why a complete segment holds no ticker.
+  bool isComplete;
+
+  /// How long this stretch of reasoning took, in seconds — set when a live
+  /// segment is completed, and persisted so a reloaded message still reads
+  /// "Thought for N seconds". Null for segments that were never live
+  /// (the legacy path, and anything saved before this field existed).
+  int? elapsedSeconds;
+
+  /// When the live segment opened. Bookkeeping for computing
+  /// [elapsedSeconds] at completion time; never persisted, and null on
+  /// anything decoded.
+  final DateTime? startedAt;
+
+  ThinkingSegment(
+    this.text, {
+    this.isComplete = true,
+    this.elapsedSeconds,
+    this.startedAt,
+  });
 }
 
 class SearchCardSegment extends MessageSegment {
@@ -96,6 +125,13 @@ class SearchSource {
 class ResearchLedgerSegment extends MessageSegment {
   String objective;
   List<LedgerEntryView> entries;
+
+  /// True between `onPhase(framingGoal)` and the next phase — the window
+  /// where [objective] is still the user's raw question standing in for a
+  /// derived goal that has not landed yet. Drives the objective shimmer
+  /// and the "Framing the research goal…" next-step line. Never persisted:
+  /// a saved message is never mid-derivation.
+  bool isDeriving = false;
 
   /// [SearchTerminationReason.name] once the run has stopped — null while
   /// still in progress. Kept as a plain string (not the enum itself) so

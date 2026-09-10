@@ -3,6 +3,7 @@ import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:notification_centre/notification_centre.dart';
 
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
 
 import 'chat_bubble/chat_bubble.dart';
@@ -21,6 +22,12 @@ class ChatListView extends StatefulWidget {
   final List<MessageSegment> searchSegments;
   final bool composerExpanded;
 
+  /// What the running research loop is doing, and since when. Handed to the
+  /// index-0 bubble only: every other bubble is a finished message, and the
+  /// cached bubbles further up are deliberately never rebuilt.
+  final ResearchPhase? researchPhase;
+  final DateTime? researchPhaseStartedAt;
+
   const ChatListView({
     super.key,
     required this.messages,
@@ -31,6 +38,8 @@ class ChatListView extends StatefulWidget {
     this.topPadding,
     this.searchSegments = const [],
     this.composerExpanded = false,
+    this.researchPhase,
+    this.researchPhaseStartedAt,
   });
 
   @override
@@ -216,6 +225,8 @@ class _ChatListViewState extends State<ChatListView> {
                         isStreaming: isStreamingMessage,
                         animate: shouldAnimate,
                         searchSegments: widget.searchSegments,
+                        researchPhase: widget.researchPhase,
+                        researchPhaseStartedAt: widget.researchPhaseStartedAt,
                       ),
                     ),
                   );

@@ -14,6 +14,7 @@ import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
@@ -236,6 +237,9 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   bool get isCurrentChatThinking => false;
 
   @override
+  bool get isAwaitingClarification => false;
+
+  @override
   OllamaException? get currentChatError => null;
 
   @override
@@ -257,6 +261,9 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     void Function(String query, String reason)? onSearchSkipped,
     void Function(SearchTerminationReason reason)? onResearchDone,
     void Function(ResearchClarification clarification)? onClarification,
+    void Function(ResearchPhase phase)? onPhase,
+    void Function(String delta)? onThinkingDelta,
+    bool Function()? hasLiveThinking,
   }) {
     activeCallbacks = WebSearchCallbackSet(onSearchStart);
   }

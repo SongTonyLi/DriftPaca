@@ -4,10 +4,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
 import 'package:llamaseek/Utils/favicon_cache.dart';
+import 'package:llamaseek/Widgets/research_activity_strip.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/search_detail_dialog.dart';
 import 'package:shimmer/shimmer.dart';
@@ -606,6 +608,383 @@ void main() {
       expect(find.text('Research goal'), findsOneWidget);
       expect(find.text('Establish the 2024 GDP figure'), findsOneWidget);
       expect(find.text('Next — drafting the answer'), findsOneWidget);
+    });
+  });
+
+  group('the live thinking block', () {
+    testWidgets('an open block with nothing in it yet already says Thinking',
+        (tester) async {
+      // The empty moment matters: the header has to be on screen before the
+      // first reasoning token, or the bubble is blank for the whole of
+      // time-to-first-token. A COMPLETE empty segment is still skipped.
+      final segment = ThinkingSegment('', isComplete: false, startedAt: DateTime.now());
+
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        searchSegments: [segment],
+      )));
+      await tester.pump();
+
+      expect(find.text('Thinking...'), findsOneWidget);
+      expect(find.byKey(ObjectKey(segment)), findsOneWidget);
+    });
+
+    testWidgets('completing the block keeps the same widget and reads its time',
+        (tester) async {
+      final segment = ThinkingSegment('', isComplete: false, startedAt: DateTime.now());
+      final bubble = ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        searchSegments: [segment],
+      );
+
+      await tester.pumpWidget(_host(bubble));
+      await tester.pump();
+      final live = tester.element(find.byKey(ObjectKey(segment)));
+
+      // Exactly what ChatPageViewModel does when the turn ends: the same
+      // instance is filled in and closed, never replaced.
+      segment.text = 'Weighed two sources.';
+      segment.isComplete = true;
+      segment.elapsedSeconds = 3;
+
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        searchSegments: [segment],
+      )));
+      await tester.pump();
+
+      // Same element: the block collapses in place, keeping its stopwatch
+      // and its expand animation, instead of vanishing and reappearing as
+      // a fresh "Thought" row below.
+      expect(identical(tester.element(find.byKey(ObjectKey(segment))), live),
+          isTrue);
+      expect(find.text('Thought for 3 seconds'), findsOneWidget);
+    });
+
+    testWidgets('a reloaded message reads how long it thought for',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [
+          ThinkingSegment('Earlier reasoning.', elapsedSeconds: 5),
+        ],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Thought for 5 seconds'), findsOneWidget);
+    });
+
+    testWidgets('a complete block with no recorded time still just says Thought',
+        (tester) async {
+      // Every segment persisted before elapsedSeconds existed.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        searchSegments: [ThinkingSegment('Earlier reasoning.')],
+      )));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Thought'), findsOneWidget);
+    });
+  });
+
+  group('the research activity strip', () {
+    testWidgets('a streaming bubble says what the loop is doing right now',
+        (tester) async {
+      // Everything between "sent" and "first token of the answer" used to
+      // look identical from the outside: a llama and nothing else.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        researchPhase: ResearchPhase.searching,
+        researchPhaseStartedAt: DateTime.now(),
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsOneWidget);
+      expect(find.text('Searching'), findsOneWidget);
+
+      // Drop the bubble so the strip's counter timer is cancelled.
+      await tester.pumpWidget(_host(const SizedBox.shrink()));
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('a finished bubble has no strip', (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        researchPhase: ResearchPhase.searching,
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsNothing);
+    });
+
+    testWidgets('a run that has finished researching drops the strip',
+        (tester) async {
+      // `done` fires while the bubble is still streaming out the answer;
+      // "Done" is not a thing worth a live pill.
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+        researchPhase: ResearchPhase.done,
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsNothing);
+    });
+
+    testWidgets('no phase means no strip, so the legacy path is untouched',
+        (tester) async {
+      await tester.pumpWidget(_host(ChatBubble(
+        message: OllamaMessage('Answer.', role: OllamaMessageRole.assistant),
+        isStreaming: true,
+      )));
+      await tester.pump();
+
+      expect(find.byType(ResearchActivityStrip), findsNothing);
+    });
+  });
+
+  group('research ledger panel motion', () {
+    // Not streaming: the panel is what these tests watch, and the streaming
+    // llama would put its own permanent animation in every transition count.
+    Widget ledgerBubble(ResearchLedgerSegment segment) => ChatBubble(
+          message: OllamaMessage('', role: OllamaMessageRole.assistant),
+          searchSegments: [segment],
+        );
+
+    /// Every transition inside the bubble, as raw values: 1.0 means
+    /// "settled", anything less means "still moving". Scoped to the bubble
+    /// so the Scaffold's own (permanently parked) FAB transition doesn't
+    /// count as motion.
+    Iterable<double> scaleValues(WidgetTester tester) => tester
+        .widgetList<ScaleTransition>(find.descendant(
+          of: find.byType(ChatBubble),
+          matching: find.byType(ScaleTransition),
+        ))
+        .map((t) => t.scale.value);
+
+    Iterable<double> fadeValues(WidgetTester tester) => tester
+        .widgetList<FadeTransition>(find.descendant(
+          of: find.byType(ChatBubble),
+          matching: find.byType(FadeTransition),
+        ))
+        .map((t) => t.opacity.value);
+
+    testWidgets('while the goal is being derived the objective shimmers',
+        (tester) async {
+      // The window between onPhase(framingGoal) and the derived goal
+      // landing: the objective on screen is still the user's raw question,
+      // so it reads as provisional instead of as the run's goal.
+      final segment = ResearchLedgerSegment(objective: 'what is the 2024 GDP')
+        ..isDeriving = true;
+
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+
+      expect(find.byType(Shimmer), findsOneWidget);
+      expect(find.text('Framing the research goal…'), findsOneWidget);
+      expect(find.text('Next — drafting the answer'), findsNothing);
+    });
+
+    testWidgets('derivation is static and settled under reduced motion',
+        (tester) async {
+      final segment = ResearchLedgerSegment(objective: 'what is the 2024 GDP')
+        ..isDeriving = true;
+
+      await tester.pumpWidget(MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: Scaffold(body: ledgerBubble(segment)),
+        ),
+      ));
+      await tester.pump();
+
+      expect(find.byType(Shimmer), findsNothing);
+      expect(find.text('Framing the research goal…'), findsOneWidget);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('a sub-goal turning searched transitions its glyph and row',
+        (tester) async {
+      final segment = ResearchLedgerSegment(
+        objective: 'goal',
+        entries: const [
+          LedgerEntryView(
+            query: 'first query',
+            searched: true,
+            ranges: [SourceIdRange(1, 2)],
+          ),
+          LedgerEntryView(query: 'second query', searched: false),
+        ],
+      );
+
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Nothing moves before the flip: the panel was created with the first
+      // row already searched, and rows decoded from history never animate.
+      expect(scaleValues(tester).every((v) => v == 1.0), isTrue);
+      expect(find.text('3'), findsNothing);
+
+      segment.entries = const [
+        LedgerEntryView(
+          query: 'first query',
+          searched: true,
+          ranges: [SourceIdRange(1, 2)],
+        ),
+        LedgerEntryView(
+          query: 'second query',
+          searched: true,
+          ranges: [SourceIdRange(3, 3)],
+        ),
+      ];
+
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+
+      // The chip scales in over the dot it replaces...
+      final glyphScales = tester
+          .widgetList<ScaleTransition>(find.ancestor(
+            of: find.text('3'),
+            matching: find.byType(ScaleTransition),
+          ))
+          .map((t) => t.scale.value);
+      expect(glyphScales, isNotEmpty);
+      expect(glyphScales.any((v) => v < 1.0), isTrue,
+          reason: 'the new chip should still be scaling in');
+
+      // ...and the newly searched row fades in as a whole.
+      final rowFades = tester
+          .widgetList<FadeTransition>(find.ancestor(
+            of: find.text('second query'),
+            matching: find.byType(FadeTransition),
+          ))
+          .map((t) => t.opacity.value);
+      expect(rowFades.any((v) => v < 1.0), isTrue,
+          reason: 'the newly searched row should still be fading in');
+
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('3'), findsOneWidget);
+      expect(scaleValues(tester).every((v) => v == 1.0), isTrue);
+      expect(fadeValues(tester).every((v) => v == 1.0), isTrue);
+    });
+
+    testWidgets('a settled searched row does not re-animate on a later rebuild',
+        (tester) async {
+      final segment = ResearchLedgerSegment(
+        objective: 'goal',
+        entries: const [
+          LedgerEntryView(query: 'only query', searched: false),
+        ],
+      );
+
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+
+      segment.entries = const [
+        LedgerEntryView(
+          query: 'only query',
+          searched: true,
+          ranges: [SourceIdRange(1, 1)],
+        ),
+      ];
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // An unrelated rebuild (a sharper objective landing) must not replay
+      // the row's entrance: the panel remembers what it has already shown.
+      segment.objective = 'a sharper goal';
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final rowFades = tester
+          .widgetList<FadeTransition>(find.ancestor(
+            of: find.text('only query'),
+            matching: find.byType(FadeTransition),
+          ))
+          .map((t) => t.opacity.value);
+      expect(rowFades.every((v) => v == 1.0), isTrue);
+
+      await tester.pump(const Duration(milliseconds: 400));
+    });
+
+    testWidgets('the next-step line cross-fades when it changes',
+        (tester) async {
+      final segment = ResearchLedgerSegment(
+        objective: 'goal',
+        entries: const [
+          LedgerEntryView(query: 'open query', searched: false),
+        ],
+      );
+
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Next — researching "open query"'), findsOneWidget);
+
+      segment.entries = const [
+        LedgerEntryView(
+          query: 'open query',
+          searched: true,
+          ranges: [SourceIdRange(1, 1)],
+        ),
+      ];
+      await tester.pumpWidget(_host(ledgerBubble(segment)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+
+      // Both lines are on screen mid-cross-fade, the old one on its way out.
+      expect(find.text('Next — researching "open query"'), findsOneWidget);
+      expect(find.text('Next — drafting the answer'), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Next — researching "open query"'), findsNothing);
+      expect(find.text('Next — drafting the answer'), findsOneWidget);
+    });
+
+    testWidgets('a sub-goal turning searched is instant under reduced motion',
+        (tester) async {
+      final segment = ResearchLedgerSegment(
+        objective: 'goal',
+        entries: const [
+          LedgerEntryView(query: 'open query', searched: false),
+        ],
+      );
+
+      Widget host() => MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(disableAnimations: true),
+              child: Scaffold(body: ledgerBubble(segment)),
+            ),
+          );
+
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      segment.entries = const [
+        LedgerEntryView(
+          query: 'open query',
+          searched: true,
+          ranges: [SourceIdRange(7, 7)],
+        ),
+      ];
+      await tester.pumpWidget(host());
+      await tester.pump();
+
+      expect(find.text('7'), findsOneWidget);
+      expect(find.text('Next — drafting the answer'), findsOneWidget);
+      expect(scaleValues(tester).every((v) => v == 1.0), isTrue);
+      expect(fadeValues(tester).every((v) => v == 1.0), isTrue);
+      expect(tester.binding.hasScheduledFrame, isFalse);
     });
   });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Models/page_fetch_outcome.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Pages/chat_page/chat_page_view_model.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
@@ -255,6 +257,74 @@ void main() {
       );
 
       expect(result, isFalse);
+    });
+
+    group('while a run is paused on its clarification card', () {
+      // The card is opened the way SearchAgent opens it: through the
+      // onClarification callback of a run in flight, so the live segments
+      // hold an unanswered ClarificationSegment when the user types.
+      Future<ClarificationSegment> pauseOnCard() async {
+        viewModel.acceptWebSearchConsent();
+        fakeChatProvider.setCurrentChat(createTestChat('chat-1'));
+        viewModel.setTextFieldValue('Tell me about Mercury');
+        final paused = Completer<void>();
+        fakeChatProvider.duringSendPrompt = () => paused.future;
+        final send = viewModel.sendMessage(
+          onModelSelectionRequired: () async {},
+          onServerNotConfigured: () {},
+        );
+        await Future.microtask(() {});
+        fakeChatProvider.capturedOnClarification!(const ResearchClarification(
+          question: 'Which Mercury?',
+          options: ['The planet', 'The element'],
+        ));
+        fakeChatProvider.setIsStreaming(true);
+        fakeChatProvider.awaitingClarification = true;
+        addTearDown(() async {
+          paused.complete();
+          await send;
+        });
+        return viewModel.searchSegments.whereType<ClarificationSegment>().single;
+      }
+
+      test('a message typed in the prompt bar answers the card in the user\'s own words', () async {
+        final card = await pauseOnCard();
+        viewModel.setTextFieldValue('  the Freddie one  ');
+
+        final result = await viewModel.sendMessage(
+          onModelSelectionRequired: () async {},
+          onServerNotConfigured: () {},
+        );
+
+        expect(result, isTrue);
+        expect(fakeChatProvider.answeredClarification, ['the Freddie one'],
+            reason: 'the typed text is the answer, trimmed, not a new prompt');
+        expect(card.selected, ['the Freddie one'],
+            reason: 'the card records it like a pick');
+        expect(viewModel.hasText, isFalse, reason: 'the prompt bar is cleared');
+        expect(fakeChatProvider.lastSentPrompt, 'Tell me about Mercury',
+            reason: 'no second prompt was sent');
+      });
+
+      test('an already-answered card is not answered again from the prompt bar', () async {
+        final card = await pauseOnCard();
+        viewModel.answerClarification(card, const ['The planet']);
+        fakeChatProvider.answeredClarification = null;
+        // The provider still says a run is paused (say, a stale flag);
+        // with no open card there is nothing to answer, and the ordinary
+        // streaming guard applies.
+        fakeChatProvider.awaitingClarification = true;
+        viewModel.setTextFieldValue('the Freddie one');
+
+        final result = await viewModel.sendMessage(
+          onModelSelectionRequired: () async {},
+          onServerNotConfigured: () {},
+        );
+
+        expect(result, isFalse);
+        expect(fakeChatProvider.answeredClarification, isNull);
+        expect(card.selected, ['The planet']);
+      });
     });
 
     test('should call onServerNotConfigured when server not configured', () async {
@@ -791,6 +861,122 @@ void main() {
     });
   });
 
+  group('live thinking and the phase signal', () {
+    setUp(() async {
+      fakeChatProvider.setCurrentChat(createTestChat('test-id'));
+      viewModel.setTextFieldValue('Hello');
+      viewModel.acceptWebSearchConsent(); // enables web search
+
+      await viewModel.sendMessage(
+        onModelSelectionRequired: () async {},
+        onServerNotConfigured: () {},
+      );
+    });
+
+    test('thinking deltas accumulate into one open segment', () {
+      final onThinkingDelta = fakeChatProvider.capturedOnThinkingDelta!;
+
+      onThinkingDelta('I should ');
+      onThinkingDelta('look this up.');
+
+      final thinking =
+          viewModel.searchSegments.whereType<ThinkingSegment>().toList();
+      // One block that grows, not one block per token — the whole point of
+      // making the segment live rather than appending completed ones.
+      expect(thinking, hasLength(1));
+      expect(thinking.single.text, 'I should look this up.');
+      expect(thinking.single.isComplete, isFalse);
+      expect(thinking.single.startedAt, isNotNull);
+    });
+
+    test('onSearchThinking completes the segment the deltas were building',
+        () {
+      final onThinkingDelta = fakeChatProvider.capturedOnThinkingDelta!;
+      final onSearchThinking = fakeChatProvider.capturedOnSearchThinking!;
+
+      onThinkingDelta('partial reason');
+      final open =
+          viewModel.searchSegments.whereType<ThinkingSegment>().single;
+
+      onSearchThinking('the whole reason, authoritatively');
+
+      final thinking =
+          viewModel.searchSegments.whereType<ThinkingSegment>().toList();
+      expect(thinking, hasLength(1),
+          reason: 'the turn ending must not append a second block below the '
+              'one the user has been watching');
+      // Same instance, so the widget keyed on it keeps its element and its
+      // collapse animation instead of being swapped out.
+      expect(identical(thinking.single, open), isTrue);
+      expect(thinking.single.text, 'the whole reason, authoritatively');
+      expect(thinking.single.isComplete, isTrue);
+      // Measured from startedAt; a test run is far under a second, so the
+      // contract asserted here is that it was measured at all.
+      expect(thinking.single.elapsedSeconds, isNotNull);
+      expect(thinking.single.elapsedSeconds, greaterThanOrEqualTo(0));
+    });
+
+    test('onSearchThinking with nothing open appends a complete segment', () {
+      // The legacy path: a caller that reports a whole turn's reasoning
+      // without ever having streamed a delta.
+      fakeChatProvider.capturedOnSearchThinking!('a whole turn at once');
+
+      final thinking =
+          viewModel.searchSegments.whereType<ThinkingSegment>().single;
+      expect(thinking.text, 'a whole turn at once');
+      expect(thinking.isComplete, isTrue);
+      expect(thinking.elapsedSeconds, isNull);
+    });
+
+    test('the answer turn closes the block it was reasoning in', () {
+      // The answering turn's thinking never reaches onSearchThinking — the
+      // agent only reports that for turns that go on to search — so without
+      // this the last block would stay live forever.
+      final onThinkingDelta = fakeChatProvider.capturedOnThinkingDelta!;
+      onThinkingDelta('deciding how to phrase this');
+
+      fakeChatProvider.capturedOnAnswerStart!();
+
+      final thinking =
+          viewModel.searchSegments.whereType<ThinkingSegment>().single;
+      expect(thinking.isComplete, isTrue);
+      expect(thinking.elapsedSeconds, isNotNull);
+    });
+
+    test('the ledger says it is deriving only while the goal is being framed',
+        () {
+      final onPhase = fakeChatProvider.capturedOnPhase!;
+      final onLedgerUpdate = fakeChatProvider.capturedOnLedgerUpdate!;
+
+      onPhase(ResearchPhase.framingGoal);
+      onLedgerUpdate('What is Vietnam GDP?', const []);
+
+      final ledger =
+          viewModel.searchSegments.whereType<ResearchLedgerSegment>().single;
+      // The objective on screen is still the user's raw question standing
+      // in for a derived goal that has not landed yet.
+      expect(ledger.isDeriving, isTrue);
+
+      onPhase(ResearchPhase.thinking);
+
+      expect(ledger.isDeriving, isFalse);
+    });
+
+    test('a finished run leaves no phase behind', () async {
+      fakeChatProvider.capturedOnPhase!(ResearchPhase.searching);
+
+      expect(viewModel.researchPhase, ResearchPhase.searching);
+      expect(viewModel.researchPhaseStartedAt, isNotNull);
+
+      // The strip must never outlive the run it describes: the next run
+      // resets on the way in, and this one clears on the way out.
+      await viewModel.retryLastPrompt();
+
+      expect(viewModel.researchPhase, isNull);
+      expect(viewModel.researchPhaseStartedAt, isNull);
+    });
+  });
+
   group('search machinery teardown', () {
     test('a run that ends without closing its card does not leave the bubble '
         'searching', () async {
@@ -900,6 +1086,23 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   void Function(String objective, List<SubGoal> snapshot)? capturedOnLedgerUpdate;
   void Function(String query, String reason)? capturedOnSearchSkipped;
   void Function(SearchTerminationReason reason)? capturedOnResearchDone;
+  void Function(ResearchClarification clarification)? capturedOnClarification;
+  void Function(ResearchPhase phase)? capturedOnPhase;
+  void Function(String delta)? capturedOnThinkingDelta;
+
+  /// Whether a run is paused on a clarification card, as the view model
+  /// reads it; and what it handed back when the card was answered.
+  bool awaitingClarification = false;
+  List<String>? answeredClarification;
+
+  @override
+  bool get isAwaitingClarification => awaitingClarification;
+
+  @override
+  void answerClarification(List<String> selected) {
+    answeredClarification = selected;
+    awaitingClarification = false;
+  }
 
   void setMessages(List<OllamaMessage> messages) {
     _messages = messages;
@@ -986,6 +1189,9 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     void Function(String query, String reason)? onSearchSkipped,
     void Function(SearchTerminationReason reason)? onResearchDone,
     void Function(ResearchClarification clarification)? onClarification,
+    void Function(ResearchPhase phase)? onPhase,
+    void Function(String delta)? onThinkingDelta,
+    bool Function()? hasLiveThinking,
   }) {
     setWebSearchCallbacksCalled = true;
     capturedOnSearchThinking = onSearchThinking;
@@ -999,6 +1205,9 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
     capturedOnLedgerUpdate = onLedgerUpdate;
     capturedOnSearchSkipped = onSearchSkipped;
     capturedOnResearchDone = onResearchDone;
+    capturedOnClarification = onClarification;
+    capturedOnPhase = onPhase;
+    capturedOnThinkingDelta = onThinkingDelta;
   }
 
   @override

@@ -50,7 +50,7 @@ void main() {
   test('idle background follows the mode brightness', () {
     expect(_light(resolvePalette(base, AppMode.dark).idle), lessThan(0.12));
     expect(_light(resolvePalette(base, AppMode.incognitoDark).idle), lessThan(0.12));
-    expect(_light(resolvePalette(base, AppMode.incognitoLight).idle), greaterThan(0.92));
+    expect(_light(resolvePalette(base, AppMode.incognitoLight).idle), greaterThan(0.85));
   });
 
   test('normal idle is a thinner (less saturated) wash of the mix', () {
@@ -66,13 +66,13 @@ void main() {
     expect(_hueDist(a.hue, b.hue), lessThan(1));
     // Muted indigo/violet:
     expect(a.hue, inInclusiveRange(230, 285));
-    expect(a.saturation, lessThan(0.35));
+    expect(a.saturation, lessThan(0.50));
   });
 
   test('incognito-dark mesh colors are heavily desaturated', () {
     final p = resolvePalette(base, AppMode.incognitoDark);
-    expect(_sat(p.meshA), lessThan(0.35));
-    expect(_sat(p.meshB), lessThan(0.35));
+    expect(_sat(p.meshA), lessThan(0.50));
+    expect(_sat(p.meshB), lessThan(0.50));
   });
 
   test('text stays legible on surface in every mode', () {

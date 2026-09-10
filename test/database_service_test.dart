@@ -380,4 +380,7 @@ class FakePathProviderPlatform extends Fake
   Future<String?> getApplicationDocumentsPath() async {
     return path.join(Directory.current.path, 'test', 'assets');
   }
+
+  @override
+  Future<String?> getApplicationSupportPath() async => getApplicationDocumentsPath();
 }

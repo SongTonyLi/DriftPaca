@@ -23,4 +23,17 @@ runs:
 
     - name: Resolve Dart packages
       shell: bash
-      run: flutter pub get
+      run: |
+        for attempt in 1 2 3; do
+          echo "::group::flutter pub get (attempt ${attempt})"
+          if flutter pub get; then
+            echo "::endgroup::"
+            exit 0
+          fi
+          echo "::endgroup::"
+          if [[ "${attempt}" -eq 3 ]]; then
+            echo "flutter pub get failed after ${attempt} attempts"
+            exit 1
+          fi
+          sleep $((attempt * 20))
+        done

@@ -17,7 +17,9 @@ Tasks 1–4's production changes and deterministic regressions are implemented.
 Task 5's live retrieval run completed five searches before provider throttling;
 device and model answer-quality evaluation remain unverified. See
 `docs/search_retrieval_comparison_2026-09-09.md` for measurements and verification
-limits. Changes are left in the checkout; no merge, push, or installation occurred.
+limits. Latest `main` was merged into the feature branch for PR integration;
+the post-merge relevant regression suite passed 571 tests. No phone installation
+has been performed.
 
 Implementation adjustments: use a URL-to-outcome scheduler map to avoid a model/
 service import cycle; inject page-client factories so transport ownership is

@@ -48,6 +48,8 @@ ignored `build/search_retrieval_diagnostic.json`. No paid model sweep was run.
 
 - Final search/services, models, providers, regression UI and view-model suite:
   538 tests passed after all source-preview/cancellation changes.
+- After merging latest `main` (`221679d`), the same suite passed 571 tests,
+  including upstream research-phase and animation coverage.
 - Final focused UI/persistence suite: 95 tests passed, including regression tests
   for snippet preview labeling and cancellation without a completion callback.
 - Static analysis of all changed production files and new diagnostic/test files:

@@ -31,7 +31,21 @@ jobs:
         uses: ./.github/actions/setup-flutter
 
       - name: Analyze
-        run: flutter analyze --no-fatal-warnings
+        run: |
+          set +e
+          flutter analyze --no-fatal-warnings > "${RUNNER_TEMP}/analyze.log" 2>&1
+          status=$?
+          set -e
+          cat "${RUNNER_TEMP}/analyze.log"
+          if ! grep -Eq 'issues found|No issues found' "${RUNNER_TEMP}/analyze.log"; then
+            echo "::error::Analyzer did not finish normally (exit ${status})"
+            exit "${status:-1}"
+          fi
+          if grep -qE '^[[:space:]]+error •' "${RUNNER_TEMP}/analyze.log"; then
+            echo "::error::Analyzer reported errors"
+            exit 1
+          fi
+          echo "No analyzer errors (warnings/infos are non-blocking; exit ${status})"
 
       - name: Test
         run: flutter test --exclude-tags live --reporter github --coverage

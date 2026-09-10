@@ -59,7 +59,7 @@ CI runs analysis, unit/widget tests, and Linux/Web/Android builds on every pull 
 
 ```bash
 # Same checks as CI
-flutter analyze
+flutter analyze --no-fatal-warnings
 flutter test --exclude-tags live
 
 # Live API tests (optional; needs keys and costs money)

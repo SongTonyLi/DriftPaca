@@ -102,4 +102,5 @@ most expensive full-screen layer the old design had.
 - Fragment shaders do not execute in headless `flutter test`, so the picture was
   checked by building the preview harness for the web and screenshotting it in
   headless Chromium in light, dark and incognito modes (see
-  `docs/screenshots/halftone_spiral_*.png`).
+  `docs/screenshots/halftone_spiral_dark.png` and `halftone_spiral_light.png`, taken
+  with `lib/preview_spiral.dart` at `?mode=…&generating=1&controls=0`).

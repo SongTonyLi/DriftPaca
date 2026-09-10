@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:llamaseek/Models/research_ledger.dart';
+import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Services/search_agent.dart';
 import 'package:llamaseek/Services/web_search_service.dart';
 import 'package:llamaseek/Utils/text_similarity.dart';
@@ -2550,6 +2551,99 @@ void main() {
               'model was shown, so the ledger and the sources agree');
       expect(verbatim.length, lessThanOrEqualTo(220),
           reason: 'one checklist line stays bounded however long the page is');
+    });
+  });
+
+  group('the phase signal', () {
+    test('names every seam of a one-search run, in order', () async {
+      // The strip that tells the user what the run is doing reads this
+      // sequence directly, so its ORDER is the contract — not just that
+      // each phase eventually fires.
+      final phases = <ResearchPhase>[];
+      var turn = 0;
+      final outcome = await SearchAgent(
+        streamTurn: (req) {
+          turn++;
+          if (turn == 1) {
+            return Stream.fromIterable(
+                [searchChunk('Vietnam GDP', thinking: 'need a source')]);
+          }
+          return Stream.fromIterable([answerChunk('GDP is X [1]')]);
+        },
+        search: (req) async => [hit('https://example.com/${req.query}')],
+        deriveGoal: (_) async =>
+            const ResearchGoal(statement: 'Establish Vietnam GDP'),
+        // No gaps: the gate runs, likes the draft, and the run ends.
+        assessCoverage: (_) async => const [],
+      ).run(
+        history: history,
+        listener: SearchAgentListener(onPhase: phases.add),
+      );
+
+      expect(outcome.content, 'GDP is X [1]');
+      expect(
+        phases.where((p) => p != ResearchPhase.drafting).toList(),
+        [
+          ResearchPhase.framingGoal,
+          ResearchPhase.thinking,
+          ResearchPhase.searching,
+          ResearchPhase.thinking,
+          ResearchPhase.checkingCoverage,
+          ResearchPhase.done,
+        ],
+      );
+      // The answer turn streams its prose BEFORE the gate reads it — the
+      // user watches the draft appear and only then sees it checked.
+      expect(phases.indexOf(ResearchPhase.drafting),
+          lessThan(phases.indexOf(ResearchPhase.checkingCoverage)));
+      expect(phases.indexOf(ResearchPhase.drafting), greaterThan(-1));
+    });
+
+    test('does not claim to be framing a goal when there is no goal call',
+        () async {
+      final phases = <ResearchPhase>[];
+      await agent(
+        streamTurn: (req) => Stream.fromIterable([answerChunk('plain answer')]),
+      ).run(
+        history: history,
+        listener: SearchAgentListener(onPhase: phases.add),
+      );
+
+      expect(phases, isNot(contains(ResearchPhase.framingGoal)));
+      expect(phases.first, ResearchPhase.thinking);
+      expect(phases.last, ResearchPhase.done);
+    });
+
+    test('reports waiting on the user while the clarification card is open',
+        () async {
+      final phases = <ResearchPhase>[];
+      final answered = Completer<List<String>?>();
+      final run = SearchAgent(
+        streamTurn: (req) => Stream.fromIterable([answerChunk('done')]),
+        search: (req) async => [hit('https://example.com')],
+        deriveGoal: (_) async => const ResearchGoal(
+          statement: 'Establish Vietnam GDP',
+          clarification: ResearchClarification(
+            question: 'Nominal or PPP?',
+            options: ['Nominal', 'PPP'],
+          ),
+        ),
+        askClarification: (_) => answered.future,
+      ).run(
+        history: history,
+        listener: SearchAgentListener(onPhase: phases.add),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(phases, [
+        ResearchPhase.framingGoal,
+        ResearchPhase.awaitingClarification,
+      ]);
+
+      answered.complete(const ['Nominal']);
+      await run;
+
+      expect(phases.last, ResearchPhase.done);
     });
   });
 }

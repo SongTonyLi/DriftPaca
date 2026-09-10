@@ -74,3 +74,23 @@ unless a confirmed delay or inconsistency caused visible jank.
   Filtered analysis found no new errors in changed files; the remaining
   changed-file warnings are existing optional-key warnings in
   `chat_configure_bottom_sheet.dart` and existing test dependency lints.
+
+## Addendum — 2026-09-09: research loop motion
+
+New and changed surfaces from the research-loop motion work
+(`docs/search_loop_motion_plan_2026-09-09.md`). Every entry resolves its
+durations through `motionDuration` / `animationsDisabled`, holds tickers and
+timers only while live, and releases them in `dispose`.
+
+| Surface | File | Category | Reduced motion | Evidence |
+|---|---|---|---|---|
+| Research activity strip (phase glyph, label cross-fade, in-phase counter) | `lib/Widgets/research_activity_strip.dart` | New continuous motion | Static glyph, label cuts, counter still ticks; `transientCallbackCount == 0` | `test/widgets/research_activity_strip_test.dart`, `g10_search_ui_test.dart` ("the research activity strip") |
+| Token reveal for streamed reasoning | `lib/Widgets/token_reveal_text.dart` | New reveal | Full text, no ticker | `test/widgets/token_reveal_text_test.dart` |
+| Live thinking block (same element across turn end, "Thought for N seconds") | `chat_bubble.dart` `_buildSearchSegmentsFrom`, `chat_bubble_think_block.dart` | Interruption fixed | Unchanged (existing static paths) | `g10_search_ui_test.dart` ("the live thinking block"), `test/chat_page_view_model_test.dart` |
+| Search card: query clip-reveal, staggered rows, progress line, completion pop, count-up | `lib/Widgets/search_card.dart` | New progress motion | Final states on the first frame; hourglass path unchanged | `test/widgets/search_card_motion_test.dart` |
+| Ledger: objective cross-fade + deriving shimmer, row glyph transition, next-step cross-fade | `chat_bubble.dart` ledger classes | Abrupt fixed | Instant; body skips `AnimatedSize` (a zero-duration one re-dirties itself in layout) | `g10_search_ui_test.dart` ("research ledger panel motion") |
+| Rejected draft fade-out | `chat_bubble.dart` `_AssistantBubbleState` | Abrupt fixed | Dropped on the next frame | `g05_bubble_stream_test.dart` ("a rejected draft fades out") |
+| Composer hint mirrors the phase | `chat_page.dart` `_composerHint` | Consistency | n/a (text) | Phase state covered by `test/chat_page_view_model_test.dart` |
+
+Phase source: `SearchAgentListener.onPhase` (`lib/Models/research_phase.dart`),
+ordered per run shape in `test/services/search_agent_test.dart`.

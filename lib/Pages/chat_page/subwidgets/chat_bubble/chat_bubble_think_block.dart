@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:llamaseek/Utils/motion.dart';
+import 'package:llamaseek/Widgets/token_reveal_text.dart';
 
 /// Parses message content into thinking and response parts.
 class ThinkBlockParser {
@@ -51,12 +52,22 @@ class ThinkBlockWidget extends StatefulWidget {
   final bool isStreaming;
   final bool keepExpandedWhenComplete;
 
+  /// How long this stretch of reasoning actually took, when something else
+  /// measured it — the research loop's live thinking segment, or a
+  /// persisted message that recorded it. Preferred over this widget's own
+  /// stopwatch, which can only ever measure how long the BLOCK has been on
+  /// screen: a block built from history was never here while the model was
+  /// thinking, and a live block hands over its authoritative total the
+  /// moment its turn ends.
+  final int? elapsedSeconds;
+
   const ThinkBlockWidget({
     super.key,
     required this.content,
     required this.isComplete,
     this.isStreaming = false,
     this.keepExpandedWhenComplete = false,
+    this.elapsedSeconds,
   });
 
   @override
@@ -196,12 +207,12 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
           ? 'Thinking... ${_elapsedSeconds}s'
           : 'Thinking...';
     }
-    if (_wasAlreadyComplete) {
-      return 'Thought';
-    }
-    return _elapsedSeconds > 0
-        ? 'Thought for $_elapsedSeconds seconds'
-        : 'Thought';
+    // A block that was built already complete has no stopwatch reading of
+    // its own worth showing (it would time how long it has been scrolled
+    // into view), so it names a duration only when it was handed one.
+    final seconds =
+        widget.elapsedSeconds ?? (_wasAlreadyComplete ? 0 : _elapsedSeconds);
+    return seconds > 0 ? 'Thought for $seconds seconds' : 'Thought';
   }
 
   @override
@@ -266,10 +277,19 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
                 // Plain Text — selection is provided by the SelectionArea in
                 // chat_list_view. SelectableText here would intercept vertical
                 // drags inside the chat list and block page scroll.
-                child: Text(
+                //
+                // Revealed a character at a time while the block is open, so
+                // reasoning arriving in bursty chunks reads as thinking rather
+                // than as a series of jumps. A block that is already complete
+                // (all of history) renders in full on its first frame.
+                child: TokenRevealText(
                   widget.content,
                   style:
                       TextStyle(color: color, fontSize: 13, height: 1.4),
+                  // Paused while folded away: a SizeTransition does not
+                  // mute TickerMode, so without this a collapsed live block
+                  // would keep revealing into a zero-height box.
+                  revealing: !widget.isComplete && _isExpanded,
                 ),
               ),
             ),

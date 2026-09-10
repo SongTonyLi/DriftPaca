@@ -1,5 +1,7 @@
 # DriftPaca
 
+[![CI](https://github.com/SongTonyLi/DriftPaca/actions/workflows/ci.yml/badge.svg)](https://github.com/SongTonyLi/DriftPaca/actions/workflows/ci.yml)
+
 Demo:
 
 
@@ -49,6 +51,21 @@ flutter run -d <simulator-id>
 # Physical device (release build required)
 flutter build ios --release
 flutter install -d <device-id>
+```
+
+## Testing
+
+CI runs analysis, formatting, unit/widget tests, and Linux/Web/Android builds on every pull request. Live tests that hit Ollama Cloud or OpenRouter are tagged `live` and are not part of that gate.
+
+```bash
+# Same checks as CI
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze
+flutter test --exclude-tags live
+
+# Live API tests (optional; needs keys and costs money)
+flutter test --tags live
+./tool/run_search_loop_sweep.sh
 ```
 
 ## Agent Memory

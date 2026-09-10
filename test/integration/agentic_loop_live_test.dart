@@ -13,6 +13,7 @@
 /// ChatProvider, so the system prompt here mirrors the production tool
 /// policy rather than being imported from it. What is under test is the
 /// harness — rounds, grouping, and termination — not the prompt text.
+@Tags(['live'])
 @Timeout(Duration(minutes: 8))
 library;
 

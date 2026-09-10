@@ -40,6 +40,7 @@
 ///                       (default: SearchAgent.defaultTurnIdleBudget)
 ///   OR_REPORT           where to write the JSON report
 ///                       (default: build/search_loop_sweep.json)
+@Tags(['live'])
 @Timeout(Duration(hours: 2))
 library;
 

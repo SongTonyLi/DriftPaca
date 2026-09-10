@@ -1,6 +1,9 @@
 // Explicit live diagnostic; no model calls or API keys required.
 // RUN_SEARCH_DIAGNOSTIC=1 flutter test --reporter expanded
 // test/integration/search_retrieval_diagnostic_live_test.dart
+@Tags(['live'])
+library;
+
 import 'dart:convert';
 import 'dart:io';
 

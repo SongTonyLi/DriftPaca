@@ -13,6 +13,7 @@
 ///   `OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/coverage_gate_live_test.dart`
 ///
 /// The key is read from the environment and must never be committed.
+@Tags(['live'])
 @Timeout(Duration(minutes: 6))
 library;
 

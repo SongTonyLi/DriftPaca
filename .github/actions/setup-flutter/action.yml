@@ -1,0 +1,23 @@
+name: Set up Flutter
+description: Install Flutter stable, cache the SDK and pub packages, then resolve dependencies.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+
+    - name: Print Flutter version
+      shell: bash
+      run: flutter --version
+
+    - name: Resolve Dart packages
+      shell: bash
+      run: flutter pub get
+
+    - name: Verify pubspec.lock is current
+      shell: bash
+      run: git diff --exit-code pubspec.lock

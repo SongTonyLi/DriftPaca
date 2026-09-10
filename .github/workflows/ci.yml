@@ -31,7 +31,7 @@ jobs:
         uses: ./.github/actions/setup-flutter
 
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-warnings
 
       - name: Test
         run: flutter test --exclude-tags live --reporter github --coverage

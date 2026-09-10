@@ -8,7 +8,10 @@ precision highp float;
 // grid samples a rotating multi-arm spiral field: each dot's size follows how
 // deep inside a spiral arm its cell centre sits, and the arms keep sliding
 // outward from a glowing core, so the dots read as a stream of tokens being
-// emitted. Two star layers twinkle over the whole thing.
+// emitted. The arms are packed tight around the core and open up with radius
+// (the gap between them grows linearly with r), and the dots thin out towards
+// the edge, so the field is dense in the middle and sparse outside. Two star
+// layers twinkle over the whole thing.
 //
 // Order MUST match kSpiralUniformOrder / buildSpiralUniforms
 // (lib/Widgets/gradient/spiral_geometry.dart).
@@ -17,10 +20,11 @@ uniform vec4 uCanvas;   // rgb canvas tint, a = o (overall fade 0..1)
 uniform vec4 uColA;     // rgb hue A (w unused)
 uniform vec4 uColB;     // rgb hue B (w unused)
 uniform vec4 uStar;     // rgb star / highlight colour, a = star strength (already × o)
-uniform vec4 uSpiral;   // xy = centre px, z = arm pitch px (radial gap between arms), w = rotation rad
+uniform vec4 uSpiral;   // xy = centre px, z = arm pitch px at the core (radial gap between arms), w = rotation rad
 uniform vec4 uFlow;     // x = outward flow (arm pitches), y = token bead phase rad, z = bead amount 0..1, w = arm count (integer)
 uniform vec4 uField;    // x = core radius px, y = outer radius px, z = intensity 0..1, w = halftone cell px
 uniform vec4 uTwinkle;  // x = star time s, y = star drift px, z = core glow 0..1, w = hue drift rad
+uniform vec4 uShape;    // x = pitch growth (extra px of gap per px of radius), y = dot density at the edge relative to the core 0..1, z = arm width fraction at the core, w = arm width fraction at the edge
 
 out vec4 fragColor;
 
@@ -28,7 +32,6 @@ const float TAU = 6.28318530718;
 const float GRID_ANGLE = 0.384;  // ~22deg rotated halftone screen
 const float DOT_GAIN = 1.08;     // full-coverage dot radius, in half-cell units
 const float DOT_GAMMA = 0.5;     // dot growth vs coverage (sqrt: area ~ coverage)
-const float ARM_WIDTH = 0.62;    // dotted fraction of each arm band
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -82,18 +85,26 @@ void main() {
   vec2 relc = cc - uSpiral.xy;
   float rc = length(relc);
   float thc = atan(relc.y, relc.x) + uSpiral.w;
-  // Archimedean arms: crossing coordinate t is integral on an arm centre. The
-  // flow term pushes every arm outward as it grows; `arms` is integral so t is
-  // continuous across the atan branch cut.
-  float t = rc / pitch - arms * thc / TAU - uFlow.x;
+  // Radial arm coordinate s: one unit per arm crossing. Its spacing grows with
+  // radius — ds/dr = 1 / (pitch + growth·r) — so the arms sit `pitch` apart at
+  // the core and open up further out (growth 0 gives a plain Archimedean spiral).
+  float growth = max(uShape.x, 0.0);
+  float s = growth > 1e-4 ? log(1.0 + rc * growth / pitch) / growth : rc / pitch;
+  // The crossing coordinate t is integral on an arm centre. The flow term
+  // pushes every arm outward as it grows; `arms` is integral so t is continuous
+  // across the atan branch cut.
+  float t = s - arms * thc / TAU - uFlow.x;
   float across = abs(fract(t) - 0.5) * 2.0;            // 0 on the arm, 1 between arms
-  float arm = 1.0 - smoothstep(0.0, ARM_WIDTH, across);
+  float far = smoothstep(coreR, outerR * 0.8, rc);     // 0 at the core, 1 out at the edge
+  float armWidth = mix(uShape.z, uShape.w, far);        // arms narrow as they open up
+  float arm = 1.0 - smoothstep(0.0, armWidth, across);
   float env = smoothstep(coreR * 0.35, coreR, rc)      // hollow core...
             * (1.0 - smoothstep(outerR * 0.45, outerR, rc)); // ...thinning out to the edge
+  float density = mix(1.0, uShape.y, far);              // dots shrink towards the edge
   // Token beads: bright packets running outward along each arm, offset per arm.
-  float beadWave = 0.5 + 0.5 * sin(rc * (TAU / (pitch * 0.5)) - uFlow.y + floor(t) * 1.9);
+  float beadWave = 0.5 + 0.5 * sin(s * TAU * 2.0 - uFlow.y + floor(t) * 1.9);
   float bead = mix(1.0, 0.15 + 0.85 * beadWave * beadWave, uFlow.z);
-  float cov = clamp(arm * env * bead * uField.z * o, 0.0, 1.0);
+  float cov = clamp(arm * env * bead * density * uField.z * o, 0.0, 1.0);
 
   float radius = pow(cov, DOT_GAMMA) * DOT_GAIN;
   float dist = length(fc) * 2.0;                        // 1.0 at the cell's inscribed edge
@@ -101,7 +112,7 @@ void main() {
   float dotm = (1.0 - smoothstep(radius - aa, radius + aa, dist)) * smoothstep(0.0, 0.05, cov);
 
   // Two hues swirl along the arms; bead peaks flash toward the highlight colour.
-  float hueMix = 0.5 + 0.5 * sin(thc + rc / pitch * 0.35 + uTwinkle.w);
+  float hueMix = 0.5 + 0.5 * sin(thc + s * 0.35 + uTwinkle.w);
   vec3 dotCol = mix(uColA.rgb, uColB.rgb, hueMix);
   float peak = uFlow.z * smoothstep(0.7, 1.0, beadWave * beadWave);
   dotCol = mix(dotCol, uStar.rgb, peak * 0.45);

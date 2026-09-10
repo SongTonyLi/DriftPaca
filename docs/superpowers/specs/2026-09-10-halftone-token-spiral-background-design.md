@@ -35,9 +35,15 @@ One fragment pass, `shaders/halftone_spiral.frag`, per pixel:
 1. **Halftone screen.** A ~22° rotated grid of 11 px cells. The spiral field is
    sampled at the *centre* of the pixel's cell, so each cell is one clean disc
    whose radius is `sqrt(coverage)` — a true halftone, not a per-pixel dither.
-2. **Spiral field.** Archimedean, `arms` arms, radial pitch `≈0.17 × short side`
-   (clamped 44–132 px so an arm is always several dots wide). The crossing
-   coordinate `t = r/pitch − arms·θ/2π − flow` is integral on an arm centre;
+2. **Spiral field.** `arms` arms whose radial gap is `pitch` at the core
+   (`≈0.11 × short side`, clamped 44–100 px so an arm is always several dots
+   wide) and grows linearly with radius, `gap(r) = pitch + growth·r`
+   (`growth` 0.22 while generating): the radial arm coordinate is
+   `s = ln(1 + r·growth/pitch) / growth`, and the crossing coordinate
+   `t = s − arms·θ/2π − flow` is integral on an arm centre. So the arms are
+   packed tight around the core and open up outward — **dense in the middle,
+   sparse at the edge** — and the dots also shrink towards the edge (coverage
+   × `edgeDensity` 0.4) while the arms narrow (dotted fraction 0.72 → 0.42).
    `flow` grows with time so every arm slides **outward from the core** — the
    dots are tokens being emitted. A hollow, glowing core sits at the origin; the
    field thins out towards `0.66 × diagonal`, which covers every corner wherever
@@ -88,17 +94,17 @@ most expensive full-screen layer the old design had.
 | File | Change |
 |---|---|
 | `shaders/halftone_spiral.frag` | **new** — replaces `shaders/mesh.frag` |
-| `lib/Widgets/gradient/spiral_geometry.dart` | **new** — replaces `mesh_geometry.dart`: `SpiralField`, placement, look, highlight colour, `buildSpiralUniforms` (9 × vec4 = 36 floats), `kSpiralUniformOrder` |
+| `lib/Widgets/gradient/spiral_geometry.dart` | **new** — replaces `mesh_geometry.dart`: `SpiralField`, placement, look (incl. radial shape), highlight colour, `buildSpiralUniforms` (10 × vec4 = 40 floats), `kSpiralUniformOrder` |
 | `lib/Widgets/floating_gradient_background.dart` | same lifecycle; paints the spiral, no glass layer |
 | `lib/preview_spiral.dart` | **new** — isolated preview harness (`flutter run -t lib/preview_spiral.dart`), with query-parameter presets on the web for screenshots |
-| `test/widgets/gradient/spiral_geometry_test.dart` | **new** — core stays central, field covers every corner, pitch gives ≥4 dots per arm, fields move, look and highlight contrast |
+| `test/widgets/gradient/spiral_geometry_test.dart` | **new** — core stays central, field covers every corner, core pitch gives ≥4 dots per arm, arms open up (dense middle / sparse edge), fields move, look and highlight contrast |
 | `test/widgets/gradient/spiral_uniforms_test.dart` | **new** — packing order, welcome/hidden packing, and the shader source declares exactly `kSpiralUniformOrder` as vec4s |
 | `test/widgets/floating_gradient_background_test.dart` | renamed accessor only; the scheduling tests are unchanged and still pass |
 | `pubspec.yaml` | shader asset entry |
 
 ## Verification
 
-- `flutter test test/widgets/gradient test/widgets/floating_gradient_background_test.dart` — 19 tests pass.
+- `flutter test test/widgets/gradient test/widgets/floating_gradient_background_test.dart` — 20 tests pass.
 - Fragment shaders do not execute in headless `flutter test`, so the picture was
   checked by building the preview harness for the web and screenshotting it in
   headless Chromium in light, dark and incognito modes (see

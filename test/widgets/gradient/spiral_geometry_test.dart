@@ -50,7 +50,7 @@ void main() {
     }
   });
 
-  test('arm pitch scales with the screen and gives several halftone dots per arm', () {
+  test('core arm pitch scales with the screen and gives several halftone dots per arm', () {
     for (final size in _sizes) {
       final p = spiralPlacement(0, size, welcome: false);
       expect(p.pitch, inInclusiveRange(kSpiralPitchMin, kSpiralPitchMax));
@@ -98,6 +98,25 @@ void main() {
       expect(look.intensity, inInclusiveRange(0, 1));
       expect(look.starStrength, inInclusiveRange(0, 1));
       expect(look.coreGlow, inInclusiveRange(0, 1));
+    }
+  });
+
+  test('the field is dense in the middle and sparse at the edge', () {
+    for (final welcome in [false, true]) {
+      final look = spiralLook(welcome: welcome, darkIdle: true);
+      // Arms open up with radius: at a phone's edge the gap is several times the
+      // core gap, but never so wide that only one arm is left on screen.
+      const size = Size(400, 800);
+      final p = spiralPlacement(0, size, welcome: welcome);
+      final edgeGap = p.pitch + look.growth * (size.height / 2);
+      expect(look.growth, greaterThan(0));
+      expect(edgeGap, greaterThan(2.5 * p.pitch), reason: 'edge should be clearly sparser (welcome=$welcome)');
+      expect(edgeGap, lessThan(size.height / 2), reason: 'still more than one arm on a phone (welcome=$welcome)');
+      // Dots thin out and arms narrow towards the edge.
+      expect(look.edgeDensity, inInclusiveRange(0.2, 0.7));
+      expect(look.armWidthEdge, lessThan(look.armWidthCore));
+      expect(look.armWidthCore, inInclusiveRange(0.3, 0.9));
+      expect(look.armWidthEdge, inInclusiveRange(0.2, 0.8));
     }
   });
 

@@ -27,10 +27,11 @@ const List<String> kSpiralUniformOrder = [
   'uFlow',
   'uField',
   'uTwinkle',
+  'uShape',
 ];
 
 /// Floats in the uniform buffer: one vec4 per [kSpiralUniformOrder] entry.
-const int kSpiralUniformFloats = 4 * 9;
+const int kSpiralUniformFloats = 4 * 10;
 
 /// Where the spiral's core sits at rest, as a fraction of the canvas: a little
 /// above centre, where the eye rests on a chat screen.
@@ -39,20 +40,22 @@ const Offset kSpiralAnchor = Offset(0.5, 0.44);
 /// How far the core floats around its anchor (fraction of the short side).
 const double kSpiralDriftAmt = 0.06;
 
-/// Radial gap between neighbouring arms, as a fraction of the short side,
-/// clamped so a watch-sized or a desktop-sized canvas both get a readable
-/// number of halftone dots per arm.
-const double kSpiralPitchFrac = 0.17;
+/// Radial gap between neighbouring arms *at the core*, as a fraction of the
+/// short side, clamped so a watch-sized or a desktop-sized canvas both get a
+/// readable number of halftone dots per arm. The gap then grows with radius
+/// (see [SpiralLook.growth]), so the spiral is packed in the middle and opens
+/// up towards the edge.
+const double kSpiralPitchFrac = 0.11;
 const double kSpiralPitchMin = 44.0;
-const double kSpiralPitchMax = 132.0;
+const double kSpiralPitchMax = 100.0;
 
 /// Outer radius of the field as a fraction of the canvas diagonal. Large
 /// enough that, wherever the core has floated to, every corner is still inside
 /// the field (the arms thin out towards this edge rather than stopping).
 const double kSpiralOuterFrac = 0.66;
 
-/// Radius of the hollow, glowing core, in arm pitches.
-const double kSpiralCorePitches = 0.9;
+/// Radius of the hollow, glowing core, in (core) arm pitches.
+const double kSpiralCorePitches = 1.4;
 
 /// Halftone screen cell in logical px (dot pitch).
 const double kHalftoneCell = 11.0;
@@ -156,9 +159,15 @@ SpiralPlacement spiralPlacement(double phase, Size size, {required bool welcome}
   );
 }
 
-/// How strongly a field draws. The generating field is the show; the welcome
-/// intro is a quieter, beadless version. Over a light idle colour the dots and
-/// core are held back so body text on top stays comfortably legible.
+/// How strongly a field draws, and how it is shaped radially. The generating
+/// field is the show; the welcome intro is a quieter, beadless version. Over a
+/// light idle colour the dots and core are held back so body text on top stays
+/// comfortably legible.
+///
+/// Radial shape: the gap between arms is the core pitch plus [growth] px for
+/// every px of radius, the arms narrow from [armWidthCore] to [armWidthEdge]
+/// (fraction of the gap that is dotted), and the dots shrink to [edgeDensity]
+/// of their core coverage — together: dense in the middle, sparse outside.
 @immutable
 class SpiralLook {
   final double intensity; // dot coverage gain 0..1
@@ -166,12 +175,20 @@ class SpiralLook {
   final int arms;
   final double starStrength; // 0..1
   final double coreGlow; // 0..1
+  final double growth; // extra px of arm gap per px of radius (0 = Archimedean)
+  final double edgeDensity; // dot coverage at the edge relative to the core, 0..1
+  final double armWidthCore; // dotted fraction of the gap at the core
+  final double armWidthEdge; // dotted fraction of the gap at the edge
   const SpiralLook({
     required this.intensity,
     required this.beadAmount,
     required this.arms,
     required this.starStrength,
     required this.coreGlow,
+    required this.growth,
+    required this.edgeDensity,
+    required this.armWidthCore,
+    required this.armWidthEdge,
   });
 }
 
@@ -183,6 +200,10 @@ SpiralLook spiralLook({required bool welcome, required bool darkIdle}) {
       arms: 2,
       starStrength: darkIdle ? 1.0 : 0.6,
       coreGlow: 0.5,
+      growth: 0.28,
+      edgeDensity: 0.35,
+      armWidthCore: 0.7,
+      armWidthEdge: 0.4,
     );
   }
   return SpiralLook(
@@ -191,6 +212,10 @@ SpiralLook spiralLook({required bool welcome, required bool darkIdle}) {
     arms: 3,
     starStrength: darkIdle ? 0.85 : 0.5,
     coreGlow: 0.8,
+    growth: 0.22,
+    edgeDensity: 0.4,
+    armWidthCore: 0.72,
+    armWidthEdge: 0.42,
   );
 }
 
@@ -214,7 +239,8 @@ Color spiralHighlightColor(Color idle, Color a, Color b) {
 ///   uIdle(rgb,1) · uCanvas(rgb,o) · uColA(rgb,0) · uColB(rgb,0) ·
 ///   uStar(rgb, starStrength·o) · uSpiral(cx,cy,pitch,rotation) ·
 ///   uFlow(flow,beadPhase,beadAmount,arms) · uField(coreR,outerR,intensity,cell) ·
-///   uTwinkle(starTime,starDrift,coreGlow,hueDrift).
+///   uTwinkle(starTime,starDrift,coreGlow,hueDrift) ·
+///   uShape(growth,edgeDensity,armWidthCore,armWidthEdge).
 /// Pure — unit-testable.
 Float32List buildSpiralUniforms(SpiralField field, Color idle, Size size) {
   final o = field.opacity;
@@ -254,6 +280,10 @@ Float32List buildSpiralUniforms(SpiralField field, Color idle, Size size) {
   w(p.starDrift);
   w(look.coreGlow);
   w(p.hueDrift);
+  w(look.growth); // uShape
+  w(look.edgeDensity);
+  w(look.armWidthCore);
+  w(look.armWidthEdge);
   assert(k == kSpiralUniformFloats);
   return u;
 }

@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Widgets/gradient/spiral_geometry.dart';
 
 void main() {
-  test('buildSpiralUniforms packs 36 floats in shader-declared order', () {
+  test('buildSpiralUniforms packs 40 floats in shader-declared order', () {
     final field = SpiralField()
       ..a = const Color(0xFF112233)
       ..b = const Color(0xFF445566)
@@ -65,6 +65,11 @@ void main() {
     expect(u[33], closeTo(p.starDrift, 1e-3));
     expect(u[34], closeTo(look.coreGlow, 1e-6));
     expect(u[35], closeTo(p.hueDrift, 1e-5));
+    // uShape — pitch growth, edge density, arm width at core / edge
+    expect(u[36], closeTo(look.growth, 1e-6));
+    expect(u[37], closeTo(look.edgeDensity, 1e-6));
+    expect(u[38], closeTo(look.armWidthCore, 1e-6));
+    expect(u[39], closeTo(look.armWidthEdge, 1e-6));
   });
 
   test('buildSpiralUniforms in welcome mode packs the quiet intro field', () {

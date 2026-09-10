@@ -53,10 +53,19 @@ One fragment pass, `shaders/halftone_spiral.frag`, per pixel:
    flash toward the highlight colour. The welcome intro has no beads.
 4. **Colour.** The two palette hues swirl along the arms (`sin(θ + r/pitch·0.35
    + drift)`); the core glow is their average.
-5. **Stars.** Two hashed-grid layers (46 px sparse, 27 px dense), one star per
-   gated cell with a 1 px core, soft halo, individual twinkle rhythm, and a
-   four-point flare on the brightest few. The layers drift at different rates for
-   parallax. Each star stays inside its own cell, so no neighbour lookups.
+5. **Stars.** Two sharp hashed-grid layers (46 px sparse, 27 px dense), one
+   star per gated cell with a 1 px core, soft halo, individual twinkle rhythm,
+   and a four-point flare on the brightest few, over a very sparse layer of soft
+   bokeh discs (96 px cells) far behind them. The layers drift at different
+   rates for parallax. Each star stays inside its own cell, so no neighbour
+   lookups.
+6. **Depth and finish.** The arm field is drawn a second time at the pixel
+   itself as a soft nebula haze under the dots (≈20 % of the arm colour at full
+   coverage), so the arms glow rather than sit flat. A bright heart (radius
+   0.32 × core) burns inside the wide core glow. A vignette pulls the far field
+   back toward the idle colour, and the outer dots fade toward the base as if
+   seen through atmosphere. Each dot is shaded with a slightly brighter centre.
+   A static, sub-2 % grain keeps the glows from banding on OLED.
 
 The **highlight / star colour** is derived in Dart from the palette: the two
 hues' average hue, pale (L 0.88) over a dark idle and deep (L 0.36) over a light

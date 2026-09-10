@@ -10,8 +10,13 @@ precision highp float;
 // outward from a glowing core, so the dots read as a stream of tokens being
 // emitted. The arms are packed tight around the core and open up with radius
 // (the gap between them grows linearly with r), and the dots thin out towards
-// the edge, so the field is dense in the middle and sparse outside. Two star
-// layers twinkle over the whole thing.
+// the edge, so the field is dense in the middle and sparse outside.
+//
+// Under the dots the same field is drawn once more as a soft nebula haze, so
+// the arms glow rather than sit flat; a bright heart burns inside the core; a
+// vignette pulls the edges back toward the idle colour; and three star layers
+// (sharp far, sharp near, soft bokeh) twinkle over the whole thing, with a
+// whisper of static grain to keep the glows from banding.
 //
 // Order MUST match kSpiralUniformOrder / buildSpiralUniforms
 // (lib/Widgets/gradient/spiral_geometry.dart).
@@ -39,10 +44,49 @@ float hash12(vec2 p) {
   return fract((p3.x + p3.y) * p3.z);
 }
 
-// One star layer over a jittered grid: at most one star per cell (gated by
-// density), each with a ~1px core, a soft halo and its own twinkle rhythm; the
-// brightest few also carry a four-point flare. Every part of a star stays inside
-// its own cell, so no neighbour lookups are needed.
+// The spiral field at screen point q. Returns
+//   x = arm coverage 0..1 (before intensity and fade),
+//   y = radial arm coordinate s (one unit per arm crossing),
+//   z = angle around the core (with rotation),
+//   w = token bead wave 0..1 (1 at a bead's crest).
+vec4 spiralAt(vec2 q) {
+  vec2 rel = q - uSpiral.xy;
+  float r = length(rel);
+  float th = atan(rel.y, rel.x) + uSpiral.w;
+  float pitch = max(uSpiral.z, 1.0);
+  float coreR = max(uField.x, 1.0);
+  float outerR = max(uField.y, coreR + 1.0);
+  // Radial arm coordinate s: one unit per arm crossing. Its spacing grows with
+  // radius — ds/dr = 1 / (pitch + growth·r) — so the arms sit `pitch` apart at
+  // the core and open up further out (growth 0 gives a plain Archimedean spiral).
+  float growth = max(uShape.x, 0.0);
+  float s = growth > 1e-4 ? log(1.0 + r * growth / pitch) / growth : r / pitch;
+  // The crossing coordinate t is integral on an arm centre. The flow term
+  // pushes every arm outward as it grows; the arm count is integral so t is
+  // continuous across the atan branch cut.
+  float t = s - uFlow.w * th / TAU - uFlow.x;
+  float across = abs(fract(t) - 0.5) * 2.0;            // 0 on the arm, 1 between arms
+  float far = smoothstep(coreR, outerR * 0.8, r);      // 0 at the core, 1 out at the edge
+  float armWidth = mix(uShape.z, uShape.w, far);        // arms narrow as they open up
+  float arm = 1.0 - smoothstep(0.0, armWidth, across);
+  float env = smoothstep(coreR * 0.35, coreR, r)       // hollow core...
+            * (1.0 - smoothstep(outerR * 0.45, outerR, r)); // ...thinning out to the edge
+  float density = mix(1.0, uShape.y, far);              // dots shrink towards the edge
+  // Token beads: bright packets running outward along each arm, offset per arm.
+  float beadWave = 0.5 + 0.5 * sin(s * TAU * 2.0 - uFlow.y + floor(t) * 1.9);
+  float bead = mix(1.0, 0.15 + 0.85 * beadWave * beadWave, uFlow.z);
+  return vec4(arm * env * density * bead, s, th, beadWave);
+}
+
+// The two palette hues swirling along the arms.
+vec3 armColour(float s, float th) {
+  return mix(uColA.rgb, uColB.rgb, 0.5 + 0.5 * sin(th + s * 0.35 + uTwinkle.w));
+}
+
+// One sharp star layer over a jittered grid: at most one star per cell (gated
+// by density), each with a ~1px core, a soft halo and its own twinkle rhythm;
+// the brightest few also carry a four-point flare. Every part of a star stays
+// inside its own cell, so no neighbour lookups are needed.
 float starLayer(vec2 p, float cell, float density, float time, float drift) {
   vec2 q = (p + vec2(drift * 0.35, drift)) / cell;
   vec2 id = floor(q);
@@ -62,76 +106,91 @@ float starLayer(vec2 p, float cell, float density, float time, float drift) {
   return gate * tw * (core + 0.35 * halo + 0.55 * bright * flare);
 }
 
+// A sparse layer of soft, out-of-focus discs — depth behind the sharp stars.
+float bokehLayer(vec2 p, float cell, float density, float time, float drift) {
+  vec2 q = (p + vec2(drift * 0.2, drift * 0.6)) / cell;
+  vec2 id = floor(q);
+  float h = hash12(id + 11.3);
+  float gate = step(h, density);
+  vec2 jitter = (vec2(hash12(id + 5.9), hash12(id + 2.3)) - 0.5) * 0.4;
+  vec2 d = (fract(q) - 0.5 - jitter) * cell;
+  float radius = cell * (0.06 + 0.07 * hash12(id + 9.4));
+  float disc = 1.0 - smoothstep(radius * 0.4, radius, length(d));
+  float tw = 0.6 + 0.4 * sin(time * (0.3 + 0.5 * h) + h * TAU);
+  return gate * disc * tw;
+}
+
 void main() {
   vec2 p = FlutterFragCoord().xy;
   float o = uCanvas.a;
+  float intensity = uField.z;
   vec3 base = mix(uIdle.rgb, uCanvas.rgb, o);
 
-  float pitch = max(uSpiral.z, 1.0);
-  float arms = uFlow.w;
   float coreR = max(uField.x, 1.0);
   float outerR = max(uField.y, coreR + 1.0);
   float cell = max(uField.w, 2.0);
 
-  // Halftone screen: sample the spiral field at the *centre* of this pixel's
-  // rotated grid cell, so every dot is one clean disc of a single size.
+  vec2 rel = p - uSpiral.xy;
+  float r2 = dot(rel, rel);
+  float rNorm = sqrt(r2) / outerR;                      // 0 at the core, 1 at the field's edge
+
+  // ---- Depth: pull the far field back toward the flat idle colour.
+  float vignette = smoothstep(0.45, 1.05, rNorm);
+  vec3 col = mix(base, uIdle.rgb, vignette * 0.35 * o);
+
+  // ---- Nebula haze: the arm field itself, soft and continuous, under the dots.
+  vec4 fh = spiralAt(p);
+  float haze = pow(fh.x, 1.3) * intensity * o * 0.20;
+  col = mix(col, armColour(fh.y, fh.z), haze);
+
+  // ---- Core: a wide glow the tokens pour out of, with a bright heart inside,
+  //      both breathing gently with the bead phase.
+  float breathe = 0.85 + 0.15 * sin(uFlow.y * 0.35);
+  vec3 glowCol = mix(uColA.rgb, uColB.rgb, 0.5);
+  float glow = exp(-r2 / (2.0 * coreR * coreR)) * uTwinkle.z * breathe * o;
+  float heartR = coreR * 0.32;
+  float heart = exp(-r2 / (2.0 * heartR * heartR)) * uTwinkle.z * breathe * o;
+  col = mix(col, glowCol, glow * 0.55);
+  col = mix(col, mix(glowCol, uStar.rgb, 0.55), heart * 0.6 * intensity);
+
+  // ---- Halftone dots: sample the field at the *centre* of this pixel's
+  //      rotated grid cell, so every dot is one clean disc of a single size.
   float ca = cos(GRID_ANGLE), sa = sin(GRID_ANGLE);
   mat2 toGrid = mat2(ca, -sa, sa, ca);
   mat2 toScreen = mat2(ca, sa, -sa, ca);
   vec2 g = toGrid * p / cell;
   vec2 fc = fract(g) - 0.5;
   vec2 cc = toScreen * ((floor(g) + 0.5) * cell);
-
-  vec2 relc = cc - uSpiral.xy;
-  float rc = length(relc);
-  float thc = atan(relc.y, relc.x) + uSpiral.w;
-  // Radial arm coordinate s: one unit per arm crossing. Its spacing grows with
-  // radius — ds/dr = 1 / (pitch + growth·r) — so the arms sit `pitch` apart at
-  // the core and open up further out (growth 0 gives a plain Archimedean spiral).
-  float growth = max(uShape.x, 0.0);
-  float s = growth > 1e-4 ? log(1.0 + rc * growth / pitch) / growth : rc / pitch;
-  // The crossing coordinate t is integral on an arm centre. The flow term
-  // pushes every arm outward as it grows; `arms` is integral so t is continuous
-  // across the atan branch cut.
-  float t = s - arms * thc / TAU - uFlow.x;
-  float across = abs(fract(t) - 0.5) * 2.0;            // 0 on the arm, 1 between arms
-  float far = smoothstep(coreR, outerR * 0.8, rc);     // 0 at the core, 1 out at the edge
-  float armWidth = mix(uShape.z, uShape.w, far);        // arms narrow as they open up
-  float arm = 1.0 - smoothstep(0.0, armWidth, across);
-  float env = smoothstep(coreR * 0.35, coreR, rc)      // hollow core...
-            * (1.0 - smoothstep(outerR * 0.45, outerR, rc)); // ...thinning out to the edge
-  float density = mix(1.0, uShape.y, far);              // dots shrink towards the edge
-  // Token beads: bright packets running outward along each arm, offset per arm.
-  float beadWave = 0.5 + 0.5 * sin(s * TAU * 2.0 - uFlow.y + floor(t) * 1.9);
-  float bead = mix(1.0, 0.15 + 0.85 * beadWave * beadWave, uFlow.z);
-  float cov = clamp(arm * env * bead * density * uField.z * o, 0.0, 1.0);
+  vec4 fd = spiralAt(cc);
+  float cov = clamp(fd.x * intensity * o, 0.0, 1.0);
 
   float radius = pow(cov, DOT_GAMMA) * DOT_GAIN;
   float dist = length(fc) * 2.0;                        // 1.0 at the cell's inscribed edge
   float aa = 2.4 / cell;                                // ~1.2px edge softness
   float dotm = (1.0 - smoothstep(radius - aa, radius + aa, dist)) * smoothstep(0.0, 0.05, cov);
 
-  // Two hues swirl along the arms; bead peaks flash toward the highlight colour.
-  float hueMix = 0.5 + 0.5 * sin(thc + s * 0.35 + uTwinkle.w);
-  vec3 dotCol = mix(uColA.rgb, uColB.rgb, hueMix);
-  float peak = uFlow.z * smoothstep(0.7, 1.0, beadWave * beadWave);
+  // Dot colour: the swirling hues, a brighter heart in each disc, bead crests
+  // flashing toward the highlight, and the far field fading into the base as
+  // if seen through atmosphere.
+  vec3 dotCol = armColour(fd.y, fd.z);
+  float inDisc = 1.0 - clamp(dist / max(radius, 1e-3), 0.0, 1.0);
+  dotCol = mix(dotCol, uStar.rgb, 0.18 * inDisc * inDisc);
+  float peak = uFlow.z * smoothstep(0.7, 1.0, fd.w * fd.w);
   dotCol = mix(dotCol, uStar.rgb, peak * 0.45);
-
-  // Luminous core the tokens pour out of, breathing gently with the bead phase.
-  vec2 rel = p - uSpiral.xy;
-  float r2 = dot(rel, rel);
-  float breathe = 0.85 + 0.15 * sin(uFlow.y * 0.35);
-  float glow = exp(-r2 / (2.0 * coreR * coreR)) * uTwinkle.z * breathe * o;
-  vec3 glowCol = mix(uColA.rgb, uColB.rgb, 0.5);
-
-  vec3 col = mix(base, glowCol, glow * 0.55);
+  float ccNorm = length(cc - uSpiral.xy) / outerR;
+  dotCol = mix(dotCol, base, smoothstep(0.55, 1.0, ccNorm) * 0.35);
   col = mix(col, dotCol, dotm);
 
-  // Starfield: a sparse far layer and a denser near layer drifting at
-  // different rates for a little parallax.
+  // ---- Stars: soft bokeh far back, then a sparse far layer and a denser near
+  //      layer drifting at different rates for a little parallax.
+  float bokeh = bokehLayer(p, 96.0, 0.14, uTwinkle.x * 0.6, uTwinkle.y * 0.4);
   float stars = starLayer(p, 46.0, 0.55, uTwinkle.x, uTwinkle.y)
               + starLayer(p, 27.0, 0.28, uTwinkle.x * 1.3, uTwinkle.y * 1.8);
+  col = mix(col, uStar.rgb, clamp(bokeh * 0.22 * uStar.a, 0.0, 1.0));
   col = mix(col, uStar.rgb, clamp(stars * uStar.a, 0.0, 1.0));
+
+  // ---- Finish: static fine grain so the glows never band on OLED.
+  col += (hash12(p) - 0.5) * 0.012 * o;
 
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);        // opaque full-bleed base
 }

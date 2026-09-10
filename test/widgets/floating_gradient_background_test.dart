@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Widgets/floating_gradient_background.dart';
-import 'package:llamaseek/Widgets/gradient/mesh_geometry.dart';
+import 'package:llamaseek/Widgets/gradient/spiral_geometry.dart';
 
 Widget _host({required bool generating}) {
   return MaterialApp(
@@ -41,16 +41,16 @@ Widget _welcomeHost({
   );
 }
 
-/// The live [Mesh] the painter reads, so a test can watch what is actually being
-/// drawn (which field, at what opacity) frame by frame.
-Mesh _meshOf(WidgetTester tester) {
+/// The live [SpiralField] the painter reads, so a test can watch what is
+/// actually being drawn (which field, at what opacity) frame by frame.
+SpiralField _fieldOf(WidgetTester tester) {
   final paint = tester
       .widgetList<CustomPaint>(find.descendant(
         of: find.byType(FloatingGradientBackground),
         matching: find.byType(CustomPaint),
       ))
       .first;
-  return (paint.painter as dynamic).mesh as Mesh;
+  return (paint.painter as dynamic).field as SpiralField;
 }
 
 void main() {
@@ -68,7 +68,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('generation wakes the ticker to fade the mesh in', (tester) async {
+  testWidgets('generation wakes the ticker to fade the spiral in', (tester) async {
     await tester.pumpWidget(_host(generating: false));
     await tester.pump(const Duration(seconds: 1)); // settle to idle
     expect(tester.binding.hasScheduledFrame, isFalse);
@@ -89,7 +89,7 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     await tester.pump(const Duration(seconds: 1));
     expect(tester.binding.hasScheduledFrame, isFalse,
-        reason: 'ticker should stop once the mesh has faded out');
+        reason: 'ticker should stop once the spiral has faded out');
     expect(tester.takeException(), isNull);
   });
 
@@ -103,15 +103,15 @@ void main() {
   testWidgets('welcome intro plays once and then settles to a flat idle',
       (tester) async {
     await tester.pumpWidget(_welcomeHost());
-    final mesh = _meshOf(tester);
+    final field = _fieldOf(tester);
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(mesh.welcome, isTrue, reason: 'the intro should be on screen');
-    expect(mesh.opacity, greaterThan(0.0));
+    expect(field.welcome, isTrue, reason: 'the intro should be on screen');
+    expect(field.opacity, greaterThan(0.0));
 
     await tester.pumpAndSettle();
-    expect(mesh.opacity, lessThan(0.01));
+    expect(field.opacity, lessThan(0.01));
     expect(tester.binding.hasScheduledFrame, isFalse,
         reason: 'the intro is one-shot; the ticker must stop afterwards');
   });
@@ -133,25 +133,25 @@ void main() {
   testWidgets('generation takes over the intro without a visible field swap',
       (tester) async {
     await tester.pumpWidget(_welcomeHost());
-    final mesh = _meshOf(tester);
+    final field = _fieldOf(tester);
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(mesh.welcome, isTrue);
-    expect(mesh.opacity, greaterThan(0.5), reason: 'intro should be visible');
+    expect(field.welcome, isTrue);
+    expect(field.opacity, greaterThan(0.5), reason: 'intro should be visible');
 
-    // Sending the first message: welcome ends, generation starts. The corner
-    // field and the drifting mesh are different pictures, so swapping between
+    // Sending the first message: welcome ends, generation starts. The intro
+    // field and the generating spiral are different pictures, so swapping between
     // them while either is visible reads as a flicker.
     await tester.pumpWidget(_welcomeHost(generating: true, welcome: false));
-    var wasWelcome = mesh.welcome;
+    var wasWelcome = field.welcome;
     double? swapOpacity;
     for (var i = 0; i < 60 && swapOpacity == null; i++) {
       await tester.pump(const Duration(milliseconds: 50));
-      if (mesh.welcome != wasWelcome) swapOpacity = mesh.opacity;
-      wasWelcome = mesh.welcome;
+      if (field.welcome != wasWelcome) swapOpacity = field.opacity;
+      wasWelcome = field.welcome;
     }
-    expect(swapOpacity, isNotNull, reason: 'should hand over to the mesh');
+    expect(swapOpacity, isNotNull, reason: 'should hand over to the generating spiral');
     expect(swapOpacity, lessThan(0.02),
         reason: 'the field may only change while it is invisible');
   });

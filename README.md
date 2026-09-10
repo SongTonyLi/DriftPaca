@@ -55,11 +55,10 @@ flutter install -d <device-id>
 
 ## Testing
 
-CI runs analysis, formatting, unit/widget tests, and Linux/Web/Android builds on every pull request. Live tests that hit Ollama Cloud or OpenRouter are tagged `live` and are not part of that gate.
+CI runs analysis, unit/widget tests, and Linux/Web/Android builds on every pull request. Live tests that hit Ollama Cloud or OpenRouter are tagged `live` and are not part of that gate.
 
 ```bash
 # Same checks as CI
-dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test --exclude-tags live
 

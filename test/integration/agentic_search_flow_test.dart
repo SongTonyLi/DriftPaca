@@ -9,6 +9,9 @@
 /// These tests exercise the ChatProvider state machine at the provider level,
 /// verifying state transitions, listener notifications, and the recursive
 /// streaming architecture that the UI depends on.
+@Tags(['live'])
+library;
+
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -31,6 +34,16 @@ final _cloudApiKey = Platform.environment['OLLAMA_CLOUD_API_KEY'] ?? '';
 const _testModel = 'qwen3-next:80b';
 
 void main() {
+  if (_cloudApiKey.isEmpty) {
+    test(
+      'agentic search flow',
+      () {},
+      skip: 'OLLAMA_CLOUD_API_KEY not set.\n'
+          'Run with: OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/agentic_search_flow_test.dart',
+    );
+    return;
+  }
+
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
@@ -42,13 +55,6 @@ void main() {
   late Directory _tempDir;
 
   setUpAll(() async {
-    if (_cloudApiKey.isEmpty) {
-      throw Exception(
-        'OLLAMA_CLOUD_API_KEY not set.\n'
-        'Run with: OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/agentic_search_flow_test.dart',
-      );
-    }
-
     // Use a temp directory for Hive to avoid contaminating test/assets
     _tempDir = await Directory.systemTemp.createTemp('agentic_search_test_');
     PathProviderPlatform.instance = _FakePathProvider(_tempDir.path);

@@ -7,6 +7,7 @@
 /// Run with: flutter test test/markdown_latex/rendering_integration_test.dart
 ///
 /// NOTE: Requires network access and a valid API key.
+@Tags(['live'])
 library;
 
 import 'dart:convert';

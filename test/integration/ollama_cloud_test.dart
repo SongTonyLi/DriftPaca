@@ -3,6 +3,9 @@
 ///
 /// Tests the WEBSEARCH instruction compliance, citation quality,
 /// and edge cases across multiple model families.
+@Tags(['live'])
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -69,14 +72,15 @@ String _extractQuery(String content) {
 }
 
 void main() {
-  setUpAll(() {
-    if (_cloudApiKey.isEmpty) {
-      throw Exception(
-        'OLLAMA_CLOUD_API_KEY not set. Run with:\n'
-        'OLLAMA_CLOUD_API_KEY=<key> dart test test/integration/ollama_cloud_test.dart',
-      );
-    }
-  });
+  if (_cloudApiKey.isEmpty) {
+    test(
+      'ollama cloud live tests',
+      () {},
+      skip: 'OLLAMA_CLOUD_API_KEY not set. Run with:\n'
+          'OLLAMA_CLOUD_API_KEY=<key> dart test test/integration/ollama_cloud_test.dart',
+    );
+    return;
+  }
 
   // =========================================================================
   // Group 1: WEBSEARCH compliance across models

@@ -1,0 +1,16 @@
+# Live tests hit real Ollama Cloud / OpenRouter APIs (and often the public web).
+# They are excluded from CI. Run them explicitly:
+#
+#   flutter test --tags live
+#   ./tool/run_search_loop_sweep.sh
+#
+# The `ci` preset matches the GitHub Actions gate:
+#
+#   flutter test -P ci
+tags:
+  live:
+    timeout: 15m
+
+presets:
+  ci:
+    exclude_tags: live

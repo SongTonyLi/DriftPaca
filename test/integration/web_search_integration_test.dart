@@ -12,7 +12,11 @@
 /// Note: WebView search requires a running Flutter engine (device/emulator).
 /// In `flutter test` (headless), WebView returns empty — those tests are
 /// marked accordingly. Run on a device for full coverage.
+@Tags(['live'])
+library;
+
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
@@ -23,8 +27,15 @@ import 'package:llamaseek/Utils/text_splitter.dart';
 
 // API key read from environment — not committed
 // Run with: OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/web_search_integration_test.dart
-const _cloudApiKey = String.fromEnvironment('OLLAMA_CLOUD_API_KEY');
+final _cloudApiKey = () {
+  const fromDefine = String.fromEnvironment('OLLAMA_CLOUD_API_KEY');
+  if (fromDefine.isNotEmpty) return fromDefine;
+  return Platform.environment['OLLAMA_CLOUD_API_KEY'] ?? '';
+}();
 const _testModel = 'gpt-oss:120b-cloud';
+final _skipLive = _cloudApiKey.isEmpty
+    ? 'OLLAMA_CLOUD_API_KEY not set. Run with: OLLAMA_CLOUD_API_KEY=<key> flutter test test/integration/web_search_integration_test.dart'
+    : null;
 
 const _webSearchSystemPrompt = '''If you need current or real-time information from the web to answer the user's question, start your response with WEBSEARCH: followed by a concise search query (max 10 words) on the first line.
 
@@ -145,7 +156,7 @@ void main() {
         reason: 'Model should search for CJK current events question.\nGot: "$firstLine"',
       );
     });
-  });
+  }, skip: _skipLive);
 
   // =========================================================================
   // Group 2: WebSearchService — HTTP fallback (WebView won't work in test env)
@@ -290,7 +301,7 @@ User question: What is Vietnam's GDP in 2025?''',
       print('Contains numbers: $mentionsNumber');
 
       expect(mentionsGDP, isTrue, reason: 'Answer should discuss GDP');
-    });
+    }, skip: _skipLive);
 
     test('citation replacement handles both bracket formats', () {
       // This tests the ChatProvider.replaceCitationsWithLinks static method

@@ -158,17 +158,15 @@ void main() async {
   });
 
   test("Test database get all chats", () async {
-    await service.createChat(model);
+    final chat = await service.createChat(model);
     final chats = await service.getAllChats();
+    final retrieved = chats.singleWhere((c) => c.id == chat.id);
 
-    if (chats.isNotEmpty) {
-      expect(chats.first.id, isNotEmpty);
-      expect(chats.first.model, model);
-      expect(chats.first.title, "New Chat");
-      expect(chats.first.systemPrompt, isNull);
-      expect(chats.first.options.toJson(), OllamaChatOptions().toJson());
-    }
-  }, retry: 5);
+    expect(retrieved.model, model);
+    expect(retrieved.title, "New Chat");
+    expect(retrieved.systemPrompt, isNull);
+    expect(retrieved.options.toJson(), OllamaChatOptions().toJson());
+  });
 
   test("Test database add message", () async {
     final chat = await service.createChat(model);

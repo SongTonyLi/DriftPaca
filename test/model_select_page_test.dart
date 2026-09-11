@@ -7,6 +7,7 @@ import 'package:llamaseek/Pages/model_select_page/model_select_page.dart';
 import 'package:llamaseek/Pages/model_select_page/subwidgets/brand_node.dart';
 import 'package:llamaseek/Pages/model_select_page/subwidgets/logo_wheel.dart';
 import 'package:llamaseek/Pages/model_select_page/subwidgets/wheel_center_disc.dart';
+import 'package:llamaseek/Widgets/static_background.dart';
 
 OllamaModel _mk(
   String name,
@@ -50,6 +51,34 @@ void _phoneSurface(WidgetTester tester) {
 }
 
 void main() {
+  testWidgets('model selector uses a flat, non-animated theme background',
+      (tester) async {
+    _phoneSurface(tester);
+    const backgroundColor = Color(0xFF123456);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(scaffoldBackgroundColor: backgroundColor),
+        home: ModelSelectPage(models: _models),
+      ),
+    );
+    await tester.pump();
+
+    final background = tester.widget<StaticBackground>(
+      find.byType(StaticBackground),
+    );
+    expect(background.color, backgroundColor);
+    expect(find.byType(TweenAnimationBuilder<Color?>), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is DecoratedBox &&
+            widget.decoration is BoxDecoration &&
+            (widget.decoration as BoxDecoration).gradient is RadialGradient,
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets('builds, opens the info window, and selects', (tester) async {
     _phoneSurface(tester);
     OllamaModel? picked;

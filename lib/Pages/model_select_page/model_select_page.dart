@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:llamaseek/Constants/brand_logos.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 import 'package:llamaseek/Utils/motion.dart';
-import 'package:llamaseek/Widgets/floating_gradient_background.dart';
+import 'package:llamaseek/Widgets/static_background.dart';
 import 'subwidgets/logo_wheel.dart';
 import 'wheel_catalog.dart';
 import 'subwidgets/model_info_card.dart';
@@ -13,8 +13,8 @@ import 'subwidgets/wheel_center_disc.dart';
 
 /// Full-screen "wheeler" model selector. The user's available [models] orbit a
 /// central glass disc as provider-logo nodes; turning the ring snaps one under
-/// the notch and the mesh background tints to that brand. A search field at the
-/// top filters the ring live. Confirming returns the chosen [OllamaModel] — via
+/// the notch. A search field at the top filters the ring live. Confirming
+/// returns the chosen [OllamaModel] — via
 /// [onConfirm] if given, otherwise `Navigator.pop`.
 class ModelSelectPage extends StatefulWidget {
   final List<OllamaModel> models;
@@ -52,7 +52,6 @@ class _ModelSelectPageState extends State<ModelSelectPage>
   /// The docked model is tracked by name so it survives filtering (it stays
   /// docked while it still matches; otherwise the top match docks).
   late String _selectedName;
-  late Color _firstAccent;
 
   // Drives the logo→info-card flip (0 = logo, 1 = info window).
   late final AnimationController _infoCtrl;
@@ -66,12 +65,6 @@ class _ModelSelectPageState extends State<ModelSelectPage>
   void initState() {
     super.initState();
     _selectedName = _initialName();
-    // Guard the empty case: the in-app loader builds this page with an empty
-    // list while models are still loading, and `_modelByName` would otherwise
-    // call `.first` on an empty list ("Bad state: No element").
-    _firstAccent = widget.models.isEmpty
-        ? kOllamaBrand.accent
-        : brandForModel(_modelByName(_selectedName)).accent;
     _infoCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 340),
@@ -186,59 +179,12 @@ class _ModelSelectPageState extends State<ModelSelectPage>
     final accent = widget.models.isEmpty
         ? kOllamaBrand.accent
         : brandForModel(_modelByName(_selectedName)).accent;
-    final brightness = Theme.of(context).brightness;
-
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Full-bleed background OUTSIDE the Scaffold, so the keyboard resizing
-        // the body can't shrink it (which left a black gap above the keyboard).
-        // It animates its tint as the docked brand changes.
-        TweenAnimationBuilder<Color?>(
-          duration: motionDuration(
-            context,
-            const Duration(milliseconds: 600),
-          ),
-          curve: Curves.easeInOut,
-          tween: ColorTween(begin: _firstAccent, end: accent),
-          builder: (context, c, _) {
-            final acc = c ?? accent;
-            final m = _MeshColors.fromAccent(acc, brightness);
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                FloatingGradientBackground(
-                  meshA: m.a,
-                  meshB: m.b,
-                  canvas: m.canvas,
-                  idleColor: m.idle,
-                  // Power-restrained: a brief corner-breathe intro on open, then
-                  // the mesh settles to a flat brand-tinted idle and the ticker
-                  // stops. The brand tint still shifts (cheaply) on selection.
-                  isGenerating: false,
-                  isWelcome: true,
-                ),
-                // Static brand-tinted spotlight behind the wheel for depth.
-                IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(0, -0.08),
-                        radius: 0.95,
-                        colors: [
-                          acc.withValues(
-                              alpha:
-                                  brightness == Brightness.light ? 0.16 : 0.22),
-                          acc.withValues(alpha: 0.0),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
+        // Keep the full-bleed background outside the Scaffold so keyboard
+        // resizing cannot expose a gap above the keyboard.
+        StaticBackground(color: Theme.of(context).scaffoldBackgroundColor),
         Scaffold(
           backgroundColor: Colors.transparent,
           extendBodyBehindAppBar: true,
@@ -605,63 +551,6 @@ class _NoMatch extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-/// Mesh colours derived from a brand accent, lightness-clamped per brightness so
-/// the background reads in both light and dark — mirrors `mode_palette`.
-class _MeshColors {
-  final Color a;
-  final Color b;
-  final Color canvas;
-  final Color idle;
-  const _MeshColors(this.a, this.b, this.canvas, this.idle);
-
-  factory _MeshColors.fromAccent(Color accent, Brightness brightness) {
-    final b2 = _hueShift(accent, 22);
-    if (brightness == Brightness.light) {
-      return _MeshColors(
-        _clampL(accent, 0.45, 0.72),
-        _clampL(b2, 0.45, 0.72),
-        _setL(accent, 0.90),
-        // Slightly richer than the chat idle: the static background carries the
-        // brand tint on its own now, so make it perceptible (but still soft).
-        _idleTint(accent, 0.91, satScale: 0.6),
-      );
-    }
-    return _MeshColors(
-      _clampL(_scaleSL(accent, s: 0.85, l: 0.5), 0.18, 0.40),
-      _clampL(_scaleSL(b2, s: 0.85, l: 0.5), 0.18, 0.40),
-      _setL(accent, 0.08),
-      _idleTint(accent, 0.12, satScale: 0.55),
-    );
-  }
-
-  static Color _clampL(Color c, double lo, double hi) {
-    final h = HSLColor.fromColor(c);
-    return h.withLightness(h.lightness.clamp(lo, hi)).toColor();
-  }
-
-  static Color _setL(Color c, double l) =>
-      HSLColor.fromColor(c).withLightness(l.clamp(0.0, 1.0)).toColor();
-
-  static Color _hueShift(Color c, double deg) {
-    final h = HSLColor.fromColor(c);
-    return h.withHue((h.hue + deg) % 360).toColor();
-  }
-
-  static Color _scaleSL(Color c, {double s = 1, double l = 1}) {
-    final h = HSLColor.fromColor(c);
-    return HSLColor.fromAHSL(h.alpha, h.hue,
-            (h.saturation * s).clamp(0.0, 1.0), (h.lightness * l).clamp(0.0, 1.0))
-        .toColor();
-  }
-
-  static Color _idleTint(Color base, double l, {double satScale = 0.45}) {
-    final h = HSLColor.fromColor(base);
-    return HSLColor.fromAHSL(
-            1.0, h.hue, (h.saturation * satScale).clamp(0.0, 1.0), l)
-        .toColor();
   }
 }
 

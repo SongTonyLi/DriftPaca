@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// Two colors that define a floating-gradient background. They seed both the
-/// animated mesh and the app's Material theme. Stored as ARGB ints in Hive
-/// (see gradient_settings.dart) — always plain [Color], never MaterialColor.
+/// Two colors that seed the solid background tint and the app's Material theme.
+/// Stored as ARGB ints in Hive (see gradient_settings.dart) — always plain
+/// [Color], never MaterialColor.
 @immutable
 class GradientPair {
   final Color c1;

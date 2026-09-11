@@ -242,9 +242,8 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Composer — transparent so the full-screen incognito gradient
-        // overlay (behind this Stack layer) shows through, keeping the
-        // transition in sync with the area above.
+        // Composer — transparent so the full-screen mode background behind
+        // this Stack layer shows through consistently.
         Padding(
           padding: EdgeInsets.only(
             left: _composerHorizontalInset,
@@ -279,7 +278,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
           ),
         ),
         // Transparent gap so the composer floats just above the home indicator;
-        // the gradient shows through it (no colored strip). Clamp to >= 0 so a
+        // the mode background shows through it (no colored strip). Clamp to >= 0 so a
         // zero bottom inset (e.g. the first frame before safe-area insets settle)
         // can't produce a negative SizedBox height.
         SizedBox(
@@ -323,8 +322,7 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           decoration: BoxDecoration(
-            // Use theme colors so AnimatedTheme drives the transition
-            // at the same rate as the gradient overlay behind.
+            // Use theme colors so foreground controls follow mode changes.
             color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.18),
             borderRadius: BorderRadius.circular(24.0),
             border: Border.all(

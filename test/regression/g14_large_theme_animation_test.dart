@@ -14,10 +14,20 @@ import 'package:llamaseek/Services/database_service.dart';
 import 'package:llamaseek/Services/image_service.dart';
 import 'package:llamaseek/Services/memory_service.dart';
 import 'package:llamaseek/Services/permission_service.dart';
+import 'package:llamaseek/Utils/gradient_settings.dart';
+import 'package:llamaseek/Utils/mode_palette.dart';
+import 'package:llamaseek/Widgets/static_background.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 class _EmptyChatProvider extends ChangeNotifier implements ChatProvider {
+  bool _streaming = false;
+
+  void setStreaming(bool streaming) {
+    _streaming = streaming;
+    notifyListeners();
+  }
+
   @override
   List<OllamaChat> get chats => const [];
 
@@ -28,7 +38,7 @@ class _EmptyChatProvider extends ChangeNotifier implements ChatProvider {
   OllamaChat? get currentChat => null;
 
   @override
-  bool get isCurrentChatStreaming => false;
+  bool get isCurrentChatStreaming => _streaming;
 
   @override
   bool get isAwaitingClarification => false;
@@ -62,6 +72,69 @@ class _NoopImageService implements ImageService {
   Future<void> deleteImages(List<File> images) async {}
 }
 
+Widget _mainApp({
+  required ChatPageViewModel viewModel,
+  required ChatProvider chatProvider,
+}) {
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider<ChatPageViewModel>.value(value: viewModel),
+      ChangeNotifierProvider<ChatProvider>.value(value: chatProvider),
+      ChangeNotifierProvider<MemoryService>(
+        create: (_) => MemoryService(db: DatabaseService()),
+      ),
+    ],
+    child: MaterialApp(
+      builder: (context, child) => ResponsiveBreakpoints.builder(
+        child: child!,
+        breakpoints: const [
+          Breakpoint(start: 0, end: 450, name: MOBILE),
+          Breakpoint(start: 451, end: 800, name: TABLET),
+          Breakpoint(start: 801, end: double.infinity, name: DESKTOP),
+        ],
+        useShortestSide: true,
+      ),
+      home: const DriftPacaMainPage(),
+    ),
+  );
+}
+
+Future<void> _expectSolidBackgroundDuringGeneration(
+  WidgetTester tester, {
+  required Size size,
+  required ChatPageViewModel viewModel,
+  required _EmptyChatProvider chatProvider,
+}) async {
+  tester.view
+    ..physicalSize = size
+    ..devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+
+  await tester.pumpWidget(
+    _mainApp(viewModel: viewModel, chatProvider: chatProvider),
+  );
+  await tester.pump();
+
+  final expected = resolvePalette(
+    readGradientPair(Hive.box('settings')),
+    AppMode.normal,
+  ).idle;
+  final before = tester.widget<StaticBackground>(
+    find.byType(StaticBackground),
+  ).color;
+  expect(before, expected);
+
+  chatProvider.setStreaming(true);
+  await tester.pump();
+
+  expect(viewModel.isStreaming, isTrue);
+  final during = tester.widget<StaticBackground>(
+    find.byType(StaticBackground),
+  ).color;
+  expect(during, before);
+}
+
 void main() {
   late Directory tempDir;
   late _EmptyChatProvider chatProvider;
@@ -85,6 +158,26 @@ void main() {
     viewModel.dispose();
     await Hive.close();
     tempDir.deleteSync(recursive: true);
+  });
+
+  testWidgets('mobile layout keeps its solid background during generation',
+      (tester) async {
+    await _expectSolidBackgroundDuringGeneration(
+      tester,
+      size: const Size(400, 900),
+      viewModel: viewModel,
+      chatProvider: chatProvider,
+    );
+  });
+
+  testWidgets('large layout keeps its solid background during generation',
+      (tester) async {
+    await _expectSolidBackgroundDuringGeneration(
+      tester,
+      size: const Size(1000, 1000),
+      viewModel: viewModel,
+      chatProvider: chatProvider,
+    );
   });
 
   testWidgets('large layout animates theme colors when entering incognito mode', (tester) async {

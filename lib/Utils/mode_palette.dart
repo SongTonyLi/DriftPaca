@@ -3,22 +3,13 @@ import 'package:llamaseek/Constants/gradient_presets.dart';
 
 enum AppMode { normal, dark, incognitoLight, incognitoDark }
 
-/// Per-mode result: the two mesh colors, the canvas behind them, and a
-/// Material scheme seeded from both colors.
+/// Solid background color and Material scheme for an app mode.
 @immutable
 class ResolvedPalette {
-  final Color meshA;
-  final Color meshB;
-  final Color canvas;
-  final Color idle; // flat at-rest background (no mesh), per mode
+  final Color idle;
   final ColorScheme scheme;
-  const ResolvedPalette({
-    required this.meshA,
-    required this.meshB,
-    required this.canvas,
-    required this.idle,
-    required this.scheme,
-  });
+
+  const ResolvedPalette({required this.idle, required this.scheme});
 }
 
 HSLColor _hsl(Color c) => HSLColor.fromColor(c);
@@ -40,11 +31,7 @@ Color _clampL(Color c, double min, double max) {
   return h.withLightness(h.lightness.clamp(min, max)).toColor();
 }
 
-Color _setL(Color c, double l) => _hsl(c).withLightness(l.clamp(0.0, 1.0)).toColor();
-
-/// A thin, subtle background wash: [base]'s hue at a softened saturation and the
-/// given [lightness]. Used for the normal/dark flat idle background so it reads
-/// as a faint tint of the chosen colours rather than a strong fill.
+/// A thin, subtle background wash derived from the selected color pair.
 Color _idleTint(Color base, double lightness, {double satScale = 0.45}) {
   final h = _hsl(base);
   return HSLColor.fromAHSL(
@@ -55,69 +42,53 @@ Color _idleTint(Color base, double lightness, {double satScale = 0.45}) {
   ).toColor();
 }
 
-/// Iconic "incognito" tint: a muted indigo/violet that is independent of the
-/// user's colours, at the given [lightness]. Gives incognito the classic
-/// private-browsing feel rather than a hue derived from the palette.
-Color _incognitoTint(double lightness) =>
-    HSLColor.fromAHSL(1.0, 258, 0.42, lightness).toColor();
+/// Muted indigo/violet used for private-browsing modes.
+Color _incognitoTint(double lightness) => HSLColor.fromAHSL(1.0, 258, 0.42, lightness).toColor();
 
-/// Iconic incognito mesh blob: indigo/violet at [hue]/[lightness], independent
-/// of the user's palette so the private mode reads cohesively indigo.
-Color _incognitoBlob(double hue, double lightness) =>
-    HSLColor.fromAHSL(1.0, hue, 0.45, lightness).toColor();
+Color _incognitoSchemeSeed(double hue, double lightness) => HSLColor.fromAHSL(1.0, hue, 0.45, lightness).toColor();
 
 ResolvedPalette resolvePalette(GradientPair base, AppMode mode) {
   final mix = Color.lerp(base.c1, base.c2, 0.5)!;
   switch (mode) {
     case AppMode.normal:
-      final a = _clampL(base.c1, 0.45, 0.72);
-      final b = _clampL(base.c2, 0.45, 0.72);
+      final primary = _clampL(base.c1, 0.45, 0.72);
+      final secondary = _clampL(base.c2, 0.45, 0.72);
       return ResolvedPalette(
-        meshA: a, meshB: b,
-        canvas: _setL(mix, 0.90),
-        idle: _idleTint(mix, 0.96), // near-white wash of the mix
-        scheme: _scheme(a, b, Brightness.light),
+        idle: _idleTint(mix, 0.96),
+        scheme: _scheme(primary, secondary, Brightness.light),
       );
     case AppMode.dark:
-      final a = _clampL(_scale(base.c1, s: 0.85, l: 0.45), 0.18, 0.40);
-      final b = _clampL(_scale(base.c2, s: 0.85, l: 0.45), 0.18, 0.40);
+      final primary = _clampL(_scale(base.c1, s: 0.85, l: 0.45), 0.18, 0.40);
+      final secondary = _clampL(_scale(base.c2, s: 0.85, l: 0.45), 0.18, 0.40);
       return ResolvedPalette(
-        meshA: a, meshB: b,
-        canvas: _setL(base.c1, 0.08),
-        idle: _idleTint(mix, 0.06), // near-black wash of the mix
-        scheme: _scheme(a, b, Brightness.dark),
+        idle: _idleTint(mix, 0.06),
+        scheme: _scheme(primary, secondary, Brightness.dark),
       );
     case AppMode.incognitoLight:
-      // Light incognito: a cohesive indigo/violet mesh over a clearly-indigo
-      // wash, independent of the user's colours so it reads distinctly private.
-      final a = _incognitoBlob(248, 0.66);
-      final b = _incognitoBlob(274, 0.66);
-      final canvas = _incognitoTint(0.86);
+      final secondary = _incognitoSchemeSeed(274, 0.66);
+      final surface = _incognitoTint(0.86);
       final accent = _clampL(_scale(base.c1, s: 0.9), 0.40, 0.55);
-      final scheme = _scheme(accent, b, Brightness.light).copyWith(surface: canvas);
       return ResolvedPalette(
-        meshA: a, meshB: b, canvas: canvas,
-        idle: _incognitoTint(0.90), // soft but clearly indigo wash
-        scheme: scheme,
+        idle: _incognitoTint(0.90),
+        scheme: _scheme(accent, secondary, Brightness.light).copyWith(surface: surface),
       );
     case AppMode.incognitoDark:
-      final a = _incognitoBlob(248, 0.32);
-      final b = _incognitoBlob(274, 0.34);
-      final canvas = _incognitoTint(0.07);
-      // One vivid accent keeps buttons/outgoing bubbles readable.
+      final secondary = _incognitoSchemeSeed(274, 0.34);
+      final surface = _incognitoTint(0.07);
       final accent = _clampL(_scale(base.c1, s: 0.9), 0.55, 0.70);
-      final scheme = _scheme(accent, b, Brightness.dark).copyWith(surface: canvas);
       return ResolvedPalette(
-        meshA: a, meshB: b, canvas: canvas,
-        idle: _incognitoTint(0.10), // deep indigo wash (iconic incognito)
-        scheme: scheme,
+        idle: _incognitoTint(0.10),
+        scheme: _scheme(accent, secondary, Brightness.dark).copyWith(surface: surface),
       );
   }
 }
 
-/// Seed a scheme so BOTH colors contribute: primary family from [primarySeed],
-/// secondary/tertiary family from [secondarySeed].
-ColorScheme _scheme(Color primarySeed, Color secondarySeed, Brightness brightness) {
+/// Seed a scheme so both selected colors contribute.
+ColorScheme _scheme(
+  Color primarySeed,
+  Color secondarySeed,
+  Brightness brightness,
+) {
   final primary = ColorScheme.fromSeed(
     seedColor: primarySeed,
     brightness: brightness,

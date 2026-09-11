@@ -8,7 +8,7 @@ import 'package:llamaseek/Utils/mode_palette.dart';
 import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Widgets/chat_drawer.dart';
-import 'package:llamaseek/Widgets/floating_gradient_background.dart';
+import 'package:llamaseek/Widgets/static_background.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -47,8 +47,6 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
     final viewModel = context.watch<ChatPageViewModel>();
     final isIncognito =
         viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
-    final isGenerating = viewModel.isStreaming || viewModel.isThinking;
-    final isWelcome = viewModel.messages.isEmpty;
 
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
@@ -58,12 +56,11 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
         : (systemDark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
 
-    // Text/icon colour adapts to the average background luminance for contrast.
-    final meshAvg = Color.lerp(palette.meshA, palette.meshB, 0.5)!;
-    final avgBg = Color.lerp(palette.canvas, meshAvg, 0.4)!;
-    final onBg = ThemeData.estimateBrightnessForColor(avgBg) == Brightness.dark
-        ? const Color(0xFFF3F5F9)
-        : const Color(0xFF14171C);
+    // Text/icon colour adapts to the solid background for contrast.
+    final onBg =
+        ThemeData.estimateBrightnessForColor(palette.idle) == Brightness.dark
+            ? const Color(0xFFF3F5F9)
+            : const Color(0xFF14171C);
 
     final scaffold = Scaffold(
       backgroundColor: Colors.transparent,
@@ -98,14 +95,7 @@ class _DriftPacaMobileMainPage extends StatelessWidget {
       child: Stack(
         children: [
           Positioned.fill(
-            child: FloatingGradientBackground(
-              meshA: palette.meshA,
-              meshB: palette.meshB,
-              canvas: palette.canvas,
-              idleColor: palette.idle,
-              isGenerating: isGenerating,
-              isWelcome: isWelcome,
-            ),
+            child: StaticBackground(color: palette.idle),
           ),
           scaffold,
         ],
@@ -122,8 +112,6 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
     final viewModel = context.watch<ChatPageViewModel>();
     final isIncognito =
         viewModel.currentChat?.isIncognito == true || viewModel.incognitoRequested;
-    final isGenerating = viewModel.isStreaming || viewModel.isThinking;
-    final isWelcome = viewModel.messages.isEmpty;
     final baseTheme = Theme.of(context);
     final pair = readGradientPair(Hive.box('settings'));
     final systemDark = baseTheme.brightness == Brightness.dark;
@@ -132,12 +120,11 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
         : (systemDark ? AppMode.dark : AppMode.normal);
     final palette = resolvePalette(pair, mode);
 
-    // Text/icon colour adapts to the average background luminance for contrast.
-    final meshAvg = Color.lerp(palette.meshA, palette.meshB, 0.5)!;
-    final avgBg = Color.lerp(palette.canvas, meshAvg, 0.4)!;
-    final onBg = ThemeData.estimateBrightnessForColor(avgBg) == Brightness.dark
-        ? const Color(0xFFF3F5F9)
-        : const Color(0xFF14171C);
+    // Text/icon colour adapts to the solid background for contrast.
+    final onBg =
+        ThemeData.estimateBrightnessForColor(palette.idle) == Brightness.dark
+            ? const Color(0xFFF3F5F9)
+            : const Color(0xFF14171C);
 
     final screenWidth = MediaQuery.sizeOf(context).width;
     final drawerWidth = screenWidth - 360 < 400 ? screenWidth - 360 : 400.0;
@@ -164,14 +151,7 @@ class _DriftPacaLargeMainPage extends StatelessWidget {
       child: Stack(
         children: [
           Positioned.fill(
-            child: FloatingGradientBackground(
-              meshA: palette.meshA,
-              meshB: palette.meshB,
-              canvas: palette.canvas,
-              idleColor: palette.idle,
-              isGenerating: isGenerating,
-              isWelcome: isWelcome,
-            ),
+            child: StaticBackground(color: palette.idle),
           ),
           Scaffold(
             backgroundColor: Colors.transparent,

@@ -165,7 +165,7 @@ class _ChatListViewState extends State<ChatListView> {
     return Stack(
       children: [
         // Fade the conversation out at its bottom so it dissolves into the
-        // animated gradient behind it. The scroll-to-bottom button is a sibling
+        // solid background behind it. The scroll-to-bottom button is a sibling
         // in this Stack (below), so it is NOT affected by this mask.
         ShaderMask(
           shaderCallback: (rect) => const LinearGradient(

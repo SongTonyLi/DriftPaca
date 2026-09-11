@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:llamaseek/Models/ollama_model.dart';
 
 /// A provider "brand" shown for a model on the wheel: its logo, an accent colour
-/// (used for the node glow and the brand-tinted mesh) and a display label.
+/// used for foreground controls, and a display label.
 ///
 /// Models are matched to a brand by scanning their family/name for a known
 /// keyword (see [brandForModel]); anything we don't recognise falls back to the
@@ -15,8 +15,7 @@ class BrandLogo {
   /// SVG asset path.
   final String asset;
 
-  /// Accent colour for the glow + mesh tint. Lightness is clamped per app mode
-  /// at paint time, so a very dark/very light brand colour still reads.
+  /// Accent colour for node glows and foreground controls.
   final Color accent;
 
   /// Human label, e.g. `Qwen`.

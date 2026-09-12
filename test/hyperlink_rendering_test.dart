@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Providers/chat_provider.dart';
 
 import 'markdown_latex/test_helpers.dart';
@@ -608,6 +609,106 @@ void main() {
       expect(result.contains('http://two.com'), isFalse,
           reason: 'a single thousand-separator number must not become a '
               'citation link');
+    });
+  });
+
+  // ===========================================================================
+  // Unit tests: citationUrlsFromHistory
+  // ===========================================================================
+  group('citationUrlsFromHistory', () {
+    OllamaMessage user(String text) =>
+        OllamaMessage(text, role: OllamaMessageRole.user);
+    OllamaMessage assistant(String text) =>
+        OllamaMessage(text, role: OllamaMessageRole.assistant);
+
+    test('reads the ids an earlier answer already linked, multi-digit too',
+        () {
+      final history = [
+        user('北元灭国史'),
+        assistant('北元汗廷崩溃后[³](https://a.example/three)，'
+            '鬼力赤即位[¹⁰](https://b.example/ten)。'),
+        user('鞑靼与瓦剌的历史'),
+      ];
+      expect(ChatProvider.citationUrlsFromHistory(history), {
+        3: 'https://a.example/three',
+        10: 'https://b.example/ten',
+      });
+    });
+
+    test('accepts the plain-digit link form a model writes itself', () {
+      final history = [assistant('See [2](https://a.example/two).')];
+      expect(ChatProvider.citationUrlsFromHistory(history),
+          {2: 'https://a.example/two'});
+    });
+
+    test('ignores links in user messages and non-citation links', () {
+      final history = [
+        user('I found [¹](https://user.example/one), what about it?'),
+        assistant('See [this page](https://a.example/page) and '
+            '[¹](https://a.example/one).'),
+      ];
+      expect(ChatProvider.citationUrlsFromHistory(history),
+          {1: 'https://a.example/one'});
+    });
+
+    test('newest answer wins when two answers reused an id', () {
+      final history = [
+        assistant('Old [¹](https://old.example/one).'),
+        user('and now?'),
+        assistant('New [¹](https://new.example/one) '
+            '[²](https://new.example/two).'),
+      ];
+      expect(ChatProvider.citationUrlsFromHistory(history), {
+        1: 'https://new.example/one',
+        2: 'https://new.example/two',
+      });
+    });
+
+    test('keeps a destination with balanced parentheses intact', () {
+      final history = [
+        assistant('瓦剌[⁴](https://zh.wikipedia.org/wiki/瓦剌_(蒙古))即卫拉特。'),
+      ];
+      expect(ChatProvider.citationUrlsFromHistory(history),
+          {4: 'https://zh.wikipedia.org/wiki/瓦剌_(蒙古)'});
+    });
+
+    test('is empty for a chat with no rendered citations', () {
+      final history = [user('hi'), assistant('Hello! [1] is not a link.')];
+      expect(ChatProvider.citationUrlsFromHistory(history), isEmpty);
+    });
+
+    test(
+        'a follow-up citing last turn\'s ids links them even when this turn '
+        'found no sources', () {
+      // The screenshot case: this turn's search was rate-limited, so its
+      // own map is empty and the model answered from "the sources already
+      // gathered" — last turn's [3] and [10].
+      final prior = ChatProvider.citationUrlsFromHistory([
+        assistant('北元汗廷崩溃后[³](https://a.example/three)，'
+            '鬼力赤即位[¹⁰](https://b.example/ten)。'),
+      ]);
+      final thisTurn = <int, String>{};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        '明朝将蒙古本部诸部统称为"鞑靼"[3][10]。',
+        {...prior, ...thisTurn},
+      );
+      expect(
+        result,
+        '明朝将蒙古本部诸部统称为"鞑靼"[³](https://a.example/three)'
+        '[¹⁰](https://b.example/ten)。',
+      );
+    });
+
+    test('this turn\'s sources win over an older answer\'s same id', () {
+      final prior = ChatProvider.citationUrlsFromHistory([
+        assistant('Old [¹](https://old.example/one).'),
+      ]);
+      final thisTurn = {1: 'https://new.example/one'};
+      final result = ChatProvider.replaceCitationsWithLinks(
+        'Fresh [1].',
+        {...prior, ...thisTurn},
+      );
+      expect(result, 'Fresh [¹](https://new.example/one).');
     });
   });
 

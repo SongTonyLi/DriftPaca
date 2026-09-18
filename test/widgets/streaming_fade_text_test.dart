@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble.dart';
-import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/streaming_fade_text.dart';
+import 'package:llamaseek/Pages/chat_page/subwidgets/chat_bubble/chat_bubble_think_block.dart';
+import 'package:llamaseek/Widgets/streaming_fade_text.dart';
 
 Widget _host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
@@ -377,6 +378,68 @@ void main() {
     await tester.pump();
     expect(find.byType(StreamingFadeText), findsNothing);
     expect(find.byType(MarkdownBody), findsOneWidget);
+
+    await tester.pumpWidget(_host(const SizedBox.shrink()));
+  });
+
+  testWidgets('live streaming does not dump a long backlog within a second', (tester) async {
+    final message = OllamaMessage(
+      'Hi',
+      role: OllamaMessageRole.assistant,
+    );
+    await tester.pumpWidget(_host(
+      ChatBubble(message: message, isStreaming: true),
+    ));
+    await tester.pump();
+
+    const tail = ' word';
+    message.content = 'Hi${tail * 80}';
+    await tester.pumpWidget(_host(
+      ChatBubble(message: message, isStreaming: true),
+    ));
+
+    // Old catch-up drained ~the whole backlog in 90 frames (~1.5 s), which
+    // made the fade a last-word blink. Live reveal must stay well behind.
+    for (var i = 0; i < 90; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final shown = _plain(tester);
+    expect(shown.startsWith('Hi'), isTrue);
+    expect(shown.length, lessThan(message.content.length ~/ 2),
+        reason: 'a fast model dump must still type out slowly enough to fade');
+
+    await tester.pumpWidget(_host(const SizedBox.shrink()));
+  });
+
+  testWidgets('ThinkBlockWidget fades appended thinking tokens', (tester) async {
+    await tester.pumpWidget(_host(
+      const ThinkBlockWidget(
+        content: 'Hmm',
+        isComplete: false,
+        isStreaming: true,
+      ),
+    ));
+    await tester.pump();
+    expect(find.byType(StreamingFadeText), findsOneWidget);
+
+    await tester.pumpWidget(_host(
+      const ThinkBlockWidget(
+        content: 'Hmm, maybe forty two after all of that',
+        isComplete: false,
+        isStreaming: true,
+      ),
+    ));
+    for (var i = 0; i < 16; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(
+      find.descendant(
+        of: find.byType(StreamingFadeText),
+        matching: find.byType(FadeTransition),
+      ),
+      findsWidgets,
+    );
 
     await tester.pumpWidget(_host(const SizedBox.shrink()));
   });

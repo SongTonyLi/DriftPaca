@@ -280,8 +280,9 @@ class _ThinkBlockWidgetState extends State<ThinkBlockWidget>
                 //
                 // Revealed a character at a time while the block is open, so
                 // reasoning arriving in bursty chunks reads as thinking rather
-                // than as a series of jumps. A block that is already complete
-                // (all of history) renders in full on its first frame.
+                // than as a series of jumps; new tokens fade in. A block that
+                // is already complete (all of history) renders in full on its
+                // first frame.
                 child: TokenRevealText(
                   widget.content,
                   style:

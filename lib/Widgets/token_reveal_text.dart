@@ -3,8 +3,10 @@ import 'package:flutter/scheduler.dart';
 
 import 'package:llamaseek/Utils/motion.dart';
 import 'package:llamaseek/Utils/surrogate_safe_length.dart';
+import 'package:llamaseek/Widgets/streaming_fade_text.dart';
 
-/// A plain [Text] that types out whatever is appended to it while it is live.
+/// Plain-text typewriter for streamed reasoning, with the same token fade
+/// as the live assistant answer.
 ///
 /// The assistant bubble already reveals its markdown this way; this is the
 /// same idea for prose that is not markdown — the research loop's reasoning,
@@ -43,14 +45,9 @@ class TokenRevealText extends StatefulWidget {
 
 class _TokenRevealTextState extends State<TokenRevealText>
     with SingleTickerProviderStateMixin {
-  /// Gentle pace when there is barely anything to catch up on, so a slow
-  /// trickle of tokens still reads as typing rather than as a stutter.
+  /// Gentle pace so a fast dump still has a trailing fade instead of
+  /// jumping the whole backlog onto the screen in a few frames.
   static const double _baseCharsPerFrame = 0.7;
-
-  /// Drain any backlog within ~this many frames (~0.75 s at 60 fps). A bursty
-  /// chunk should be visibly typed, not spelled out for seconds after the
-  /// model has moved on.
-  static const int _revealFrameBudget = 45;
 
   int _revealed = 0;
   double _progress = 0;
@@ -114,10 +111,7 @@ class _TokenRevealTextState extends State<TokenRevealText>
       _ticker?.stop();
       return;
     }
-    final remaining = widget.text.length - _revealed;
-    final budgetPace = remaining / _revealFrameBudget;
-    _progress +=
-        budgetPace > _baseCharsPerFrame ? budgetPace : _baseCharsPerFrame;
+    _progress += _baseCharsPerFrame;
     final next = _progress.floor().clamp(0, widget.text.length);
     // Only a whole new character is worth a rebuild; sub-character progress
     // would repaint the same string 60 times a second.
@@ -138,6 +132,10 @@ class _TokenRevealTextState extends State<TokenRevealText>
         ? widget.text.substring(
             0, surrogateSafeLength(widget.text, _revealed))
         : widget.text;
-    return Text(shown, style: widget.style);
+    return StreamingFadeText(
+      text: shown,
+      isStreaming: _shouldReveal,
+      style: widget.style,
+    );
   }
 }

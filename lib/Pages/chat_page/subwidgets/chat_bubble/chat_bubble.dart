@@ -28,12 +28,12 @@ import 'package:llamaseek/Models/search_event.dart';
 import 'package:llamaseek/Widgets/research_activity_strip.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/clarification_card.dart';
+import 'package:llamaseek/Widgets/streaming_fade_text.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
 import 'package:llamaseek/Widgets/glass_context_menu.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
-import 'streaming_fade_text.dart';
 import 'streaming_llama.dart';
 
 class ChatBubble extends StatelessWidget {
@@ -391,18 +391,19 @@ class _AssistantBubbleState extends State<_AssistantBubble>
 
   static const double _baseCharsPerFrame = 0.7;
   static const int _catchUpThreshold = 80;
-  // Drain any backlog within ~this many frames (~1.5s at 60fps). A fixed
-  // chars/frame cap made long answers reveal over hundreds of frames, and
-  // every frame re-parses the full (growing) markdown + preprocessing chain —
-  // which spiked memory and janked other animations (e.g. the prompt bar).
-  // Bounding the frame count keeps long text a fast-but-visible stream while
-  // short text still reveals at the gentle base pace.
+  // After the stream ends, drain any leftover backlog within ~this many
+  // frames (~1.5s at 60fps). A fixed chars/frame cap made long answers
+  // reveal over hundreds of frames, and every frame re-parses the full
+  // (growing) markdown + preprocessing chain — which spiked memory and
+  // janked other animations (e.g. the prompt bar).
   static const int _revealFrameBudget = 90;
 
-  /// Reveal rate in chars/frame: gentle base pace for a small backlog,
-  /// otherwise fast enough to finish the backlog within [_revealFrameBudget]
-  /// frames so a long answer never re-parses markdown for many seconds.
+  /// Reveal rate in chars/frame. While tokens are still arriving, stay at
+  /// the gentle base pace so the fade has a trailing edge even when the
+  /// model dumps a large backlog. Catch-up is only for the post-stream
+  /// tail, where markdown re-parse cost makes a long linger expensive.
   double _revealSpeed(int remaining) {
+    if (widget.isStreaming) return _baseCharsPerFrame;
     if (remaining <= _catchUpThreshold) return _baseCharsPerFrame;
     final budgetPace = remaining / _revealFrameBudget;
     return budgetPace > _baseCharsPerFrame ? budgetPace : _baseCharsPerFrame;

@@ -18,11 +18,17 @@ Widget _reducedMotionHost(Widget child) => MaterialApp(
       ),
     );
 
-String _shown(WidgetTester tester) =>
-    tester.widget<Text>(find.descendant(
+Finder _lastLineFade() => find.byKey(const ValueKey('streaming-last-line-fade'));
+
+String _shown(WidgetTester tester) {
+  final text = tester.widget<Text>(
+    find.descendant(
       of: find.byType(TokenRevealText),
       matching: find.byType(Text),
-    )).data!;
+    ),
+  );
+  return text.data ?? text.textSpan?.toPlainText() ?? '';
+}
 
 void main() {
   setUpAll(() {
@@ -41,6 +47,36 @@ void main() {
     expect(tester.binding.transientCallbackCount, 0);
   });
 
+  testWidgets('appended thinking fades in while revealing', (tester) async {
+    await tester.pumpWidget(_host(const TokenRevealText('Hmm')));
+    await tester.pumpWidget(
+      _host(const TokenRevealText('Hmm\nmaybe forty two after all')),
+    );
+    for (var i = 0; i < 16; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(_lastLineFade(), findsOneWidget);
+  });
+
+  testWidgets('live thinking does not dump a long backlog within a second',
+      (tester) async {
+    const head = 'Hi';
+    const tail = ' word';
+    final full = '$head${tail * 80}';
+
+    await tester.pumpWidget(_host(const TokenRevealText(head)));
+    await tester.pumpWidget(_host(TokenRevealText(full)));
+
+    for (var i = 0; i < 90; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final shown = _shown(tester);
+    expect(shown.startsWith(head), isTrue);
+    expect(shown.length, lessThan(full.length ~/ 2),
+        reason: 'fast thinking dumps must still type out slowly enough to fade');
+  });
+
   testWidgets('appended text is revealed over several frames', (tester) async {
     const head = 'First.';
     final tail = ' ${'word ' * 40}';
@@ -49,18 +85,22 @@ void main() {
     expect(_shown(tester), head);
 
     await tester.pumpWidget(_host(TokenRevealText(head + tail)));
-    await tester.pump(const Duration(milliseconds: 16));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
 
     final partial = _shown(tester);
     expect(partial.length, greaterThan(head.length));
     expect(partial.length, lessThan((head + tail).length));
     expect((head + tail).startsWith(partial), isTrue);
 
-    for (var i = 0; i < 200; i++) {
+    // Base pace is 0.7 chars/frame; give the ~200-char tail time to finish,
+    // then let the last fade controller settle.
+    for (var i = 0; i < 400; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
     expect(_shown(tester), head + tail);
-    // Caught up: the ticker stops itself rather than burning frames.
+    await tester.pump(const Duration(milliseconds: 450));
     expect(tester.binding.transientCallbackCount, 0);
   });
 
@@ -74,7 +114,7 @@ void main() {
     await tester.pumpWidget(_host(const TokenRevealText(head)));
     await tester.pumpWidget(_host(TokenRevealText(head + tail)));
 
-    for (var i = 0; i < 200; i++) {
+    for (var i = 0; i < 250; i++) {
       await tester.pump(const Duration(milliseconds: 16));
       final shown = _shown(tester);
       if (shown.isEmpty) continue;

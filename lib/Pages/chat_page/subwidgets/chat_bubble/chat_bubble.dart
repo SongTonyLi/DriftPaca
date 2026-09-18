@@ -842,27 +842,21 @@ class _AssistantBubbleState extends State<_AssistantBubble>
     );
   }
 
-  /// Live tokens fade in via [StreamingFadeText]. Completed / history
-  /// messages keep the existing markdown renderer.
+  /// Live answers keep the markdown renderer so citations stay favicons, and
+  /// wrap it in [StreamingFadeText] so each new line fades in. Completed /
+  /// history messages skip the fade wrapper.
   ///
   /// `isStreaming` is the [ChatBubble] flag, set by [ChatListView] for the
   /// latest bubble when the chat page is still receiving tokens
   /// (`ChatPageViewModel.isStreaming`).
   Widget _buildAnswerBody(BuildContext context, String content) {
-    if (widget.isStreaming) {
-      final theme = Theme.of(context);
-      return StreamingFadeText(
-        text: content,
-        isStreaming: true,
-        style: theme.textTheme.bodyMedium?.copyWith(
-          fontSize: 16,
-          height: 1.48,
-          fontWeight: FontWeight.w500,
-          color: theme.colorScheme.onSurface,
-        ),
-      );
-    }
-    return widget.buildMarkdown(context, content);
+    final markdown = widget.buildMarkdown(context, content);
+    if (!widget.isStreaming) return markdown;
+    return StreamingFadeText(
+      text: content,
+      isStreaming: true,
+      child: markdown,
+    );
   }
 }
 

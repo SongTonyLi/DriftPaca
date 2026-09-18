@@ -135,7 +135,7 @@ class _TokenRevealTextState extends State<TokenRevealText>
     return StreamingFadeText(
       text: shown,
       isStreaming: _shouldReveal,
-      style: widget.style,
+      child: Text(shown, style: widget.style),
     );
   }
 }

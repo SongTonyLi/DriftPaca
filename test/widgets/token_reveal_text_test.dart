@@ -18,43 +18,16 @@ Widget _reducedMotionHost(Widget child) => MaterialApp(
       ),
     );
 
-Finder _fadeFinder() => find.descendant(
-      of: find.byType(TokenRevealText),
-      matching: find.byType(FadeTransition),
-    );
+Finder _lastLineFade() => find.byKey(const ValueKey('streaming-last-line-fade'));
 
 String _shown(WidgetTester tester) {
   final text = tester.widget<Text>(
     find.descendant(
       of: find.byType(TokenRevealText),
-      matching: find.byWidgetPredicate(
-        (widget) => widget is Text && widget.textSpan != null,
-      ),
+      matching: find.byType(Text),
     ),
   );
-  final root = text.textSpan as TextSpan;
-  final children = root.children ??
-      (root.text == null ? const <InlineSpan>[] : <InlineSpan>[root]);
-  final fadeTexts = tester
-      .widgetList<Text>(find.descendant(
-        of: _fadeFinder(),
-        matching: find.byType(Text),
-      ))
-      .toList();
-  var fadeIndex = 0;
-  final buffer = StringBuffer();
-  for (final span in children) {
-    if (span is TextSpan) {
-      buffer.write(span.text ?? '');
-    } else if (span is WidgetSpan) {
-      if (span.child is SizedBox) {
-        buffer.write('\n');
-      } else {
-        buffer.write(fadeTexts[fadeIndex++].data ?? '');
-      }
-    }
-  }
-  return buffer.toString();
+  return text.data ?? text.textSpan?.toPlainText() ?? '';
 }
 
 void main() {
@@ -77,13 +50,13 @@ void main() {
   testWidgets('appended thinking fades in while revealing', (tester) async {
     await tester.pumpWidget(_host(const TokenRevealText('Hmm')));
     await tester.pumpWidget(
-      _host(const TokenRevealText('Hmm, maybe forty two after all')),
+      _host(const TokenRevealText('Hmm\nmaybe forty two after all')),
     );
     for (var i = 0; i < 16; i++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
 
-    expect(_fadeFinder(), findsWidgets);
+    expect(_lastLineFade(), findsOneWidget);
   });
 
   testWidgets('live thinking does not dump a long backlog within a second',

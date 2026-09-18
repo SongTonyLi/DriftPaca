@@ -594,6 +594,12 @@ class ChatProvider extends ChangeNotifier {
       if (caps?.tools != false) {
         return _streamWithNativeTools(associatedChat);
       }
+      // Legacy path. Start from the ids earlier answers in this chat
+      // already resolved (see citationUrlsFromHistory), so a model that
+      // answers straight away citing last turn's sources — or one whose
+      // search below finds new ones and cites both — gets every citation
+      // linked. The search below layers its own ids on top of these.
+      _interceptedSourceUrls = citationUrlsFromHistory(_messages);
     }
 
     final searchThinking = preThinking?.trim();
@@ -878,8 +884,10 @@ class ChatProvider extends ChangeNotifier {
       // SearchAgentListener.onSearchComplete. Both calls take the same list
       // at the default idOffset, so the ids line up exactly; if this path
       // ever accumulates rounds, the offset has to be threaded to BOTH.
-      _interceptedSourceUrls =
-          WebSearchService.sourceUrlsFromResults(searchResults);
+      _interceptedSourceUrls = {
+        ...?_interceptedSourceUrls,
+        ...WebSearchService.sourceUrlsFromResults(searchResults),
+      };
 
       // Recursive call: re-stream with search context, reusing same message
       debugPrint('[SEARCH] Starting Call 2 with ${newSearchContext.length} chars context');
@@ -1116,7 +1124,15 @@ class ChatProvider extends ChangeNotifier {
 
     OllamaMessage? streamingMessage;
     final notifyThrottle = Stopwatch()..start();
-    final liveSourceUrls = <int, String>{};
+    // Seeded with every id an earlier answer in this chat already resolved
+    // (see citationUrlsFromHistory): the model reads those answers in
+    // `history` with their links intact and cites their ids in follow-ups,
+    // and a run whose searches were throttled has nothing else to cite.
+    // This run's own ids are layered on top as they arrive (see
+    // onSearchComplete), so a fresh source always wins over an older one
+    // that happened to get the same number.
+    final priorSourceUrls = citationUrlsFromHistory(history);
+    final liveSourceUrls = Map<int, String>.from(priorSourceUrls);
 
     void touch({bool force = false}) {
       if (force || notifyThrottle.elapsedMilliseconds >= 32) {
@@ -1463,7 +1479,10 @@ class ChatProvider extends ChangeNotifier {
       return null;
     }
 
-    _interceptedSourceUrls = Map<int, String>.from(outcome.sourceUrls);
+    // Same layering as liveSourceUrls: this run's sources over the ids
+    // earlier answers established, so the final pass in
+    // _initializeChatStream resolves the same citations the live one did.
+    _interceptedSourceUrls = {...priorSourceUrls, ...outcome.sourceUrls};
 
     if (streamingMessage == null && !outcome.cancelled) {
       streamingMessage = OllamaMessage(
@@ -1775,6 +1794,42 @@ class ChatProvider extends ChangeNotifier {
         return match.group(0)!;
       },
     );
+  }
+
+  /// A citation link as [replaceCitationsWithLinks] renders it — `[³](url)`
+  /// — plus the plain-digit form `[3](url)` a model sometimes writes on its
+  /// own. The destination may carry one level of balanced parentheses, as
+  /// Wikipedia-style `Foo_(bar)` paths do, and stops at whitespace like a
+  /// markdown link destination does.
+  static final _renderedCitationLinkPattern = RegExp(
+    r'\[\s*([\d²³¹⁰⁴-⁹]+)\s*\]'
+    r'\(((?:[^\s()]|\([^\s()]*\))+)\)',
+  );
+
+  /// The id→URL map earlier answers in this chat already established, read
+  /// back from the citation links rendered into them. Newest answer wins
+  /// when two answers used the same id.
+  ///
+  /// The model receives those answers verbatim, links and all, so it
+  /// cites their ids freely in a follow-up — most of all on a turn whose
+  /// own searches were throttled, where it is explicitly told to answer
+  /// from the sources already gathered. Resolving a citation only against
+  /// the current turn's map left every such `[3][10]` as raw text with no
+  /// favicon, even though the URL for each was one message up the chat.
+  @visibleForTesting
+  static Map<int, String> citationUrlsFromHistory(
+      Iterable<OllamaMessage> history) {
+    final urls = <int, String>{};
+    for (final message in history.toList().reversed) {
+      if (message.role != OllamaMessageRole.assistant) continue;
+      for (final match
+          in _renderedCitationLinkPattern.allMatches(message.content)) {
+        final id = int.tryParse(_digitsToAscii(match.group(1)!));
+        if (id == null || urls.containsKey(id)) continue;
+        urls[id] = match.group(2)!;
+      }
+    }
+    return urls;
   }
 
   void cancelCurrentStreaming() {

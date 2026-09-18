@@ -33,6 +33,7 @@ import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
 import 'package:llamaseek/Widgets/glass_context_menu.dart';
 import 'chat_bubble_think_block.dart' show ThinkBlockParser, ThinkBlockWidget;
+import 'streaming_fade_text.dart';
 import 'streaming_llama.dart';
 
 class ChatBubble extends StatelessWidget {
@@ -801,7 +802,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
           ),
           if (content.isNotEmpty) ...[
             const SizedBox(height: 4),
-            widget.buildMarkdown(context, content),
+            _buildAnswerBody(context, content),
           ],
           if (_fadingDraft != null) _buildFadingDraft(context),
         ],
@@ -823,7 +824,7 @@ class _AssistantBubbleState extends State<_AssistantBubble>
           ),
           if (parsed.responseContent.isNotEmpty) ...[
             const SizedBox(height: 4),
-            widget.buildMarkdown(context, parsed.responseContent),
+            _buildAnswerBody(context, parsed.responseContent),
           ],
           if (_fadingDraft != null) _buildFadingDraft(context),
         ],
@@ -835,10 +836,33 @@ class _AssistantBubbleState extends State<_AssistantBubble>
       children: [
         _buildModelLabel(context),
         ...searchWidgets,
-        if (content.isNotEmpty) widget.buildMarkdown(context, content),
+        if (content.isNotEmpty) _buildAnswerBody(context, content),
         if (_fadingDraft != null) _buildFadingDraft(context),
       ],
     );
+  }
+
+  /// Live tokens fade in via [StreamingFadeText]. Completed / history
+  /// messages keep the existing markdown renderer.
+  ///
+  /// `isStreaming` is the [ChatBubble] flag, set by [ChatListView] for the
+  /// latest bubble when the chat page is still receiving tokens
+  /// (`ChatPageViewModel.isStreaming`).
+  Widget _buildAnswerBody(BuildContext context, String content) {
+    if (widget.isStreaming) {
+      final theme = Theme.of(context);
+      return StreamingFadeText(
+        text: content,
+        isStreaming: true,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          fontSize: 16,
+          height: 1.48,
+          fontWeight: FontWeight.w500,
+          color: theme.colorScheme.onSurface,
+        ),
+      );
+    }
+    return widget.buildMarkdown(context, content);
   }
 }
 

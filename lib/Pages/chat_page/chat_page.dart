@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
+import 'package:llamaseek/Models/chat_attachment.dart';
 import 'package:llamaseek/Models/research_phase.dart';
 import 'package:llamaseek/Widgets/chat_app_bar.dart';
 import 'package:llamaseek/Pages/model_select_page/model_select_route.dart';
@@ -268,7 +269,8 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                   // button isn't squeezed out of the shrunken collapsed bar.
                   horizontal: (_shouldShowExpanded ||
                           _viewModel.isStreaming ||
-                          _viewModel.isSearching)
+                          _viewModel.isSearching ||
+                          _viewModel.hasAttachments)
                       ? 0.0
                       : _collapsedComposerInset,
                 ),
@@ -465,6 +467,27 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
                           foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
                         ),
                         onPressed: _viewModel.cancelStreaming,
+                      )
+                    else if (_viewModel.isProcessingAttachment)
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else if (_viewModel.canSend)
+                      IconButton(
+                        icon: const Icon(Icons.send_rounded, size: 18),
+                        padding: const EdgeInsets.all(6),
+                        constraints: const BoxConstraints(),
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(context).colorScheme.primary,
+                          foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                        ),
+                        onPressed: _sendMessage,
+                        tooltip: 'Send',
                       ),
                   ],
                 ),
@@ -529,13 +552,21 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   }
 
   Widget? _buildChatFooter() {
-    if (_viewModel.hasImageAttachments) {
+    if (_viewModel.hasAttachments) {
       return ChatAttachmentRow(
-        itemCount: _viewModel.imageFiles.length,
+        itemCount: _viewModel.attachments.length,
         itemBuilder: (context, index) {
-          return ChatAttachmentImage(
-            imageFile: _viewModel.imageFiles[index],
-            onRemove: (imageFile) => _viewModel.removeImage(imageFile),
+          final attachment = _viewModel.attachments[index];
+          if (attachment.kind == ChatAttachmentKind.image &&
+              attachment.images.isNotEmpty) {
+            return ChatAttachmentImage(
+              imageFile: attachment.images.first,
+              onRemove: (_) => _viewModel.removeAttachment(attachment),
+            );
+          }
+          return ChatAttachmentFile(
+            attachment: attachment,
+            onRemove: _viewModel.removeAttachment,
           );
         },
       );
@@ -564,13 +595,20 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
     // prompt bar never reflows the conversation. The expanded text field grows
     // upward over the translucent bottom area instead of pushing content.
     final base = _collapsedComposerPadding + bottomSafeArea;
-    if (!_viewModel.hasImageAttachments) return base;
+    if (!_viewModel.hasAttachments) return base;
 
     return base + _attachmentPreviewHeight(context) + _footerSpacing;
   }
 
   double _attachmentPreviewHeight(BuildContext context) {
-    return MediaQuery.of(context).size.height * ChatAttachmentImage.previewHeightFactor;
+    final hasPhoto = _viewModel.attachments.any(
+      (attachment) =>
+          attachment.kind == ChatAttachmentKind.image && attachment.images.isNotEmpty,
+    );
+    if (hasPhoto) {
+      return MediaQuery.of(context).size.height * ChatAttachmentImage.previewHeightFactor;
+    }
+    return ChatAttachmentFile.previewHeight;
   }
 
   Future<void> _sendMessage() async {
@@ -595,10 +633,16 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
   }
 
   Future<void> _handleAttachmentButton() async {
-    await _viewModel.pickImages(
-      onPermissionDenied: _showPhotosDeniedAlert,
-      onCompressionFailed: _showImageCompressionFailedAlert,
-    );
+    final source = await showAttachmentSourceSheet(context);
+    if (!mounted || source == null) return;
+    if (source == AttachmentSource.photos) {
+      await _viewModel.pickImages(
+        onPermissionDenied: _showPhotosDeniedAlert,
+        onCompressionFailed: _showImageCompressionFailedAlert,
+      );
+      return;
+    }
+    await _viewModel.pickDocuments(onFailed: _showAttachmentFailedAlert);
   }
 
   void _onServerNotConfigured() {
@@ -634,6 +678,24 @@ class _ChatPageState extends State<ChatPage> with SingleTickerProviderStateMixin
           title: const Text('Image Could Not Be Attached'),
           content: const Text(
               'The selected image could not be processed. Please try a different image.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showAttachmentFailedAlert(String message) async {
+    await showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('File Could Not Be Attached'),
+          content: Text(message),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),

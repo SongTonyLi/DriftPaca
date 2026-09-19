@@ -7,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
+import 'package:llamaseek/Models/chat_attachment.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
@@ -1066,6 +1067,7 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   bool clearWebSearchCallbacksCalled = false;
   String? lastSentPrompt;
   List<File>? lastSentImages;
+  List<ChatAttachment>? lastSentAttachments;
   int? lastSendPromptSearchAttempts;
   int? lastRegenerateSearchAttempts;
   int? lastEditAndResendSearchAttempts;
@@ -1227,11 +1229,21 @@ class FakeChatProvider extends ChangeNotifier implements ChatProvider {
   }
 
   @override
-  OllamaMessage displayUserMessage(String text, {List<File>? images}) {
+  OllamaMessage displayUserMessage(
+    String text, {
+    List<File>? images,
+    List<ChatAttachment>? attachments,
+  }) {
     displayUserMessageCalled = true;
     lastSentPrompt = text;
     lastSentImages = images;
-    final message = OllamaMessage(text.trim(), images: images, role: OllamaMessageRole.user);
+    lastSentAttachments = attachments;
+    final message = OllamaMessage(
+      text.trim(),
+      images: images,
+      attachments: attachments,
+      role: OllamaMessageRole.user,
+    );
     _messages.add(message);
     return message;
   }

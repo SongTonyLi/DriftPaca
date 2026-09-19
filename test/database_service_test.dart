@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Models/chat_attachment.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
 import 'package:llamaseek/Services/database_service.dart';
@@ -200,6 +201,30 @@ void main() async {
     expect(messages.first.content, message.content);
     expect(messages.first.images!.first.path, message.images!.first.path);
     expect(messages.first.role, message.role);
+  });
+
+  test('Test database add message with document attachments', () async {
+    final chat = await service.createChat(model);
+    final message = OllamaMessage(
+      'Please summarize',
+      role: OllamaMessageRole.user,
+      attachments: [
+        ChatAttachment(
+          fileName: 'notes.txt',
+          kind: ChatAttachmentKind.document,
+          extractedText: 'Hello from a document',
+        ),
+      ],
+    );
+
+    await service.addMessage(message, chat: chat);
+
+    final retrieved = await service.getMessage(message.id);
+    expect(retrieved, isNotNull);
+    expect(retrieved!.attachments, isNotNull);
+    expect(retrieved.attachments!.single.fileName, 'notes.txt');
+    expect(retrieved.attachments!.single.extractedText, 'Hello from a document');
+    expect(retrieved.attachments!.single.kind, ChatAttachmentKind.document);
   });
 
   test("Test database get message", () async {

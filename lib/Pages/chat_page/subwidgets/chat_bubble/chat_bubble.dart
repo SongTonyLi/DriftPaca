@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -29,6 +30,9 @@ import 'package:llamaseek/Widgets/research_activity_strip.dart';
 import 'package:llamaseek/Widgets/search_card.dart';
 import 'package:llamaseek/Widgets/clarification_card.dart';
 import 'package:llamaseek/Widgets/streaming_fade_text.dart';
+
+import 'package:llamaseek/Models/chat_attachment.dart';
+import 'package:llamaseek/Pages/chat_page/subwidgets/chat_attachment/chat_attachment_file.dart';
 
 import 'chat_bubble_actions.dart';
 import 'chat_bubble_image.dart';
@@ -103,6 +107,22 @@ class _ChatBubbleBody extends StatelessWidget {
 
   bool get isSentFromUser => message.role == OllamaMessageRole.user;
 
+  static List<ChatAttachment> _documentAttachments(OllamaMessage message) => [
+        for (final attachment in message.attachments ?? const <ChatAttachment>[])
+          if (attachment.kind != ChatAttachmentKind.image) attachment,
+      ];
+
+  static List<File> _displayImages(OllamaMessage message) {
+    final attachments = message.attachments;
+    if (attachments == null || attachments.isEmpty) {
+      return message.images ?? const <File>[];
+    }
+    return [
+      for (final attachment in attachments)
+        if (attachment.kind == ChatAttachmentKind.image) ...attachment.images,
+    ];
+  }
+
   CrossAxisAlignment get bubbleAlignment => isSentFromUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
   @override
@@ -117,15 +137,28 @@ class _ChatBubbleBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: bubbleAlignment,
         children: [
-          if (message.images != null && message.images!.isNotEmpty)
+          if (_documentAttachments(message).isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 4.0),
               child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: message.images!.asMap().entries.map((entry) => ChatBubbleImage(
+                alignment: isSentFromUser ? WrapAlignment.end : WrapAlignment.start,
+                children: [
+                  for (final attachment in _documentAttachments(message))
+                    ChatBubbleFileChip(attachment: attachment),
+                ],
+              ),
+            ),
+          if (_displayImages(message).isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4.0),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _displayImages(message).asMap().entries.map((entry) => ChatBubbleImage(
                   imageFile: entry.value,
-                  allImages: message.images!,
+                  allImages: _displayImages(message),
                   index: entry.key,
                 )).toList(),
               ),

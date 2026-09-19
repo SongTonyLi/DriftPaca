@@ -156,7 +156,6 @@ class DocumentService {
       kind: ChatAttachmentKind.pdf,
       extractedText: text.trim().isEmpty ? null : text,
       images: images,
-      pageCount: images.isEmpty ? null : images.length,
     );
   }
 

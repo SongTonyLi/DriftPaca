@@ -36,8 +36,7 @@ class PdfContentExtractor {
     }
 
     final src = latin1.decode(bytes, allowInvalid: true);
-    if (RegExp(r'/Encrypt(?:\s|/)').hasMatch(src.substring(0, src.length.clamp(0, 65536))) &&
-        _trailerHasEncrypt(src)) {
+    if (_trailerHasEncrypt(src)) {
       throw const FormatException('This PDF is encrypted and cannot be read.');
     }
 

@@ -27,7 +27,7 @@ class DatabaseService {
   Future<void> open(String databaseFile) async {
     _db = await openDatabase(
       path.join(await getDatabasesPathForPlatform(), databaseFile),
-      version: 9,
+      version: 10,
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE messages ADD COLUMN thinking TEXT');
@@ -93,6 +93,9 @@ removed_text TEXT NOT NULL,
 created_at INTEGER NOT NULL
 )''');
         }
+        if (oldVersion < 10) {
+          await db.execute('ALTER TABLE messages ADD COLUMN attachments TEXT');
+        }
       },
       onCreate: (Database db, int version) async {
         await db.execute('''CREATE TABLE IF NOT EXISTS chats (
@@ -111,6 +114,7 @@ chat_id TEXT NOT NULL,
 content TEXT NOT NULL,
 thinking TEXT,
 images TEXT,
+attachments TEXT,
 role TEXT CHECK(role IN ('user', 'assistant', 'system')) NOT NULL,
 model TEXT,
 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,

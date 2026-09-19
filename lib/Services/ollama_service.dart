@@ -293,7 +293,7 @@ class OllamaService {
     }
     // Determine vision support: only strip images when we are confident
     // the model lacks vision. Default to true (send images) when unknown.
-    final hasImages = messages.any((m) => m.images != null && m.images!.isNotEmpty);
+    final hasImages = messages.any((m) => m.hasVisualInput);
     bool supportsVision = true;
     if (hasImages) {
       if (!_capabilitiesCache.containsKey(chat.model)) {
@@ -450,20 +450,9 @@ class OllamaService {
     final jsonMessages = <Map<String, dynamic>>[];
 
     for (final m in messagesToProcess) {
-      Map<String, dynamic> msgJson;
-
-      // For confirmed non-vision models, replace images with a text placeholder
-      // so the model knows images were attached but can still answer.
-      if (!supportsVision && m.images != null && m.images!.isNotEmpty) {
-        final count = m.images!.length;
-        final tag = '[${count} image${count > 1 ? 's' : ''} attached — not viewable by this model]';
-        msgJson = {
-          "role": m.role.name,
-          "content": '$tag\n${m.content}',
-        };
-      } else {
-        msgJson = await m.toChatJson();
-      }
+      // Non-vision models get extracted document text and a placeholder for
+      // photos / PDF pages they cannot see. Vision models get both.
+      final msgJson = await m.toChatJson(supportsVision: supportsVision);
 
       // Never re-send prior reasoning or the persisted <!--SEARCH_DATA:…--> blob
       // to the model — history should carry only the visible answer. The stored
@@ -729,8 +718,7 @@ class OllamaService {
     List<OllamaToolDefinition>? tools,
     List<OllamaMessage> extraMessages = const [],
   }) async* {
-    final hasImages =
-        messages.any((m) => m.images != null && m.images!.isNotEmpty);
+    final hasImages = messages.any((m) => m.hasVisualInput);
     bool supportsVision = true;
     if (hasImages) {
       if (!_capabilitiesCache.containsKey(chat.model)) {

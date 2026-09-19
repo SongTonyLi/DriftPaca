@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Models/chat_attachment.dart';
 import 'package:llamaseek/Models/ollama_tool.dart';
 import 'package:uuid/uuid.dart';
 
@@ -18,6 +19,13 @@ class OllamaMessage {
 
   /// The image content of the message.
   List<File>? images;
+
+  bool get hasVisualInput =>
+      (images != null && images!.isNotEmpty) ||
+      (attachments?.any((attachment) => attachment.images.isNotEmpty) ?? false);
+
+  /// Files attached to a user message (PDFs, docs, and classified images).
+  List<ChatAttachment>? attachments;
 
   /// The date and time the message was created.
   DateTime createdAt;
@@ -53,6 +61,7 @@ class OllamaMessage {
     this.toolCalls,
     this.toolName,
     this.images,
+    this.attachments,
     DateTime? createdAt,
     this.model,
     this.done,
@@ -108,6 +117,7 @@ class OllamaMessage {
       role: OllamaMessageRole.fromString(map['role']),
       thinking: map['thinking'],
       images: _constructImages(map['images']),
+      attachments: _constructAttachments(map['attachments']),
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
       model: map['model'],
     );
@@ -133,21 +143,59 @@ class OllamaMessage {
         "eval_duration": evalDuration,
       };
 
-  Future<Map<String, dynamic>> toChatJson() async => {
+  Future<Map<String, dynamic>> toChatJson({bool supportsVision = true}) async => {
         "role": role.name,
-        "content": content,
+        "content": modelContent(supportsVision: supportsVision),
         if (thinking != null) "thinking": thinking,
-        "images": await _base64EncodeImages(),
+        if (supportsVision) "images": await _base64EncodeImages(),
         if (toolCalls != null && toolCalls!.isNotEmpty)
           "tool_calls": [for (final call in toolCalls!) call.toJson()],
         if (toolName != null) "tool_name": toolName,
       };
+
+  /// Prompt the model actually sees: typed text plus extracted document text.
+  ///
+  /// When [supportsVision] is false, page images are dropped and a short
+  /// placeholder is added so the model still knows a visual file was attached.
+  String modelContent({bool supportsVision = true}) {
+    final parts = <String>[];
+    if (content.trim().isNotEmpty) parts.add(content);
+
+    final docs = attachments ?? const <ChatAttachment>[];
+    for (final attachment in docs) {
+      if (attachment.kind == ChatAttachmentKind.image) continue;
+      if (attachment.hasExtractedText) {
+        parts.add(
+          '--- Attached file: ${attachment.fileName} ---\n'
+          '${attachment.extractedText}\n'
+          '--- End of ${attachment.fileName} ---',
+        );
+      } else if (!supportsVision && attachment.images.isNotEmpty) {
+        parts.add(
+          '[Attached file: ${attachment.fileName} — visual pages not viewable by this model]',
+        );
+      } else if (!attachment.hasExtractedText && attachment.images.isEmpty) {
+        parts.add('[Attached file: ${attachment.fileName} — no extractable text]');
+      }
+    }
+
+    final onlyImages = docs.isEmpty || docs.every((a) => a.kind == ChatAttachmentKind.image);
+    if (!supportsVision && (images?.isNotEmpty ?? false) && onlyImages) {
+      final count = images!.length;
+      final tag =
+          '[$count image${count > 1 ? 's' : ''} attached — not viewable by this model]';
+      parts.insert(0, tag);
+    }
+
+    return parts.join('\n\n');
+  }
 
   Map<String, dynamic> toDatabaseMap() => {
         'message_id': id,
         'content': content,
         'thinking': thinking,
         'images': _breakImages(images),
+        'attachments': _breakAttachments(attachments),
         'role': role.name,
         'model': model,
         'timestamp': createdAt.millisecondsSinceEpoch,
@@ -212,6 +260,24 @@ class OllamaMessage {
     }
 
     return null;
+  }
+
+  static List<ChatAttachment>? _constructAttachments(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final decoded = jsonDecode(raw);
+    if (decoded is! List || decoded.isEmpty) return null;
+    return [
+      for (final item in decoded)
+        if (item is Map)
+          ChatAttachment.fromDatabaseJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  String? _breakAttachments(List<ChatAttachment>? attachments) {
+    if (attachments == null || attachments.isEmpty) return null;
+    return jsonEncode([
+      for (final attachment in attachments) attachment.toDatabaseJson(),
+    ]);
   }
 }
 

@@ -76,6 +76,10 @@ dependencies:
   photo_view: ^0.15.0
   permission_handler: ^11.3.1
 
+  # Documents: pick any file, unzip Office docs, inflate PDF streams
+  file_picker: ^8.1.7
+  archive: ^4.0.2
+
   # In-app review
   in_app_review: ^2.0.10
 

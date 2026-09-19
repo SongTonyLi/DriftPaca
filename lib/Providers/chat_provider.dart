@@ -9,6 +9,7 @@ import 'package:notification_centre/notification_centre.dart';
 import 'package:llamaseek/Constants/constants.dart';
 import 'package:llamaseek/Models/agent_memory.dart';
 import 'package:llamaseek/Models/chat_configure_arguments.dart';
+import 'package:llamaseek/Models/chat_attachment.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
 import 'package:llamaseek/Models/ollama_message.dart';
@@ -473,10 +474,15 @@ class ChatProvider extends ChangeNotifier {
 
   /// Adds a user message to the chat immediately and notifies listeners.
   /// Call this as early as possible so the chat bubble appears instantly.
-  OllamaMessage displayUserMessage(String text, {List<File>? images}) {
+  OllamaMessage displayUserMessage(
+    String text, {
+    List<File>? images,
+    List<ChatAttachment>? attachments,
+  }) {
     final prompt = OllamaMessage(
       text.trim(),
       images: images,
+      attachments: attachments,
       role: OllamaMessageRole.user,
     );
     _messages.add(prompt);
@@ -1529,6 +1535,7 @@ class ChatProvider extends ChangeNotifier {
       newContent.trim(),
       role: OllamaMessageRole.user,
       images: originalMessage.images,
+      attachments: originalMessage.attachments,
     );
     _messages.add(newMessage);
 

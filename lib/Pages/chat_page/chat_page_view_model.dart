@@ -7,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:llamaseek/Constants/constants.dart';
+import 'package:llamaseek/Models/chat_attachment.dart';
 import 'package:llamaseek/Models/chat_preset.dart';
 import 'package:llamaseek/Models/ollama_chat.dart';
 import 'package:llamaseek/Models/ollama_exception.dart';
@@ -23,13 +24,20 @@ class ChatPageViewModel extends ChangeNotifier {
   final ChatProvider _chatProvider;
   final PermissionService _permissionService;
   final ImageService _imageService;
+  final DocumentService _documentService;
+  final FilePickerService _filePickerService;
   ChatPageViewModel({
     required ChatProvider chatProvider,
     required PermissionService permissionService,
     required ImageService imageService,
+    DocumentService? documentService,
+    FilePickerService? filePickerService,
   })  : _chatProvider = chatProvider,
         _permissionService = permissionService,
-        _imageService = imageService {
+        _imageService = imageService,
+        _documentService = documentService ??
+            DocumentService(imageService: imageService),
+        _filePickerService = filePickerService ?? FilePickerService() {
     _initialize();
   }
 
@@ -202,7 +210,7 @@ class ChatPageViewModel extends ChangeNotifier {
 
     // Listen for app exit to delete unused attached images
     _appLifecycleListener = AppLifecycleListener(onExitRequested: () async {
-      await _imageService.deleteImages(imageFiles);
+      await _imageService.deleteImages(_allAttachmentImages());
       return AppExitResponse.exit;
     });
   }
@@ -357,16 +365,36 @@ class ChatPageViewModel extends ChangeNotifier {
   }
 
   // ============================================================
-  // Image Attachments
+  // Attachments
   // ============================================================
 
-  final List<File> _imageFiles = [];
+  final List<ChatAttachment> _attachments = [];
 
-  /// The list of attached image files
-  List<File> get imageFiles => List.unmodifiable(_imageFiles);
+  /// Pending attachments for the next message.
+  List<ChatAttachment> get attachments => List.unmodifiable(_attachments);
 
-  /// Whether there are any image attachments
-  bool get hasImageAttachments => _imageFiles.isNotEmpty;
+  /// Image files from pending attachments (photos and PDF page images).
+  List<File> get imageFiles => List.unmodifiable(_allAttachmentImages());
+
+  /// Whether there are any pending attachments.
+  bool get hasAttachments => _attachments.isNotEmpty;
+
+  /// Whether any pending attachment is a photo (legacy name used by the footer).
+  bool get hasImageAttachments => _attachments.isNotEmpty;
+
+  /// True while a document is being converted to model input.
+  bool _isProcessingAttachment = false;
+  bool get isProcessingAttachment => _isProcessingAttachment;
+
+  bool get canSend =>
+      (hasText || hasAttachments) &&
+      !isStreaming &&
+      !_isSearching &&
+      !_isProcessingAttachment;
+
+  List<File> _allAttachmentImages() => [
+        for (final attachment in _attachments) ...attachment.images,
+      ];
 
   /// Handles image picking and compression
   Future<void> pickImages({
@@ -401,23 +429,69 @@ class ChatPageViewModel extends ChangeNotifier {
       return;
     }
 
-    _imageFiles.add(compressedFile);
+    _attachments.add(ChatAttachment(
+      fileName: pickedImage.name.isEmpty
+          ? 'image.jpg'
+          : pickedImage.name,
+      kind: ChatAttachmentKind.image,
+      images: [compressedFile],
+    ));
 
     notifyListeners();
+  }
+
+  /// Picks a document (PDF, Office, text, or image) and converts it for the model.
+  Future<void> pickDocuments({
+    void Function(String message)? onFailed,
+  }) async {
+    if (_isProcessingAttachment) return;
+
+    final picked = await _filePickerService.pickDocument();
+    if (picked == null) return;
+
+    _isProcessingAttachment = true;
+    notifyListeners();
+    try {
+      final attachment = await _documentService.import(picked);
+      _attachments.add(attachment);
+    } on DocumentImportException catch (error) {
+      onFailed?.call(error.message);
+    } catch (_) {
+      onFailed?.call(
+        'This file could not be processed. Please try a different file.',
+      );
+    } finally {
+      _isProcessingAttachment = false;
+      notifyListeners();
+    }
   }
 
   /// Deletes a single image and removes it from the list
   Future<void> removeImage(File imageFile) async {
+    final match = _attachments.cast<ChatAttachment?>().firstWhere(
+          (attachment) => attachment!.images.contains(imageFile),
+          orElse: () => null,
+        );
+    if (match != null) {
+      await removeAttachment(match);
+      return;
+    }
     await _imageService.deleteImage(imageFile);
-    _imageFiles.remove(imageFile);
     notifyListeners();
   }
 
-  /// Gets and clears the current images (for sending)
-  List<File> _takeImages() {
-    final images = _imageFiles.toList();
-    _imageFiles.clear();
-    return images;
+  /// Removes a pending attachment and deletes any files it created.
+  Future<void> removeAttachment(ChatAttachment attachment) async {
+    await _imageService.deleteImages(attachment.images);
+    _attachments.remove(attachment);
+    notifyListeners();
+  }
+
+  /// Gets and clears the current attachments (for sending)
+  List<ChatAttachment> _takeAttachments() {
+    final pending = _attachments.toList();
+    _attachments.clear();
+    return pending;
   }
 
   // ============================================================
@@ -445,7 +519,10 @@ class ChatPageViewModel extends ChangeNotifier {
     }
 
     // Early return if nothing to send or currently streaming/searching
-    if (!hasText || isStreaming || _isSearching) {
+    if ((!hasText && !hasAttachments) ||
+        isStreaming ||
+        _isSearching ||
+        _isProcessingAttachment) {
       return false;
     }
 
@@ -478,10 +555,17 @@ class ChatPageViewModel extends ChangeNotifier {
       isNewChat = true;
     }
 
-    // Take the prompt and images, then display the bubble immediately
+    // Take the prompt and attachments, then display the bubble immediately
     final prompt = _takeTextFieldValue();
-    final images = _takeImages();
-    final message = _chatProvider.displayUserMessage(prompt, images: images);
+    final pending = _takeAttachments();
+    final images = [
+      for (final attachment in pending) ...attachment.images,
+    ];
+    final message = _chatProvider.displayUserMessage(
+      prompt,
+      images: images,
+      attachments: pending.isEmpty ? null : pending,
+    );
     notifyListeners();
 
     // Set up web search machinery (UI callbacks + segment persistence)
